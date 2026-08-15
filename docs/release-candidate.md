@@ -125,6 +125,7 @@ keep-alive mechanism, which this project deliberately does not implement.
 | Accessibility enable + system-bound | PASS |
 | Shadow scan | PASS — at least one `SCAN` with `CASE_END COMPLETED` |
 | Startup crash/ANR | PASS |
+| Smoke trace validation | PASS — `malformedJsonLines=0`, `unadaptableCaseRecords=0`, `validatorViolationCount=0`, `traceIntegrityPassed=true` (cutoff = first service connect on this trace) |
 
 ## Artifact provenance
 
