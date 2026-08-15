@@ -130,6 +130,24 @@ class JsonlTraceValidatorRunnerTest {
     }
 
     @Test
+    fun `accepts an experimental action attempt as an ordinary mid-case record`() {
+        val report = JsonlTraceValidatorRunner.validate(
+            sequenceOf(
+                """{"time":100,"session":7,"caseId":"case-a","scan":-1,"trigger":"PACKAGE_CHANGED"}""",
+                """{"time":101,"session":7,"caseId":"case-a","scan":0,"trigger":"SCAN"}""",
+                """{"time":102,"session":7,"caseId":"case-a","scan":-1,"trigger":"ACTION_ATTEMPT","actuationVerdict":"ALLOW","actuationOutcome":"UNCERTAIN"}""",
+                """{"time":103,"session":7,"caseId":"case-a","scan":1,"trigger":"SCAN"}""",
+                """{"time":104,"session":7,"caseId":"case-a","scan":-1,"trigger":"CASE_END","scheduledFrames":2,"executedFrames":2,"cancelledFrames":0,"droppedFrames":0,"terminationReason":"COMPLETED"}""",
+            ),
+        )
+
+        assertTrue(report.traceIntegrityPassed)
+        assertEquals(0, report.unadaptableCaseRecords)
+        assertEquals(emptyList(), report.validatorViolations)
+        assertEquals(5, report.caseRecords)
+    }
+
+    @Test
     fun `rejects a case record with an unknown trigger`() {
         val report = JsonlTraceValidatorRunner.validate(
             sequenceOf("""{"time":100,"session":7,"caseId":"case-a","scan":0,"trigger":"SCAN_V2"}"""),

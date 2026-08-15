@@ -157,6 +157,7 @@ class MainActivity : ComponentActivity() {
 
                         Destination.EXPERIMENTAL -> ExperimentalPage(
                             settings = experimentalSettings,
+                            mode = mode,
                             onRefresh = { refreshSignal++ },
                         )
                     }
@@ -208,7 +209,7 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun ExperimentalPage(settings: ExperimentalSettingsStore, onRefresh: () -> Unit) {
+    private fun ExperimentalPage(settings: ExperimentalSettingsStore, mode: RunMode, onRefresh: () -> Unit) {
         var enabled by remember { mutableStateOf(settings.activeExperimentalEnabled) }
         var lastAction by remember { mutableStateOf(settings.lastAction) }
         var confirmVisible by remember { mutableStateOf(false) }
@@ -223,14 +224,14 @@ class MainActivity : ComponentActivity() {
 
         SectionCard(title = "Active Experimental") {
             Text(
-                "仅实验构建可用（app.bypassads.experimental）。开启后，对实验白名单内 App 的开屏广告页会沿完整安全链路尝试一次节点动作；默认关闭，不后台运行。",
+                "仅实验构建可用（app.bypassads.experimental）。开启后，对实验白名单内 App 的开屏广告页会沿完整安全链路尝试一次节点动作；默认关闭。实验动作发生在目标 App 前台，本应用自身可能处于后台。",
                 fontSize = 14.sp,
                 lineHeight = 21.sp,
                 color = Muted,
             )
             Spacer(Modifier.height(16.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Metric("Shadow", "ON", Modifier.weight(1f))
+                Metric("Shadow", if (mode == RunMode.SHADOW) "ON" else "OFF", Modifier.weight(1f))
                 Metric("Active Experimental", if (enabled) "ON" else "OFF", Modifier.weight(1f))
             }
             Spacer(Modifier.height(16.dp))

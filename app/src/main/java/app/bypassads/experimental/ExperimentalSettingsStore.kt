@@ -23,9 +23,21 @@ class ExperimentalSettingsStore(context: Context) {
                 .putBoolean(KEY_ENABLED, value)
                 .putLong(KEY_ENABLED_AT, if (value) System.currentTimeMillis() else 0L)
                 .apply()
+            // Re-arming (user explicitly confirming ON) grants a fresh 20-action
+            // session; a service/process rebuild only restores the remaining budget.
+            if (value) {
+                prefs.edit().putInt(KEY_BUDGET, DEFAULT_ACTION_BUDGET).apply()
+            }
         }
 
     fun activeEnabledAtEpochMs(): Long = prefs.getLong(KEY_ENABLED_AT, 0L)
+
+    /** Remaining per-session action budget, persisted so service rebuilds cannot refill it. */
+    var actionBudgetRemaining: Int
+        get() = prefs.getInt(KEY_BUDGET, DEFAULT_ACTION_BUDGET)
+        set(value) {
+            prefs.edit().putInt(KEY_BUDGET, value.coerceIn(0, DEFAULT_ACTION_BUDGET)).apply()
+        }
 
     /** Last actuation verdict for the experimental page, e.g. "BLOCK:CTA_RISK" or "ALLOW:UNCERTAIN". */
     var lastAction: String
@@ -45,5 +57,7 @@ class ExperimentalSettingsStore(context: Context) {
         const val KEY_ENABLED = "active_experimental_enabled"
         const val KEY_ENABLED_AT = "active_experimental_enabled_at"
         const val KEY_LAST_ACTION = "last_action"
+        const val KEY_BUDGET = "action_budget_remaining"
+        const val DEFAULT_ACTION_BUDGET = 20
     }
 }

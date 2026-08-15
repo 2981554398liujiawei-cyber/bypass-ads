@@ -21,10 +21,17 @@ class ExperimentalTrialGuard(
     private val maxActionsPerSession: Int = DEFAULT_MAX_ACTIONS_PER_SESSION,
 ) {
     /** Kill switch: OFF immediately blocks every action. */
+    @Volatile
     var enabled: Boolean = false
 
+    @Volatile
     var actionBudgetRemaining: Int = maxActionsPerSession
         private set
+
+    /** Restores the persisted budget across service/process rebuilds (M2.2 P1-4). */
+    fun restoreBudget(remaining: Int) {
+        actionBudgetRemaining = remaining.coerceIn(0, maxActionsPerSession)
+    }
 
     fun evaluate(packageName: String?): TrialGuardDecision {
         if (!enabled) return TrialGuardDecision.KILL_SWITCH_OFF

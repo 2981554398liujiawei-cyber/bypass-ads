@@ -152,6 +152,8 @@ object JsonlTraceValidatorRunner {
         WINDOWS_CHANGED,
         CONTENT_CHANGED,
         SCAN,
+        /** M2.2 experimental actuation attempt: ordinary mid-case record (not a scan, not an end). */
+        ACTION_ATTEMPT,
         CASE_END,
     }
 

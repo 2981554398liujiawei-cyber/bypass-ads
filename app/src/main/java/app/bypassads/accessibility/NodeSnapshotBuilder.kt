@@ -10,6 +10,8 @@ import app.bypassads.core.model.UiSnapshot
 
 data class CaptureResult(
     val snapshot: UiSnapshot,
+    /** Window identity token from the real AccessibilityWindowInfo ids (M2.2 P1-2). */
+    val windowContextToken: Long,
     val metrics: CaptureMetrics,
 )
 
@@ -53,6 +55,7 @@ class NodeSnapshotBuilder(private val elapsedMs: () -> Long = SystemClock::elaps
 
         return CaptureResult(
             UiSnapshot(packageHint ?: firstPackage, screenWidth, screenHeight, elapsedMs(), windows.size, nodes),
+            WindowToken.of(windows.map { it.id }),
             CaptureMetrics(state.windowsTraversed, nodes.size, state.maxDepth, state.rootAcquireMaxMs, state.childQueryMaxMs, state.budgetReason != null, state.budgetReason),
         )
     }

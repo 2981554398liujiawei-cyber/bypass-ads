@@ -83,6 +83,36 @@ class ExperimentalTrialGuardTest {
     }
 
     @Test
+    fun `budget survives guard recreation via restore (service rebuild cannot refill)`() {
+        val g1 = guard(max = 3)
+        g1.enabled = true
+        g1.recordAction()
+        g1.recordAction()
+        assertEquals(1, g1.actionBudgetRemaining)
+
+        // Simulated service/process rebuild: new guard instance restores the
+        // persisted remaining budget — it must NOT go back to 3.
+        val g2 = guard(max = 3)
+        g2.enabled = true
+        g2.restoreBudget(1)
+
+        assertEquals(1, g2.actionBudgetRemaining)
+        assertEquals(TrialGuardDecision.ALLOW, g2.evaluate("com.trial.app"))
+        g2.recordAction()
+        assertEquals(0, g2.actionBudgetRemaining)
+        assertEquals(TrialGuardDecision.ACTION_BUDGET_EXHAUSTED, g2.evaluate("com.trial.app"))
+    }
+
+    @Test
+    fun `restore budget clamps outside the legal range`() {
+        val g = guard(max = 3)
+        g.restoreBudget(99)
+        assertEquals(3, g.actionBudgetRemaining)
+        g.restoreBudget(-5)
+        assertEquals(0, g.actionBudgetRemaining)
+    }
+
+    @Test
     fun `allow does not bypass the gate - gate still blocks cta`() {
         val g = guard()
         g.enabled = true
