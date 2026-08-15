@@ -30,11 +30,13 @@ class BlackBoxJsonCodecTest {
         assertEquals("TOO_RISKY", decoded.decision)
         assertEquals("severe_risk", decoded.rejectionReason)
         assertEquals(9L, decoded.scanWorkMs)
+        assertEquals("case-1", decoded.caseId)
     }
 
     @Test
     fun `legacy JSON without identity ambiguity defaults false`() {
         val record = assertNotNull(BlackBoxJsonCodec.decodeOrNull("""{"time":1,"trigger":"SCAN","features":[{"label":"skip","bounds":[1,2,3,4]}]}"""))
         assertFalse(record.candidates.single().identityAmbiguous)
+        assertEquals(null, record.caseId)
     }
 }

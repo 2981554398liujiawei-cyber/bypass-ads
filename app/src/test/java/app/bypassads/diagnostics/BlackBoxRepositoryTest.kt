@@ -42,22 +42,36 @@ class BlackBoxRepositoryTest {
     }
 
     @Test
-    fun `a client detach does not stop shared repository`() {
+    fun `repository remains usable after an earlier client operation completes`() {
         val repository = repository()
         repository.append(record(11))
         assertEquals(listOf(11), awaitRecords(repository).map { it.scanIndex })
     }
 
     @Test
-    fun `health reports one serial queue rather than one worker per request`() {
+    fun `health reports zero pending jobs when the queue is idle`() {
         val repository = repository()
         repeat(10) { repository.append(record(it)) }
         val latch = CountDownLatch(1)
         var health: BlackBoxIoHealth? = null
         repository.health { value -> health = value; latch.countDown() }
         assertTrue(latch.await(5, TimeUnit.SECONDS))
-        assertTrue(health!!.maxPendingIoJobs >= 1)
+        assertEquals(0, health!!.pendingIoJobs)
+        assertTrue(health.maxPendingIoJobs >= 1)
         assertEquals(10L, health.recordsWritten)
+    }
+
+    @Test
+    fun `health includes queued writes ahead of the health request`() {
+        val repository = repository()
+        repeat(50) { repository.append(record(it)) }
+        val latch = CountDownLatch(1)
+        var health: BlackBoxIoHealth? = null
+        repository.health { value -> health = value; latch.countDown() }
+        assertTrue(latch.await(5, TimeUnit.SECONDS))
+        assertEquals(0, health!!.pendingIoJobs)
+        assertEquals(50L, health.recordsWritten)
+        assertTrue(health.maxPendingIoJobs >= 50)
     }
 
     private fun repository(): BlackBoxRepository = BlackBoxRepository(Files.createTempDirectory("blackbox-test").toFile())
