@@ -38,6 +38,7 @@ class CandidateScorer {
         if (features.clickable) evidence += WeightedReason("node_clickable", 12)
         if (features.stabilityHits >= 2) evidence += WeightedReason("stable_across_frames", 10)
         if (features.countdownStepObserved) evidence += WeightedReason("countdown_progression", 18)
+        if (features.positionDriftDetected) risks += WeightedReason("rapid_position_drift", -70)
         if (features.ctaSiblingDetected) risks += WeightedReason("cta_sibling", -35)
 
         features.nearestClickableAncestorBounds?.let { parentBounds ->

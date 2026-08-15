@@ -10,6 +10,7 @@ import app.bypassads.core.detection.CandidateDetector
 import app.bypassads.core.detection.TemporalCandidateTracker
 import app.bypassads.diagnostics.BlackBoxRecord
 import app.bypassads.diagnostics.BlackBoxStore
+import app.bypassads.diagnostics.BlackBoxTrigger
 import app.bypassads.runtime.RunMode
 import app.bypassads.runtime.RunModeStore
 import java.util.concurrent.atomic.AtomicLong
@@ -31,16 +32,25 @@ class BypassAdsAccessibilityService : AccessibilityService() {
         runModeStore = RunModeStore(this)
         blackBox = BlackBoxStore(this)
         runModeStore.markServiceConnected()
+        blackBox.append(
+            BlackBoxRecord(
+                epochMs = System.currentTimeMillis(),
+                sessionId = activeSession,
+                scanIndex = -1,
+                packageName = null,
+                trigger = BlackBoxTrigger.SERVICE_CONNECTED,
+            ),
+        )
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (!::runModeStore.isInitialized || runModeStore.get() == RunMode.OFF) return
         val current = event ?: return
-        if (current.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
-            current.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
-        ) {
-            startBurst(current.packageName?.toString())
-        }
+        val trigger = current.toBlackBoxTrigger() ?: return
+        val packageHint = current.packageName?.toString()
+        if (packageHint == packageName) return
+
+        startBurst(packageHint, trigger)
     }
 
     override fun onInterrupt() = Unit
@@ -51,17 +61,32 @@ class BypassAdsAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    private fun startBurst(packageHint: String?) {
-        if (packageHint == packageName) return
+    private fun startBurst(packageHint: String?, trigger: BlackBoxTrigger) {
         val session = sessionCounter.incrementAndGet()
+        val triggeredAtElapsedMs = SystemClock.elapsedRealtime()
         activeSession = session
         temporalTracker.reset()
+        blackBox.append(
+            BlackBoxRecord(
+                epochMs = System.currentTimeMillis(),
+                sessionId = session,
+                scanIndex = -1,
+                packageName = packageHint,
+                trigger = trigger,
+            ),
+        )
         BURST_DELAYS_MS.forEachIndexed { index, delay ->
-            handler.postDelayed({ scan(session, index, packageHint) }, delay)
+            handler.postDelayed({ scan(session, index, packageHint, trigger, triggeredAtElapsedMs) }, delay)
         }
     }
 
-    private fun scan(session: Long, scanIndex: Int, packageHint: String?) {
+    private fun scan(
+        session: Long,
+        scanIndex: Int,
+        packageHint: String?,
+        sourceTrigger: BlackBoxTrigger,
+        triggeredAtElapsedMs: Long,
+    ) {
         if (session != activeSession || runModeStore.get() == RunMode.OFF) return
         val metrics = resources.displayMetrics
         val snapshot = snapshotBuilder.capture(
@@ -82,14 +107,23 @@ class BypassAdsAccessibilityService : AccessibilityService() {
                 sessionId = session,
                 scanIndex = scanIndex,
                 packageName = snapshot.packageName,
+                trigger = BlackBoxTrigger.SCAN,
+                sourceTrigger = sourceTrigger,
                 windowCount = snapshot.windowCount,
                 nodeCount = snapshot.nodes.size,
                 candidateFeatures = features,
                 decision = decision,
+                latencyMs = SystemClock.elapsedRealtime() - triggeredAtElapsedMs,
             ),
         )
 
-        // v0.1 safety gate: no real actuation even if RunMode.ACTIVE is set internally.
+        // M1 safety gate: Shadow mode only. This service never invokes click or gesture APIs.
+    }
+
+    private fun AccessibilityEvent.toBlackBoxTrigger(): BlackBoxTrigger? = when (eventType) {
+        AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> BlackBoxTrigger.PACKAGE_CHANGED
+        AccessibilityEvent.TYPE_WINDOWS_CHANGED -> BlackBoxTrigger.WINDOW_CHANGED
+        else -> null
     }
 
     private companion object {

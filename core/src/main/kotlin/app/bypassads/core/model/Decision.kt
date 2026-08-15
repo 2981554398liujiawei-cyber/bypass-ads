@@ -19,6 +19,7 @@ data class CandidateFeatures(
     val stabilityHits: Int = 1,
     val countdownValue: Int? = null,
     val countdownStepObserved: Boolean = false,
+    val positionDriftDetected: Boolean = false,
     val ctaSiblingDetected: Boolean = false,
 )
 
@@ -44,4 +45,5 @@ data class SkipDecision(
     val type: DecisionType,
     val candidate: SkipCandidate?,
     val threshold: Int,
+    val rejectionReason: String? = null,
 )

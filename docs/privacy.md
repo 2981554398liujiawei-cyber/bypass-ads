@@ -1,32 +1,33 @@
 # Privacy model
 
-Bypass Ads. uses Android Accessibility APIs, which can expose sensitive UI content. The project therefore treats local diagnostics as sensitive by default.
+Bypass Ads. uses Android Accessibility APIs, which can expose sensitive UI content. The project therefore treats local diagnostics as sensitive by default and minimizes them before persistence.
 
 ## Runtime network policy
 
-The application manifest does not request `android.permission.INTERNET`. No analytics, crash reporting, remote config, ad SDK, or cloud rule service is included.
+The application manifest does not request `android.permission.INTERNET`. No analytics, crash reporting, remote configuration, ad SDK, cloud rule service, or runtime network request is included.
 
 ## Default black box
 
-The default recorder stores only data needed to debug decisions:
+The default recorder stores only data needed to diagnose a Shadow decision:
 
-- timestamp and session/scan index
-- package name
-- window/node/candidate counts
-- sanitized candidate label (`skip`, `close`, `跳过`, `关闭`, `×`)
-- candidate resource ID
-- score and named evidence/risk reasons
-- boolean semantic risk flags (for example, whether a CTA-like sibling was observed)
+- timestamp, session/scan index, trigger, and latency
+- package name and window/node/candidate counts
+- sanitized candidate label (`skip`, `close`, `跳过`, `关闭`, `×`) and resource ID
+- candidate geometry, clickability, and clickable-ancestor geometry
+- temporal stability, countdown progression, and position-drift booleans
+- boolean semantic risk flags, such as whether a CTA-like sibling was observed
+- score, named evidence/risk reasons, decision, and rejection reason
 
 It does not store:
 
-- full accessibility tree text
-- arbitrary sibling text
+- full accessibility-tree text
+- arbitrary sibling or CTA text
 - screenshots
-- typed user content
+- typed user content, chat content, or verification codes
+- full raw AccessibilityEvent payloads
 
-Retention is bounded to 7 days and 20 MB, whichever constrains first.
+Retention is bounded to 7 days and 20 MB, whichever constraint is reached first. Data stays in Android app-private storage and can be cleared locally from Diagnostics.
 
 ## Future detailed diagnostics
 
-If a full-tree diagnostic mode is added, it must be explicit, time-limited, visibly active, local-only, and off by default.
+If a full-tree diagnostic mode is ever considered, it must be explicit, time-limited, visibly active, local-only, off by default, and reviewed separately before implementation.

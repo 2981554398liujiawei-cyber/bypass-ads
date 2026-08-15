@@ -3,7 +3,7 @@ package app.bypassads.runtime
 import android.content.Context
 
 class RunModeStore(context: Context) {
-    private val prefs = context.getSharedPreferences("runtime", Context.MODE_PRIVATE)
+    private val prefs = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
 
     fun get(): RunMode = runCatching {
         RunMode.valueOf(prefs.getString(KEY, RunMode.SHADOW.name) ?: RunMode.SHADOW.name)
@@ -20,6 +20,7 @@ class RunModeStore(context: Context) {
     fun lastServiceConnected(): Long = prefs.getLong(LAST_CONNECTED, 0L)
 
     private companion object {
+        const val PREFERENCES_NAME = "bypass_ads_runtime"
         const val KEY = "run_mode"
         const val LAST_CONNECTED = "last_service_connected"
     }
