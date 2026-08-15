@@ -382,6 +382,12 @@ class BypassAdsAccessibilityService : AccessibilityService() {
          * the trial fills in actual test package names before real-device runs.
          * 微信 / 支付宝 / 银行 / 系统设置 are never active targets.
          */
-        val EXPERIMENTAL_ALLOWLIST: Set<String> = emptySet()
+        /**
+         * M2.2 trial allowlist — test/internal apps only, decided with the
+         * supervising human tester and reported to the planner. WeChat/Alipay/
+         * banks/system settings are never Active targets. First-round test
+         * app: the internal scene app app.bypassads.testad (see testad/).
+         */
+        val EXPERIMENTAL_ALLOWLIST: Set<String> = setOf("app.bypassads.testad")
     }
 }
