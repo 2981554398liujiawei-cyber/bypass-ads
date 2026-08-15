@@ -38,10 +38,10 @@ class ActuationGate(
         revalidatedRisks: List<WeightedReason>,
     ): ActuationVerdict {
         if (!modeAllowsAction) return Block(ActuationBlockReason.MODE_BLOCKED)
-        if (!caseActive) return Block(ActuationBlockReason.CASE_STALE)
         if (attemptsAlreadyMade >= MAX_ACTUATION_ATTEMPTS_PER_CASE) {
             return Block(ActuationBlockReason.ATTEMPT_LIMIT_REACHED)
         }
+        if (!caseActive) return Block(ActuationBlockReason.CASE_STALE)
 
         // Proposal/current context must be bound to the same case, window, and time.
         if (proposal.caseGeneration != fresh.currentCaseGeneration) {
