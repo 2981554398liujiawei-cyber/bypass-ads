@@ -61,6 +61,48 @@ class JsonlTraceValidatorRunnerTest {
     }
 
     @Test
+    fun `allows only a one-record non-scan open case at the local trace tail`() {
+        val report = JsonlTraceValidatorRunner.validate(
+            sequenceOf(
+                """{"time":100,"session":1,"caseId":"complete","scan":-1,"trigger":"WINDOW_CHANGED"}""",
+                """{"time":101,"session":1,"caseId":"complete","scan":-1,"trigger":"CASE_END","scheduledFrames":0,"executedFrames":0,"cancelledFrames":0,"droppedFrames":0,"terminationReason":"COMPLETED"}""",
+                """{"time":102,"session":1,"caseId":"tail","scan":-1,"trigger":"WINDOWS_CHANGED"}""",
+            ),
+        )
+
+        assertTrue(report.traceIntegrityPassed)
+        assertEquals(1, report.openTailCaseCount)
+
+        val nonTail = JsonlTraceValidatorRunner.validate(
+            sequenceOf(
+                """{"time":100,"session":1,"caseId":"open","scan":-1,"trigger":"WINDOW_CHANGED"}""",
+                """{"time":101,"session":1,"caseId":"complete","scan":-1,"trigger":"WINDOW_CHANGED"}""",
+                """{"time":102,"session":1,"caseId":"complete","scan":-1,"trigger":"CASE_END","scheduledFrames":0,"executedFrames":0,"cancelledFrames":0,"droppedFrames":0,"terminationReason":"COMPLETED"}""",
+            ),
+        )
+        assertFalse(nonTail.traceIntegrityPassed)
+        assertEquals(0, nonTail.openTailCaseCount)
+
+        val scannedTail = JsonlTraceValidatorRunner.validate(
+            sequenceOf(
+                """{"time":100,"session":1,"caseId":"tail","scan":-1,"trigger":"WINDOW_CHANGED"}""",
+                """{"time":101,"session":1,"caseId":"tail","scan":0,"trigger":"SCAN"}""",
+            ),
+        )
+        assertFalse(scannedTail.traceIntegrityPassed)
+        assertEquals(0, scannedTail.openTailCaseCount)
+
+        val multiRecordTail = JsonlTraceValidatorRunner.validate(
+            sequenceOf(
+                """{"time":100,"session":1,"caseId":"tail","scan":-1,"trigger":"WINDOW_CHANGED"}""",
+                """{"time":101,"session":1,"caseId":"tail","scan":-1,"trigger":"CONTENT_CHANGED"}""",
+            ),
+        )
+        assertFalse(multiRecordTail.traceIntegrityPassed)
+        assertEquals(0, multiRecordTail.openTailCaseCount)
+    }
+
+    @Test
     fun `aggregates count-only timing and lifecycle evidence after the cutoff`() {
         val report = JsonlTraceValidatorRunner.validate(
             sequenceOf(
@@ -162,10 +204,18 @@ class JsonlTraceValidatorRunnerTest {
         )
         val trace = listOf(
             TraceObservation(1000, "SCAN", "case-a"),
+            TraceObservation(2000, "CASE_END", "off-a", "MODE_OFF"),
+            TraceObservation(2001, "WINDOW_CHANGED", "recovery-window"),
             TraceObservation(32001, "SCAN", "case-a"),
+            TraceObservation(33000, "CASE_END", "off-b", "MODE_OFF"),
+            TraceObservation(33001, "CONTENT_CHANGED", "recovery-content"),
             TraceObservation(63001, "SCAN", "case-a"),
+            TraceObservation(64000, "CASE_END", "off-c", "MODE_OFF"),
+            TraceObservation(64001, "PACKAGE_CHANGED", "recovery-package"),
             TraceObservation(94001, "SCAN", "case-a"),
+            TraceObservation(95000, "CASE_END", "off-d", "MODE_OFF"),
             TraceObservation(125001, "SCAN", "case-a"),
+            TraceObservation(126000, "CASE_END", "off-e", "MODE_OFF"),
             TraceObservation(156001, "SCAN", "case-a"),
         )
 
@@ -200,7 +250,7 @@ class JsonlTraceValidatorRunnerTest {
 
         assertTrue(result.collectionStartMatchesTraceCutoff)
         assertEquals(0, result.validOffCycleCount)
-        assertTrue(result.lifecycleViolationCodes.containsAll(listOf("OFF_CYCLE_1_TOO_SHORT", "OFF_CYCLE_1_SCAN_WHILE_OFF", "OFF_CYCLE_1_NEW_CASE_WHILE_OFF", "OFF_CYCLE_1_NO_SCAN_AFTER_RESTORE", "TOO_FEW_OFF_CYCLES")))
+        assertTrue(result.lifecycleViolationCodes.containsAll(listOf("OFF_CYCLE_1_MISSING_MODE_OFF_ANCHOR", "OFF_CYCLE_1_TOO_SHORT", "OFF_CYCLE_1_SCAN_WHILE_OFF", "OFF_CYCLE_1_NO_SCAN_AFTER_RESTORE", "TOO_FEW_OFF_CYCLES")))
         assertFalse(result.finalIoHealth!!.passed)
         assertFalse(result.coverage!!.passed)
         assertFalse(result.stability!!.passed)
@@ -228,6 +278,15 @@ class JsonlTraceValidatorRunnerTest {
 
         val beforeCollection = completeSidecar().offCycles.toMutableList().also { cycles -> cycles[0] = cycles[0].copy(offAtEpochMs = 999) }
         assertTrue(M14SessionSidecarValidator.validate(completeSidecar().copy(offCycles = beforeCollection), completeTrace(), 1000).lifecycleViolationCodes.contains("OFF_CYCLE_1_OUTSIDE_COLLECTION"))
+
+        val missingAnchor = completeSidecar().offCycles.toMutableList().also { cycles -> cycles[0] = M14SessionSidecar.OffCycle(950001, 980001) }
+        assertTrue(M14SessionSidecarValidator.validate(completeSidecar().copy(offCycles = missingAnchor), completeTrace(), 1000).lifecycleViolationCodes.contains("OFF_CYCLE_1_MISSING_MODE_OFF_ANCHOR"))
+
+        val reusedAnchor = completeSidecar().offCycles.toMutableList().also { cycles -> cycles[1] = M14SessionSidecar.OffCycle(950000, 980000) }
+        assertTrue(M14SessionSidecarValidator.validate(completeSidecar().copy(offCycles = reusedAnchor), completeTrace(), 1000).lifecycleViolationCodes.contains("OFF_CYCLE_2_DUPLICATE_MODE_OFF_ANCHOR"))
+
+        val onlyFourAnchors = completeTrace().filterNot { it.epochMs == 1110000L && it.terminationReason == "MODE_OFF" }
+        assertTrue(M14SessionSidecarValidator.validate(completeSidecar(), onlyFourAnchors, 1000).lifecycleViolationCodes.contains("OFF_CYCLE_5_MISSING_MODE_OFF_ANCHOR"))
     }
 
     private fun completeSidecar(): M14SessionSidecar = M14SessionSidecar.parse(
@@ -253,7 +312,15 @@ class JsonlTraceValidatorRunnerTest {
         ),
     )
 
-    private fun completeTrace(): List<TraceObservation> = List(300) { index -> TraceObservation(1000L + index * 3_000L, "SCAN", "case-a") } + restoredCycleScans()
+    private fun completeTrace(): List<TraceObservation> = List(300) { index -> TraceObservation(1000L + index * 3_000L, "SCAN", "case-a") } + modeOffAnchors() + restoredCycleScans()
+
+    private fun modeOffAnchors(): List<TraceObservation> = listOf(
+        TraceObservation(950000, "CASE_END", "off-a", "MODE_OFF"),
+        TraceObservation(990000, "CASE_END", "off-b", "MODE_OFF"),
+        TraceObservation(1030000, "CASE_END", "off-c", "MODE_OFF"),
+        TraceObservation(1070000, "CASE_END", "off-d", "MODE_OFF"),
+        TraceObservation(1110000, "CASE_END", "off-e", "MODE_OFF"),
+    )
 
     private fun restoredCycleScans(): List<TraceObservation> = listOf(
         TraceObservation(980001, "SCAN", "case-a"),
@@ -267,6 +334,11 @@ class JsonlTraceValidatorRunnerTest {
     private fun completeJsonl(): List<String> = buildList {
         add("""{"time":1000,"session":1,"caseId":"case-a","scan":-1,"trigger":"PACKAGE_CHANGED"}""")
         repeat(300) { index -> add(scanLine(1000L + index * 3_000L, index)) }
+        val modeOffTimes = listOf(950000L, 990000L, 1030000L, 1070000L, 1110000L)
+        modeOffTimes.forEachIndexed { index, time ->
+            add("""{"time":${time - 1},"session":1,"caseId":"off-$index","scan":-1,"trigger":"WINDOW_CHANGED"}""")
+            add("""{"time":$time,"session":1,"caseId":"off-$index","scan":-1,"trigger":"CASE_END","scheduledFrames":0,"executedFrames":0,"cancelledFrames":0,"droppedFrames":0,"terminationReason":"MODE_OFF"}""")
+        }
         val restoreTimes = listOf(980001L, 1020001L, 1060001L, 1100001L, 1140001L, 3601000L)
         restoreTimes.forEachIndexed { offset, time -> add(scanLine(time, 300 + offset)) }
         add("""{"time":3601001,"session":1,"caseId":"case-a","scan":-1,"trigger":"CASE_END","scheduledFrames":306,"executedFrames":306,"cancelledFrames":0,"droppedFrames":0,"terminationReason":"COMPLETED"}""")

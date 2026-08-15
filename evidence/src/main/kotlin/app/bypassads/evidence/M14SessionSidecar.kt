@@ -122,8 +122,11 @@ internal object M14SessionSidecarValidator {
         val collectionWindow = collectionEnd?.let { CollectionWindowValidation(sidecar.collectionStartEpochMs, it, it - sidecar.collectionStartEpochMs) }
         val controlledRun = sidecar.controlledRun?.let { run -> ControlledRunValidation(run.endEpochMs - run.startEpochMs, trace.count { it.epochMs in run.startEpochMs..run.endEpochMs }, collectionEnd != null && run.startEpochMs >= sidecar.collectionStartEpochMs && run.endEpochMs <= collectionEnd) }
         val soak = collectionWindow?.let { SoakValidation(it.durationMs, sidecar.continuousCollectionConfirmed == true, sidecar.serviceBoundAtEnd == true) }
-        val firstCaseById = trace.filter { it.caseId != null }.groupBy { it.caseId }.mapValues { (_, records) -> records.minOf { it.epochMs } }
         val codes = mutableListOf<String>()
+        val modeOffAnchors = trace.filter { it.trigger == "CASE_END" && it.terminationReason == "MODE_OFF" }
+            .groupingBy { it.epochMs }
+            .eachCount()
+        val usedModeOffAnchors = mutableSetOf<Long>()
         var validCycles = 0
         sidecar.offCycles.forEachIndexed { index, cycle ->
             val prefix = "OFF_CYCLE_${index + 1}"
@@ -131,9 +134,14 @@ internal object M14SessionSidecarValidator {
             if (collectionEnd == null || cycle.offAtEpochMs < sidecar.collectionStartEpochMs || cycle.shadowRestoredAtEpochMs > collectionEnd) { codes += "${prefix}_OUTSIDE_COLLECTION"; valid = false }
             val previous = sidecar.offCycles.getOrNull(index - 1)
             if (previous != null && cycle.offAtEpochMs <= previous.shadowRestoredAtEpochMs) { codes += "${prefix}_NOT_STRICTLY_AFTER_PREVIOUS"; valid = false }
+            when (modeOffAnchors[cycle.offAtEpochMs] ?: 0) {
+                0 -> { codes += "${prefix}_MISSING_MODE_OFF_ANCHOR"; valid = false }
+                1 -> Unit
+                else -> { codes += "${prefix}_AMBIGUOUS_MODE_OFF_ANCHOR"; valid = false }
+            }
+            if (!usedModeOffAnchors.add(cycle.offAtEpochMs)) { codes += "${prefix}_DUPLICATE_MODE_OFF_ANCHOR"; valid = false }
             if (cycle.shadowRestoredAtEpochMs - cycle.offAtEpochMs < MIN_OFF_DURATION_MS) { codes += "${prefix}_TOO_SHORT"; valid = false }
             if (trace.any { it.trigger == "SCAN" && it.epochMs in cycle.offAtEpochMs until cycle.shadowRestoredAtEpochMs }) { codes += "${prefix}_SCAN_WHILE_OFF"; valid = false }
-            if (firstCaseById.values.any { it in cycle.offAtEpochMs until cycle.shadowRestoredAtEpochMs }) { codes += "${prefix}_NEW_CASE_WHILE_OFF"; valid = false }
             val nextOff = sidecar.offCycles.getOrNull(index + 1)?.offAtEpochMs ?: collectionEnd ?: Long.MAX_VALUE
             if (trace.none { it.trigger == "SCAN" && it.epochMs >= cycle.shadowRestoredAtEpochMs && it.epochMs < nextOff }) { codes += "${prefix}_NO_SCAN_AFTER_RESTORE"; valid = false }
             if (valid) validCycles++
@@ -161,4 +169,9 @@ internal object M14SessionSidecarValidator {
     const val REQUIRED_OFF_CYCLES = 5
 }
 
-internal data class TraceObservation(val epochMs: Long, val trigger: String, val caseId: String?)
+internal data class TraceObservation(
+    val epochMs: Long,
+    val trigger: String,
+    val caseId: String?,
+    val terminationReason: String? = null,
+)

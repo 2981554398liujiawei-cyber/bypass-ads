@@ -14,6 +14,7 @@ data class JsonlTraceValidationReport(
     val nonCaseRecords: Int,
     val caseRecords: Int,
     val unadaptableCaseRecords: Int,
+    val openTailCaseCount: Int,
     val validatorViolations: List<String>,
     val evidenceSummary: JsonlEvidenceSummary,
     val sessionValidation: M14SessionValidation?,
@@ -42,6 +43,7 @@ data class JsonlTraceValidationReport(
         .put("nonCaseRecords", nonCaseRecords)
         .put("caseRecords", caseRecords)
         .put("unadaptableCaseRecords", unadaptableCaseRecords)
+        .put("openTailCaseCount", openTailCaseCount)
         .put("validatorViolationCount", validatorViolations.size)
         .put("evidenceSummary", evidenceSummary.toJson())
         .put("sessionValidation", sessionValidation?.toJson())
@@ -60,6 +62,7 @@ object JsonlTraceValidatorRunner {
         var nonCaseRecords = 0
         var caseRecords = 0
         var unadaptableCaseRecords = 0
+        var lastPostCutoffRecordWasCaseEntry = false
         val entries = mutableListOf<CaseTraceEntry>()
         val evidenceSummary = JsonlEvidenceSummaryCollector()
         val traceObservations = mutableListOf<TraceObservation>()
@@ -78,6 +81,7 @@ object JsonlTraceValidatorRunner {
                 ignoredBeforeStart++
                 return@forEach
             }
+            lastPostCutoffRecordWasCaseEntry = false
             evidenceSummary.recordSeen(epochMs)
             val trigger = runCatching { json.traceTrigger() }.getOrElse {
                 unadaptableCaseRecords++
@@ -85,7 +89,7 @@ object JsonlTraceValidatorRunner {
             }
             val caseId = json.nullableString("caseId")
             evidenceSummary.recordKnownTrigger(json, trigger.name, caseId)
-            traceObservations += TraceObservation(epochMs, trigger.name, caseId)
+            traceObservations += TraceObservation(epochMs, trigger.name, caseId, json.nullableString("terminationReason"))
             if (caseId == null) {
                 if (trigger == TraceTrigger.SERVICE_CONNECTED) nonCaseRecords++ else unadaptableCaseRecords++
                 return@forEach
@@ -96,7 +100,15 @@ object JsonlTraceValidatorRunner {
                 return@forEach
             }
             entries += entry
+            lastPostCutoffRecordWasCaseEntry = true
         }
+
+        // A local copy can end while the final one-second burst is still open.
+        val openTailCaseId = entries.lastOrNull()
+            ?.takeIf { lastPostCutoffRecordWasCaseEntry && !it.isScan && !it.isEnd }
+            ?.caseId
+            ?.takeIf { candidateId -> entries.count { it.caseId == candidateId } == 1 }
+        val entriesForValidation = openTailCaseId?.let { candidateId -> entries.filterNot { it.caseId == candidateId } } ?: entries
 
         return JsonlTraceValidationReport(
             inputLines = inputLines,
@@ -105,7 +117,8 @@ object JsonlTraceValidatorRunner {
             nonCaseRecords = nonCaseRecords,
             caseRecords = caseRecords,
             unadaptableCaseRecords = unadaptableCaseRecords,
-            validatorViolations = CaseTraceValidator.violations(entries),
+            openTailCaseCount = if (openTailCaseId == null) 0 else 1,
+            validatorViolations = CaseTraceValidator.violations(entriesForValidation),
             evidenceSummary = evidenceSummary.summary(),
             sessionValidation = sidecar?.let { M14SessionSidecarValidator.validate(it, traceObservations, fromEpochMs) },
         )
