@@ -48,7 +48,10 @@ internal object BlackBoxRuntime {
     private const val DIRECTORY_NAME = "bypass_ads_blackbox"
 }
 
-class BlackBoxRepository internal constructor(private val dir: File) {
+class BlackBoxRepository internal constructor(
+    private val dir: File,
+    private val maxBytes: Long = MAX_BYTES,
+) {
     private val io: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "bypass-ads-blackbox").apply { isDaemon = true }
     }
@@ -71,10 +74,9 @@ class BlackBoxRepository internal constructor(private val dir: File) {
                     output.fd.sync()
                 }
                 recordsWritten++
-                trackedBytes += bytes.size
+                trackedBytes = currentBytes()
                 appendCountSinceRetention++
-                val dayFile = File(dir, "$day.jsonl")
-                if (lastRetentionDay != day || appendCountSinceRetention >= RETENTION_INTERVAL || trackedBytes > MAX_BYTES) {
+                if (lastRetentionDay != day || appendCountSinceRetention >= RETENTION_INTERVAL || trackedBytes > maxBytes) {
                     enforceRetention()
                     appendCountSinceRetention = 0
                     lastRetentionDay = day
@@ -94,7 +96,7 @@ class BlackBoxRepository internal constructor(private val dir: File) {
     fun clear(callback: (() -> Unit)? = null) {
         enqueue {
             recordFiles().forEach(File::delete)
-            trackedBytes = 0L
+            trackedBytes = currentBytes()
             callback?.invoke()
         }
     }
@@ -136,6 +138,8 @@ class BlackBoxRepository internal constructor(private val dir: File) {
 
     private fun recordFiles(): List<File> = dir.listFiles().orEmpty().filter { it.extension == "jsonl" }
 
+    private fun currentBytes(): Long = recordFiles().sumOf(File::length)
+
     private fun enforceRetention() {
         val cutoff = LocalDate.now().minusDays(RETENTION_DAYS)
         recordFiles().forEach { file ->
@@ -143,14 +147,17 @@ class BlackBoxRepository internal constructor(private val dir: File) {
             val length = file.length()
             if (date != null && date.isBefore(cutoff) && file.delete()) trackedBytes -= length
         }
-        var bytes = recordFiles().sumOf(File::length)
+        var bytes = currentBytes()
         recordFiles().sortedBy { it.name }.forEach { file ->
-            if (bytes > MAX_BYTES) {
+            if (bytes > maxBytes) {
                 val length = file.length()
-                bytes -= length
-                if (file.delete()) trackedBytes -= length
+                if (file.delete()) {
+                    bytes -= length
+                    trackedBytes -= length
+                }
             }
         }
+        trackedBytes = currentBytes()
     }
 
     private fun dayFor(epochMs: Long): LocalDate = Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault()).toLocalDate()
@@ -175,6 +182,16 @@ object BlackBoxJsonCodec {
         put("evidence", record.decision?.candidate?.evidence.toReasonsJson()); put("risks", record.decision?.candidate?.risks.toReasonsJson())
         put("features", JSONArray().apply { record.candidateFeatures.take(MAX_FEATURES_PER_SCAN).forEach { put(it.toJson()) } })
         put("latencyMs", record.latencyMs ?: JSONObject.NULL); put("scanWorkMs", record.scanWorkMs ?: JSONObject.NULL)
+        put("windowAcquireMs", record.windowAcquireMs ?: JSONObject.NULL); put("snapshotMs", record.snapshotMs ?: JSONObject.NULL)
+        put("detectionMs", record.detectionMs ?: JSONObject.NULL); put("decisionMs", record.decisionMs ?: JSONObject.NULL)
+        put("windowsTraversed", record.windowsTraversed ?: JSONObject.NULL); put("nodesVisited", record.nodesVisited ?: JSONObject.NULL); put("maxDepth", record.maxDepth ?: JSONObject.NULL)
+        put("rootAcquireMaxMs", record.rootAcquireMaxMs ?: JSONObject.NULL); put("childQueryMaxMs", record.childQueryMaxMs ?: JSONObject.NULL)
+        put("captureBudgetHit", record.captureBudgetHit ?: JSONObject.NULL); put("captureBudgetReason", record.captureBudgetReason ?: JSONObject.NULL)
+        put("workerBusyDrops", record.workerBusyDrops ?: JSONObject.NULL); put("workerMaxQueueDepth", record.workerMaxQueueDepth ?: JSONObject.NULL)
+        put("scheduledFrames", record.scheduledFrames ?: JSONObject.NULL); put("executedFrames", record.executedFrames ?: JSONObject.NULL)
+        put("cancelledFrames", record.cancelledFrames ?: JSONObject.NULL); put("droppedFrames", record.droppedFrames ?: JSONObject.NULL)
+        put("coalescedWindowEvents", record.coalescedWindowEvents ?: JSONObject.NULL); put("coalescedContentEvents", record.coalescedContentEvents ?: JSONObject.NULL)
+        put("caseDurationMs", record.caseDurationMs ?: JSONObject.NULL); put("terminationReason", record.terminationReason?.name ?: JSONObject.NULL)
     }.toString()
 
     fun decodeOrNull(line: String): DiagnosticRecord? = runCatching {
@@ -186,6 +203,15 @@ object BlackBoxJsonCodec {
             candidateCount = json.optInt("candidates"), decision = json.nullableString("decision"), rejectionReason = json.nullableString("rejectionReason"),
             score = json.nullableInt("score"), evidence = json.optJSONArray("evidence").toReasons(), risks = json.optJSONArray("risks").toReasons(),
             candidates = json.optJSONArray("features").toCandidates(), latencyMs = json.nullableLong("latencyMs"), scanWorkMs = json.nullableLong("scanWorkMs"),
+            windowAcquireMs = json.nullableLong("windowAcquireMs"), snapshotMs = json.nullableLong("snapshotMs"), detectionMs = json.nullableLong("detectionMs"), decisionMs = json.nullableLong("decisionMs"),
+            windowsTraversed = json.nullableInt("windowsTraversed"), nodesVisited = json.nullableInt("nodesVisited"), maxDepth = json.nullableInt("maxDepth"),
+            rootAcquireMaxMs = json.nullableLong("rootAcquireMaxMs"), childQueryMaxMs = json.nullableLong("childQueryMaxMs"),
+            captureBudgetHit = json.nullableBoolean("captureBudgetHit"), captureBudgetReason = json.nullableString("captureBudgetReason"),
+            workerBusyDrops = json.nullableLong("workerBusyDrops"), workerMaxQueueDepth = json.nullableInt("workerMaxQueueDepth"),
+            scheduledFrames = json.nullableInt("scheduledFrames"), executedFrames = json.nullableInt("executedFrames"),
+            cancelledFrames = json.nullableInt("cancelledFrames"), droppedFrames = json.nullableInt("droppedFrames"),
+            coalescedWindowEvents = json.nullableInt("coalescedWindowEvents"), coalescedContentEvents = json.nullableInt("coalescedContentEvents"),
+            caseDurationMs = json.nullableLong("caseDurationMs"), terminationReason = json.nullableCaseTerminationReason("terminationReason"),
         )
     }.getOrNull()
 
@@ -201,8 +227,10 @@ object BlackBoxJsonCodec {
     private fun JSONObject.nullableString(key: String): String? = if (isNull(key)) null else optString(key).takeIf(String::isNotBlank)
     private fun JSONObject.nullableInt(key: String): Int? = if (isNull(key) || !has(key)) null else optInt(key)
     private fun JSONObject.nullableLong(key: String): Long? = if (isNull(key) || !has(key)) null else optLong(key)
+    private fun JSONObject.nullableBoolean(key: String): Boolean? = if (isNull(key) || !has(key)) null else optBoolean(key)
     private fun JSONObject.enumOrDefault(key: String, default: BlackBoxTrigger): BlackBoxTrigger = runCatching { BlackBoxTrigger.valueOf(getString(key)) }.getOrDefault(default)
     private fun JSONObject.nullableEnum(key: String): BlackBoxTrigger? = nullableString(key)?.let { runCatching { BlackBoxTrigger.valueOf(it) }.getOrNull() }
+    private fun JSONObject.nullableCaseTerminationReason(key: String): CaseTerminationReason? = nullableString(key)?.let { runCatching { CaseTerminationReason.valueOf(it) }.getOrNull() }
     private fun JSONArray?.toReasons(): List<DiagnosticReason> = buildList { for (i in 0 until (this@toReasons?.length() ?: 0)) { val item = this@toReasons?.optJSONObject(i) ?: continue; add(DiagnosticReason(item.optString("code"), item.optInt("points"))) } }
     private fun JSONArray?.toCandidates(): List<DiagnosticCandidate> = buildList {
         for (i in 0 until (this@toCandidates?.length() ?: 0)) {

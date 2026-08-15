@@ -6,54 +6,58 @@ import kotlin.test.assertIs
 
 class BurstSchedulePolicyTest {
     @Test
-    fun `one hundred content events coalesce into one burst`() {
+    fun `continuous content events reach the maximum wait deadline`() {
         val policy = BurstSchedulePolicy()
-        repeat(100) { index ->
-            assertIs<EventPlan.DebounceContent>(policy.onEvent(true, ScanTrigger.CONTENT_CHANGED, "com.demo", index.toLong()))
+        repeat(11) { index ->
+            assertIs<EventPlan.DebounceContent>(policy.onEvent(true, ScanTrigger.CONTENT_CHANGED, "com.demo", index * 100L))
         }
-        val plan = assertIs<EventPlan.StartBurst>(policy.onContentDebounceElapsed("com.demo", 349L))
+
+        val plan = assertIs<EventPlan.StartBurst>(policy.onContentDebounceElapsed("com.demo", 1_000L))
         assertEquals(ScanTrigger.CONTENT_CHANGED, plan.trigger)
-        assertIs<EventPlan.Ignore>(policy.onContentDebounceElapsed("com.demo", 350L))
+        assertIs<EventPlan.Ignore>(policy.onContentDebounceElapsed("com.demo", 1_100L))
     }
 
     @Test
-    fun `same package content events within debounce replace pending callback`() {
+    fun `same package events coalesce while a burst is active`() {
         val policy = BurstSchedulePolicy()
-        assertEquals(false, assertIs<EventPlan.DebounceContent>(policy.onEvent(true, ScanTrigger.CONTENT_CHANGED, "com.demo", 0L)).cancelExistingContent)
-        assertEquals(true, assertIs<EventPlan.DebounceContent>(policy.onEvent(true, ScanTrigger.CONTENT_CHANGED, "com.demo", 100L)).cancelExistingContent)
-        assertIs<EventPlan.Ignore>(policy.onContentDebounceElapsed("com.demo", 250L))
-        assertIs<EventPlan.StartBurst>(policy.onContentDebounceElapsed("com.demo", 350L))
+        assertIs<EventPlan.StartBurst>(policy.onEvent(true, ScanTrigger.PACKAGE_CHANGED, "com.demo", 0L))
+        policy.markBurstStarted("com.demo")
+
+        repeat(100) {
+            assertIs<EventPlan.CoalesceActive>(policy.onEvent(true, ScanTrigger.WINDOWS_CHANGED, "com.demo", it.toLong()))
+        }
+        assertIs<EventPlan.CoalesceActive>(policy.onEvent(true, ScanTrigger.CONTENT_CHANGED, "com.demo", 101L))
     }
 
     @Test
-    fun `window event starts immediately and cancels pending content`() {
+    fun `a package change supersedes the active burst`() {
         val policy = BurstSchedulePolicy()
-        policy.onEvent(true, ScanTrigger.CONTENT_CHANGED, "com.demo", 0L)
-        val plan = assertIs<EventPlan.StartBurst>(policy.onEvent(true, ScanTrigger.WINDOWS_CHANGED, "com.demo", 20L))
-        assertEquals(true, plan.cancelPendingContent)
-        assertEquals(ScanTrigger.WINDOWS_CHANGED, plan.trigger)
+        assertIs<EventPlan.StartBurst>(policy.onEvent(true, ScanTrigger.PACKAGE_CHANGED, "com.one", 0L))
+        policy.markBurstStarted("com.one")
+
+        val next = assertIs<EventPlan.StartBurst>(policy.onEvent(true, ScanTrigger.PACKAGE_CHANGED, "com.two", 10L))
+        assertEquals(true, next.supersedesActiveBurst)
+        assertEquals("com.two", next.packageName)
     }
 
     @Test
-    fun `each new burst explicitly replaces pending scan work`() {
+    fun `completed burst permits a fresh same package event`() {
         val policy = BurstSchedulePolicy()
-        assertEquals(true, assertIs<EventPlan.StartBurst>(policy.onEvent(true, ScanTrigger.WINDOW_STATE_CHANGED, "com.one", 0L)).cancelActiveBurst)
-        assertEquals(true, assertIs<EventPlan.StartBurst>(policy.onEvent(true, ScanTrigger.PACKAGE_CHANGED, "com.two", 10L)).cancelActiveBurst)
+        assertIs<EventPlan.StartBurst>(policy.onEvent(true, ScanTrigger.WINDOW_STATE_CHANGED, "com.demo", 0L))
+        policy.markBurstStarted("com.demo")
+        policy.markBurstFinished()
+
+        assertIs<EventPlan.StartBurst>(policy.onEvent(true, ScanTrigger.WINDOWS_CHANGED, "com.demo", 2_000L))
     }
 
     @Test
-    fun `off mode schedules no scan`() {
+    fun `off mode schedules no scan and clears active state`() {
         val policy = BurstSchedulePolicy()
-        assertIs<EventPlan.Ignore>(policy.onEvent(false, ScanTrigger.CONTENT_CHANGED, "com.demo", 0L))
-        assertIs<EventPlan.Ignore>(policy.onEvent(false, ScanTrigger.WINDOWS_CHANGED, "com.demo", 0L))
-    }
-
-    @Test
-    fun `disabling cancels content already waiting for debounce`() {
-        val policy = BurstSchedulePolicy()
-        policy.onEvent(true, ScanTrigger.CONTENT_CHANGED, "com.demo", 0L)
+        assertIs<EventPlan.StartBurst>(policy.onEvent(true, ScanTrigger.PACKAGE_CHANGED, "com.demo", 0L))
+        policy.markBurstStarted("com.demo")
         policy.disable()
+
+        assertIs<EventPlan.Ignore>(policy.onEvent(false, ScanTrigger.CONTENT_CHANGED, "com.demo", 1L))
         assertIs<EventPlan.Ignore>(policy.onContentDebounceElapsed("com.demo", 250L))
-        assertIs<EventPlan.StartBurst>(policy.onEvent(true, ScanTrigger.CONTENT_CHANGED, "com.demo", 300L).let { policy.onContentDebounceElapsed("com.demo", 550L) })
     }
 }

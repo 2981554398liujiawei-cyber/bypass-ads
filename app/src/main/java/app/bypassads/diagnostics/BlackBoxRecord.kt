@@ -11,6 +11,16 @@ enum class BlackBoxTrigger {
     WINDOWS_CHANGED,
     CONTENT_CHANGED,
     SCAN,
+    CASE_END,
+}
+
+enum class CaseTerminationReason {
+    COMPLETED,
+    SUPERSEDED_BY_PACKAGE,
+    MODE_OFF,
+    SERVICE_DESTROYED,
+    SCAN_BUSY,
+    INTERNAL_ERROR,
 }
 
 data class BlackBoxRecord(
@@ -27,6 +37,27 @@ data class BlackBoxRecord(
     val decision: SkipDecision? = null,
     val latencyMs: Long? = null,
     val scanWorkMs: Long? = null,
+    val windowAcquireMs: Long? = null,
+    val snapshotMs: Long? = null,
+    val detectionMs: Long? = null,
+    val decisionMs: Long? = null,
+    val windowsTraversed: Int? = null,
+    val nodesVisited: Int? = null,
+    val maxDepth: Int? = null,
+    val rootAcquireMaxMs: Long? = null,
+    val childQueryMaxMs: Long? = null,
+    val captureBudgetHit: Boolean? = null,
+    val captureBudgetReason: String? = null,
+    val workerBusyDrops: Long? = null,
+    val workerMaxQueueDepth: Int? = null,
+    val scheduledFrames: Int? = null,
+    val executedFrames: Int? = null,
+    val cancelledFrames: Int? = null,
+    val droppedFrames: Int? = null,
+    val coalescedWindowEvents: Int? = null,
+    val coalescedContentEvents: Int? = null,
+    val caseDurationMs: Long? = null,
+    val terminationReason: CaseTerminationReason? = null,
 )
 
 data class DiagnosticReason(
@@ -66,6 +97,27 @@ data class DiagnosticRecord(
     val candidates: List<DiagnosticCandidate>,
     val latencyMs: Long?,
     val scanWorkMs: Long?,
+    val windowAcquireMs: Long?,
+    val snapshotMs: Long?,
+    val detectionMs: Long?,
+    val decisionMs: Long?,
+    val windowsTraversed: Int?,
+    val nodesVisited: Int?,
+    val maxDepth: Int?,
+    val rootAcquireMaxMs: Long?,
+    val childQueryMaxMs: Long?,
+    val captureBudgetHit: Boolean?,
+    val captureBudgetReason: String?,
+    val workerBusyDrops: Long?,
+    val workerMaxQueueDepth: Int?,
+    val scheduledFrames: Int?,
+    val executedFrames: Int?,
+    val cancelledFrames: Int?,
+    val droppedFrames: Int?,
+    val coalescedWindowEvents: Int?,
+    val coalescedContentEvents: Int?,
+    val caseDurationMs: Long?,
+    val terminationReason: CaseTerminationReason?,
 )
 
 data class BlackBoxStats(

@@ -74,6 +74,16 @@ class BlackBoxRepositoryTest {
         assertTrue(health.maxPendingIoJobs >= 50)
     }
 
+    @Test
+    fun `retention enforces a real small byte boundary`() {
+        val directory = Files.createTempDirectory("blackbox-cap").toFile()
+        val repository = BlackBoxRepository(directory, maxBytes = 700L)
+        repeat(20) { repository.append(record(it)) }
+        awaitRecords(repository)
+        val bytes = directory.listFiles().orEmpty().sumOf { it.length() }
+        assertTrue(bytes <= 700L, "expected at most 700 bytes, got $bytes")
+    }
+
     private fun repository(): BlackBoxRepository = BlackBoxRepository(Files.createTempDirectory("blackbox-test").toFile())
 
     private fun record(scan: Int) = BlackBoxRecord(
