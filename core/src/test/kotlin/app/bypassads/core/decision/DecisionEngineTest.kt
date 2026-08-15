@@ -79,16 +79,19 @@ class DecisionEngineTest {
     }
 
     @Test
-    fun `countdown progression adds temporal evidence without storing raw text`() {
+    fun `countdown progression across 5 4 3 adds temporal evidence`() {
         val tracker = TemporalCandidateTracker()
         val first = detector.extract(snapshot(node(0, null, null, "跳过 5", IntRect(920, 60, 1050, 130), true)))
         val second = detector.extract(snapshot(node(0, null, null, "跳过 4", IntRect(920, 60, 1050, 130), true)))
+        val third = detector.extract(snapshot(node(0, null, null, "跳过 3", IntRect(920, 60, 1050, 130), true)))
 
         tracker.enrich(first)
-        val enriched = tracker.enrich(second).single()
+        tracker.enrich(second)
+        val enriched = tracker.enrich(third).single()
 
         assertEquals("跳过", enriched.label)
-        assertEquals(2, enriched.stabilityHits)
+        assertEquals(3, enriched.stabilityHits)
+        assertEquals(3, enriched.countdownValue)
         assertTrue(enriched.countdownStepObserved)
     }
 
@@ -132,6 +135,39 @@ class DecisionEngineTest {
         assertTrue(candidate.risks.any { it.code == "rapid_position_drift" })
         assertEquals(DecisionType.TOO_RISKY, decision.type)
         assertEquals("severe_risk", decision.rejectionReason)
+    }
+
+    @Test
+    fun `candidate disappearance does not preserve stability`() {
+        val tracker = TemporalCandidateTracker()
+        val candidateFrame = detector.extract(
+            snapshot(node(0, null, "com.demo:id/ad_skip", "跳过", IntRect(900, 60, 1050, 130), true)),
+        )
+
+        assertEquals(1, tracker.enrich(candidateFrame).single().stabilityHits)
+        assertTrue(tracker.enrich(emptyList()).isEmpty())
+        val reappeared = tracker.enrich(candidateFrame).single()
+
+        assertEquals(1, reappeared.stabilityHits)
+        assertFalse(reappeared.positionDriftDetected)
+    }
+
+    @Test
+    fun `candidate appearing on a later frame is not treated as drift`() {
+        val tracker = TemporalCandidateTracker()
+        val emptyFrame = detector.extract(
+            UiSnapshot("com.demo", 1080, 2400, 1L, 0, emptyList()),
+        )
+        val candidateFrame = detector.extract(
+            snapshot(node(0, null, "com.demo:id/ad_skip", "跳过", IntRect(900, 60, 1050, 130), true)),
+        )
+
+        assertTrue(tracker.enrich(emptyFrame).isEmpty())
+        val appeared = tracker.enrich(candidateFrame).single()
+
+        assertEquals(1, appeared.stabilityHits)
+        assertFalse(appeared.positionDriftDetected)
+        assertEquals(DecisionType.WOULD_CLICK, engine.decide(detector.score(listOf(appeared))).type)
     }
 
     @Test

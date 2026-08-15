@@ -13,13 +13,21 @@ class TemporalCandidateTracker {
         observations.clear()
     }
 
-    fun enrich(features: List<CandidateFeatures>): List<CandidateFeatures> = features
-        .groupBy(::identity)
-        .flatMap { (key, currentGroup) ->
+    fun enrich(features: List<CandidateFeatures>): List<CandidateFeatures> {
+        val currentGroups = features.groupBy(::identity)
+        observations.keys
+            .filter { it !in currentGroups }
+            .toList()
+            .forEach { key ->
+                observations[key] = observations.getValue(key).map { it.copy(missedFrames = it.missedFrames + 1) }
+            }
+
+        return currentGroups.flatMap { (key, currentGroup) ->
             val previousGroup = observations[key].orEmpty()
+            val continuousPrevious = previousGroup.filter { it.missedFrames == 0 }
             // Multiple visually similar candidates are an ambiguity, not proof that one candidate jumped.
-            val ambiguousGroup = currentGroup.size > 1 || previousGroup.size > 1
-            val previous = previousGroup.singleOrNull()
+            val ambiguousGroup = currentGroup.size > 1 || continuousPrevious.size > 1
+            val previous = continuousPrevious.singleOrNull()
             val enriched = currentGroup.map { current ->
                 val positionDrifted = !ambiguousGroup && previous != null && movedSignificantly(current, previous)
                 val hits = if (previous == null || ambiguousGroup || positionDrifted) 1 else previous.hits + 1
@@ -41,10 +49,12 @@ class TemporalCandidateTracker {
                     centerX = candidate.bounds.centerX,
                     centerY = candidate.bounds.centerY,
                     driftObserved = candidate.positionDriftDetected,
+                    missedFrames = 0,
                 )
             }
             enriched
         }
+    }
 
     private fun identity(value: CandidateFeatures): String = buildString {
         append(value.resourceId ?: value.label)
@@ -66,6 +76,7 @@ class TemporalCandidateTracker {
         val centerX: Int,
         val centerY: Int,
         val driftObserved: Boolean,
+        val missedFrames: Int,
     )
 
     private companion object {
