@@ -137,7 +137,8 @@ class MainActivity : Activity() {
             isFocusable = true
             setOnClickListener {
                 // Human/trial tap: the ad target vanishes like a real skip.
-                root.removeView(this)
+                // Remove from the actual parent (the scene FrameLayout).
+                (this.parent as? ViewGroup)?.removeView(this)
                 Toast.makeText(this@MainActivity, "已跳过（场景结束）", Toast.LENGTH_SHORT).show()
                 handler.postDelayed({ showPicker() }, 400)
             }
@@ -245,7 +246,7 @@ class MainActivity : Activity() {
         scene.addView(countdown)
         scene.addView(skip)
         startCountdown(countdown, 5) {
-            root.post { root.removeView(skip) }
+            scene.removeView(skip)
             handler.postDelayed({ showPicker() }, 600)
         }
     }
@@ -277,7 +278,7 @@ class MainActivity : Activity() {
             isClickable = true
             isFocusable = true
             setOnClickListener {
-                root.removeView(this)
+                (this.parent as? ViewGroup)?.removeView(this)
                 Toast.makeText(this@MainActivity, "中部跳过被点", Toast.LENGTH_SHORT).show()
             }
         }
