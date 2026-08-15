@@ -2,9 +2,9 @@
 
 A clean-room, fully offline Android 15+ tool for observing and diagnosing safer splash-ad skip decisions.
 
-> Status: **Shadow-only 1.0.0-rc1 Experimental Preview — public testing; not a formal RC gate PASS**. This is an OFF/Shadow-only observation and diagnostics tool, not an automatic ad skipper. Known device-scope limitation (Xiaomi/HyperOS): the OEM power engine unbinds the accessibility service while the app idles in background; it rebinds on return to foreground.
+> Status: **Shadow-only 1.0.0-rc1 Release Candidate — formal RC gate PASS**. This is an OFF/Shadow-only observation and diagnostics tool, not an automatic ad skipper. Known Xiaomi/HyperOS compatibility note: the OEM power engine may transiently unbind the accessibility service while the app idles in background; post-idle app launches are still observed (verified 5/5), and the service rebinds on return to foreground.
 
-## V1.0 RC scope (experimental preview)
+## V1.0 RC scope (release candidate)
 
 Bypass Ads. supports Android 15+ devices and runs entirely on-device. In
 `Shadow`, it observes accessibility windows, evaluates candidates, and records

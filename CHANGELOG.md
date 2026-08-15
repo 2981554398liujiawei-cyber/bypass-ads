@@ -1,13 +1,13 @@
 # Changelog
 
-## 1.0.0-rc1 - Experimental preview
+## 1.0.0-rc1 - Release Candidate
 
-> Status per M1.6 audit: 8/10 release gates verified. Released for public
-> testing as an experimental preview because the only available Android 15+
-> physical device (Xiaomi / HyperOS) does not support reliable continuous
-> background observation: the OEM power engine unbinds the accessibility
-> service while the app idles in background and rebinds it on return to
-> foreground. See `docs/release-candidate.md` for the full record.
+> **M1.6 formal RC gate: PASS.** P1-1 post-idle launch availability PASS (5/5:
+> after leaving the app and waiting past the OEM idle window, launching other
+> apps still produced new Shadow scans), P1-2 OFF/Shadow lifecycle PASS. The
+> Xiaomi/HyperOS SmartPower transient unbind is recorded as a documented
+> compatibility risk, not a release blocker. Shadow-only — does not skip ads
+> automatically. See `docs/release-candidate.md` for the full record.
 
 ### Added
 

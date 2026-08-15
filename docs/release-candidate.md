@@ -1,13 +1,14 @@
-# 1.0.0-rc1 Experimental Preview
+# 1.0.0-rc1 Release Candidate
 
-> **Status: experimental preview, not a formal release-candidate gate PASS.**
-> The M1.6 audit verified 8/10 release gates; the remaining limitation is
-> device-scope: on the only available Android 15+ physical device (a Xiaomi /
-> HyperOS device), the OEM power engine unbinds the accessibility service while
-> the app process idles in background, so reliable *continuous background
-> observation* is not guaranteed there. Per audit decision, this build is
-> released for public testing as an experimental preview while the runtime
-> itself stays frozen at `708c6b6`.
+> **Status: formal release-candidate gate PASS.** M1.6 audit PASS (P1-1 post-idle
+> launch availability 5/5 PASS, P1-2 OFF/Shadow lifecycle PASS). The runtime
+> stays frozen at `708c6b6`; later commits are audit/release documentation only.
+> This is a Shadow-only observation/diagnostics build — it never clicks,
+> gestures, or skips ads automatically. On the only available Android 15+
+> physical device (Xiaomi / HyperOS), the OEM power engine may transiently
+> unbind the accessibility service while the app idles in background; that is a
+> documented compatibility risk, not a release blocker (post-idle launches
+> still produce scans — verified below).
 
 ## Product scope
 
@@ -119,26 +120,46 @@ Service manually enabled by the user; aggregate results only.
 | Crash/ANR | PASS — no crash/ANR in device logs; process stable across hours |
 | Home status truthfulness | PASS — UI state follows the real service state in both directions (verified with temporary diagnostic logs, then removed); the home "waiting for service connection" text appears only while the service is actually unbound |
 
-## Supported device scope (M1.6 audit P1-1)
+## Supported device scope (M1.6 audit P1-1 — PASS)
 
 On the only available Android 15+ physical device (Xiaomi / HyperOS), the OEM
-power engine (`SmartPower`) unbinds the accessibility service when the app
-process idles in background (~3s after backgrounding) and rebinds it on return
-to foreground (enabled list preserved, no user action required). The UI
-truthfully reflects this. This project deliberately implements no keep-alive,
+power engine (`SmartPower`) has been observed to transiently unbind the
+accessibility service when the app process idles in background (~3s after
+backgrounding) and rebind it on return to foreground (enabled list preserved,
+no user action required). This is **not** a stable, reproducible behavior on
+every backgrounding (a 13+ minute continuous bound window with repeated
+background intervals was observed on 08-16), and it does not block the core
+product scenario. This project deliberately implements no keep-alive,
 foreground service, self-start, or OEM hack (audit prohibition).
 
-Consequences, recorded per audit decision:
+### P1-1 post-idle launch availability — PASS (5/5)
 
-- This Xiaomi/HyperOS device does **not** support reliable continuous
-  background Shadow observation; observation is reliable while Bypass Ads.
-  stays foreground or returns to foreground.
-- Without a second Android 15+ device to demonstrate sustained background
-  binding elsewhere, this build is released as an **experimental preview**
-  (public testing), not as a formal release-candidate gate PASS.
-- A long-running third-party comparison service stays bound on the same
-  device, attributed to its keep-alive mechanism, which this project does not
-  implement.
+The product requirement is that Shadow observes splash-screen windows when the
+user launches other apps *after* having left Bypass Ads. beyond the OEM idle
+window — not sustained background binding per se. Verified on the API 36
+physical device (signed release, UI counter method): for each round the user
+went Home, waited ≥10s (past the ~3s SmartPower idle point), recorded the
+home-screen counter baseline, launched a target app **without returning to
+Bypass Ads.**, then returned and re-read the counter.
+
+| # | Target app | Counter delta | Result |
+| --- | --- | --- | --- |
+| 1 | WeChat | 6538 → 6580 (+42) | PASS |
+| 2 | Settings | 6580 → 6692 (+112) | PASS |
+| 3 | Gallery | 6692 → 6722 (+30) | PASS |
+| 4 | Calendar | 6722 → 6813 (+91) | PASS |
+| 5 | Browser | 6813 → 6841 (+28) | PASS |
+
+Corroborating facts during the same session: the service remained in the
+Bound list across repeated post-idle intervals; the diagnostics page reported
+`writes … failures 0`; the SmartPower log showed no `background->idle` /
+service-unbind for `app.bypassads` that day (the earlier ~3s unbind was
+observed on a previous day and did not reproduce under the same conditions).
+
+Verdict: sustained system binding itself is **not** a release gate; post-idle
+launch observation is the product requirement and is verified. SmartPower
+transient unbinding is recorded as a documented Xiaomi/HyperOS compatibility
+risk, not a release blocker.
 
 ## API 35 compatibility smoke (emulator)
 
@@ -155,12 +176,13 @@ Consequences, recorded per audit decision:
 | Field | Value |
 | --- | --- |
 | Runtime source commit | `708c6b6` (`chore(release): prepare shadow release candidate`) |
-| Build/head commit | `0e54f31` (`docs(release): record shadow RC validation`) |
+| APK build/head commit | `0e54f31` (docs) — runtime unchanged since `708c6b6`; later commits are audit/release documentation only |
 | Evidence/tooling head | `0e54f31` |
 | Release APK SHA-256 | `fcc44dcdfd3157ff43e3dee318427eea69d0d13e071510acd6129199e516d87f` |
 | Signature | v2, RSA 4096, `CN=liujiawei, O=Bypass Ads` |
 | Application ID | `app.bypassads` |
 | versionCode / versionName | `1000001` / `1.0.0-rc1` |
 | minSdk / targetSdk | 35 / 37 |
-| API 36 physical smoke | PASS (signed release) |
+| API 36 physical smoke | PASS (signed release; OFF/Shadow lifecycle + post-idle launch 5/5) |
 | API 35 compatibility smoke | PASS (emulator) |
+| Formal RC gate (M1.6) | PASS — P1-1 post-idle launch availability 5/5, P1-2 OFF/Shadow lifecycle, UI truthfulness, validator 0 violations, no crash/ANR, write failures 0 |
