@@ -33,6 +33,20 @@ non-negative frame accounting, balanced accounting, scan-index range, and
 duplicate scan indexes. Its use as a release-evidence gate requires real JSONL
 records to be adapted into its input model.
 
+## Offline trace validation
+
+The `:evidence` JVM runner adapts local JSONL to the existing
+`CaseTraceValidator`. It emits count-only JSON and exits non-zero for malformed
+JSONL, unadaptable case records, or validator violations. It is intentionally
+offline and reads no network or device state:
+
+```bat
+gradlew.bat :evidence:run --args="--input C:\private\m1-4.jsonl --from-epoch-ms <collection-start-ms>"
+```
+
+The input is a local, temporary copy of the device-private diagnostics file.
+Do not commit it. Only the count-only output belongs in this document.
+
 ## Device matrix
 
 | Device | Manufacturer / model | Android / API | Build fingerprint | Result |

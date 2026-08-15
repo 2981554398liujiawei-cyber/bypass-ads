@@ -15,4 +15,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "BypassAds"
-include(":app", ":core")
+include(":app", ":core", ":evidence")
