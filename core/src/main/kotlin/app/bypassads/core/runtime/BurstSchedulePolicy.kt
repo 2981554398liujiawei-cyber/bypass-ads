@@ -41,6 +41,17 @@ class BurstSchedulePolicy(
                 return EventPlan.CoalesceActive(trigger)
             }
             if (activePackage == packageIdentity || packageIdentity is PackageIdentity.Unknown) return EventPlan.CoalesceActive(trigger)
+            // HyperOS/OEM status-bar storm: while a foreground app burst is
+            // active, a system-UI content change must not preempt it. A real
+            // foreground switch is still driven by WINDOW_STATE/PACKAGE_CHANGED,
+            // so this only filters the idle status-bar churn that otherwise
+            // starves every foreground observation on some devices.
+            if (trigger == ScanTrigger.CONTENT_CHANGED &&
+                packageIdentity is PackageIdentity.Known &&
+                packageIdentity.packageName == SYSTEM_UI_PACKAGE
+            ) {
+                return EventPlan.CoalesceActive(trigger)
+            }
             val hadPendingContent = pendingContent != null
             pendingContent = null
             activePackage = null
@@ -93,5 +104,6 @@ class BurstSchedulePolicy(
     companion object {
         const val CONTENT_DEBOUNCE_MS = 250L
         const val CONTENT_MAX_WAIT_MS = 1_000L
+        const val SYSTEM_UI_PACKAGE = "com.android.systemui"
     }
 }

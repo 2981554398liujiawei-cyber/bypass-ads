@@ -62,6 +62,45 @@ class BurstSchedulePolicyTest {
     }
 
     @Test
+    fun `system ui content change does not preempt a foreground app burst`() {
+        val policy = BurstSchedulePolicy()
+        assertIs<EventPlan.StartBurst>(policy.onEvent(true, ScanTrigger.PACKAGE_CHANGED, pkg("app.bypassads.testad"), 0L))
+        policy.markBurstStarted(pkg("app.bypassads.testad"))
+
+        repeat(5) { index ->
+            assertIs<EventPlan.CoalesceActive>(
+                policy.onEvent(true, ScanTrigger.CONTENT_CHANGED, pkg(BurstSchedulePolicy.SYSTEM_UI_PACKAGE), index.toLong()),
+            )
+        }
+        // The foreground burst must still be the active one.
+        assertIs<EventPlan.CoalesceActive>(policy.onEvent(true, ScanTrigger.CONTENT_CHANGED, pkg("app.bypassads.testad"), 6L))
+    }
+
+    @Test
+    fun `system ui window state change still preempts the active burst`() {
+        val policy = BurstSchedulePolicy()
+        assertIs<EventPlan.StartBurst>(policy.onEvent(true, ScanTrigger.PACKAGE_CHANGED, pkg("app.bypassads.testad"), 0L))
+        policy.markBurstStarted(pkg("app.bypassads.testad"))
+
+        val next = assertIs<EventPlan.StartBurst>(
+            policy.onEvent(true, ScanTrigger.WINDOW_STATE_CHANGED, pkg(BurstSchedulePolicy.SYSTEM_UI_PACKAGE), 10L),
+        )
+        assertEquals(true, next.supersedesActiveBurst)
+    }
+
+    @Test
+    fun `another app content change still preempts the active burst`() {
+        val policy = BurstSchedulePolicy()
+        assertIs<EventPlan.StartBurst>(policy.onEvent(true, ScanTrigger.PACKAGE_CHANGED, pkg("app.bypassads.testad"), 0L))
+        policy.markBurstStarted(pkg("app.bypassads.testad"))
+
+        val next = assertIs<EventPlan.StartBurst>(
+            policy.onEvent(true, ScanTrigger.CONTENT_CHANGED, pkg("com.sina.weibo"), 10L),
+        )
+        assertEquals(true, next.supersedesActiveBurst)
+    }
+
+    @Test
     fun `off mode schedules no scan and clears active state`() {
         val policy = BurstSchedulePolicy()
         assertIs<EventPlan.StartBurst>(policy.onEvent(true, ScanTrigger.PACKAGE_CHANGED, pkg("com.demo"), 0L))
