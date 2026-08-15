@@ -11,6 +11,9 @@ import app.bypassads.core.detection.TemporalCandidateTracker
 import app.bypassads.diagnostics.BlackBoxRecord
 import app.bypassads.diagnostics.BlackBoxStore
 import app.bypassads.diagnostics.BlackBoxTrigger
+import app.bypassads.core.runtime.BurstSchedulePolicy
+import app.bypassads.core.runtime.EventPlan
+import app.bypassads.core.runtime.ScanTrigger
 import app.bypassads.runtime.RunMode
 import app.bypassads.runtime.RunModeStore
 import java.util.concurrent.atomic.AtomicLong
@@ -22,10 +25,14 @@ class BypassAdsAccessibilityService : AccessibilityService() {
     private val temporalTracker = TemporalCandidateTracker()
     private val decisionEngine = DecisionEngine()
     private val sessionCounter = AtomicLong(0L)
+    private val schedulePolicy = BurstSchedulePolicy()
+    private val scheduledScans = mutableListOf<Runnable>()
 
     private lateinit var runModeStore: RunModeStore
     private lateinit var blackBox: BlackBoxStore
     private var activeSession = 0L
+    private var pendingContentCallback: Runnable? = null
+    private var lastObservedPackage: String? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -44,13 +51,12 @@ class BypassAdsAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (!::runModeStore.isInitialized || runModeStore.get() == RunMode.OFF) return
+        if (!::runModeStore.isInitialized) return
         val current = event ?: return
-        val trigger = current.toBlackBoxTrigger() ?: return
         val packageHint = current.packageName?.toString()
         if (packageHint == packageName) return
-
-        startBurst(packageHint, trigger)
+        val trigger = current.toScanTrigger(packageHint) ?: return
+        applyPlan(schedulePolicy.onEvent(runModeStore.get() != RunMode.OFF, trigger, packageHint, SystemClock.elapsedRealtime()))
     }
 
     override fun onInterrupt() = Unit
@@ -58,7 +64,38 @@ class BypassAdsAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         activeSession = sessionCounter.incrementAndGet()
         handler.removeCallbacksAndMessages(null)
+        if (::blackBox.isInitialized) blackBox.close()
         super.onDestroy()
+    }
+
+    private fun applyPlan(plan: EventPlan) {
+        when (plan) {
+            EventPlan.Ignore -> Unit
+            is EventPlan.DebounceContent -> {
+                if (plan.cancelExistingContent) cancelPendingContent()
+                val callback = Runnable {
+                    pendingContentCallback = null
+                    applyPlan(schedulePolicy.onContentDebounceElapsed(plan.packageName, SystemClock.elapsedRealtime()))
+                }
+                pendingContentCallback = callback
+                handler.postDelayed(callback, plan.delayMs)
+            }
+            is EventPlan.StartBurst -> {
+                if (plan.cancelPendingContent) cancelPendingContent()
+                if (plan.cancelActiveBurst) cancelScheduledScans()
+                startBurst(plan.packageName, plan.trigger.toBlackBoxTrigger())
+            }
+        }
+    }
+
+    private fun cancelPendingContent() {
+        pendingContentCallback?.let(handler::removeCallbacks)
+        pendingContentCallback = null
+    }
+
+    private fun cancelScheduledScans() {
+        scheduledScans.forEach(handler::removeCallbacks)
+        scheduledScans.clear()
     }
 
     private fun startBurst(packageHint: String?, trigger: BlackBoxTrigger) {
@@ -76,7 +113,9 @@ class BypassAdsAccessibilityService : AccessibilityService() {
             ),
         )
         BURST_DELAYS_MS.forEachIndexed { index, delay ->
-            handler.postDelayed({ scan(session, index, packageHint, trigger, triggeredAtElapsedMs) }, delay)
+            val callback = Runnable { scan(session, index, packageHint, trigger, triggeredAtElapsedMs) }
+            scheduledScans += callback
+            handler.postDelayed(callback, delay)
         }
     }
 
@@ -88,6 +127,7 @@ class BypassAdsAccessibilityService : AccessibilityService() {
         triggeredAtElapsedMs: Long,
     ) {
         if (session != activeSession || runModeStore.get() == RunMode.OFF) return
+        val scanStartedAtElapsedMs = SystemClock.elapsedRealtime()
         val metrics = resources.displayMetrics
         val snapshot = snapshotBuilder.capture(
             windows = windows.orEmpty(),
@@ -114,16 +154,29 @@ class BypassAdsAccessibilityService : AccessibilityService() {
                 candidateFeatures = features,
                 decision = decision,
                 latencyMs = SystemClock.elapsedRealtime() - triggeredAtElapsedMs,
+                scanWorkMs = SystemClock.elapsedRealtime() - scanStartedAtElapsedMs,
             ),
         )
 
         // M1 safety gate: Shadow mode only. This service never invokes click or gesture APIs.
     }
 
-    private fun AccessibilityEvent.toBlackBoxTrigger(): BlackBoxTrigger? = when (eventType) {
-        AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> BlackBoxTrigger.PACKAGE_CHANGED
-        AccessibilityEvent.TYPE_WINDOWS_CHANGED -> BlackBoxTrigger.WINDOW_CHANGED
+    private fun AccessibilityEvent.toScanTrigger(packageHint: String?): ScanTrigger? = when (eventType) {
+        AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
+            val changed = packageHint != null && packageHint != lastObservedPackage
+            lastObservedPackage = packageHint ?: lastObservedPackage
+            if (changed) ScanTrigger.PACKAGE_CHANGED else ScanTrigger.WINDOW_STATE_CHANGED
+        }
+        AccessibilityEvent.TYPE_WINDOWS_CHANGED -> ScanTrigger.WINDOWS_CHANGED
+        AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> ScanTrigger.CONTENT_CHANGED
         else -> null
+    }
+
+    private fun ScanTrigger.toBlackBoxTrigger(): BlackBoxTrigger = when (this) {
+        ScanTrigger.WINDOW_STATE_CHANGED -> BlackBoxTrigger.WINDOW_STATE_CHANGED
+        ScanTrigger.WINDOWS_CHANGED -> BlackBoxTrigger.WINDOWS_CHANGED
+        ScanTrigger.CONTENT_CHANGED -> BlackBoxTrigger.CONTENT_CHANGED
+        ScanTrigger.PACKAGE_CHANGED -> BlackBoxTrigger.PACKAGE_CHANGED
     }
 
     private companion object {

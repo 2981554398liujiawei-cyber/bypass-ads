@@ -34,9 +34,9 @@ Pure Kotlin with no Android APIs:
 
 Android integration:
 
-- `BypassAdsAccessibilityService`: package/window trigger and burst scheduling
+- `BypassAdsAccessibilityService`: package/window trigger and burst scheduling. It observes window-state, windows, and content events only; content events are debounced for 250 ms.
 - `NodeSnapshotBuilder`: Android accessibility nodes to core snapshots
-- `BlackBoxStore`: bounded, crash-tolerant local JSONL diagnostics
+- `BlackBoxStore`: bounded, crash-tolerant local JSONL diagnostics on a single serial worker
 - Compose Home, Diagnostics, and Settings UI
 
 ## Safety rules
@@ -49,7 +49,7 @@ Android integration:
 - A candidate that moves more than 8% of screen width or height within a burst is a severe risk.
 - Spatially separated candidates that both independently cross the trust threshold are treated as a conflict and rejected.
 - Resource ID + conventional label + top-corner geometry + small clickable target is strong evidence, not a permission to act.
-- `BypassAdsAccessibilityService` contains no node action, global action, or gesture call. `RunMode` has only `SHADOW` and `OFF`.
+- The service requests no gesture capability and contains no node action, global action, or gesture call. `RunMode` has only `SHADOW` and `OFF`.
 
 ## Deferred work after M1
 

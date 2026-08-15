@@ -7,6 +7,9 @@ enum class BlackBoxTrigger {
     SERVICE_CONNECTED,
     PACKAGE_CHANGED,
     WINDOW_CHANGED,
+    WINDOW_STATE_CHANGED,
+    WINDOWS_CHANGED,
+    CONTENT_CHANGED,
     SCAN,
 }
 
@@ -22,6 +25,7 @@ data class BlackBoxRecord(
     val candidateFeatures: List<CandidateFeatures> = emptyList(),
     val decision: SkipDecision? = null,
     val latencyMs: Long? = null,
+    val scanWorkMs: Long? = null,
 )
 
 data class DiagnosticReason(
@@ -39,6 +43,7 @@ data class DiagnosticCandidate(
     val countdownStepObserved: Boolean,
     val positionDriftDetected: Boolean,
     val ctaSiblingDetected: Boolean,
+    val identityAmbiguous: Boolean,
 )
 
 data class DiagnosticRecord(
@@ -58,6 +63,7 @@ data class DiagnosticRecord(
     val risks: List<DiagnosticReason>,
     val candidates: List<DiagnosticCandidate>,
     val latencyMs: Long?,
+    val scanWorkMs: Long?,
 )
 
 data class BlackBoxStats(

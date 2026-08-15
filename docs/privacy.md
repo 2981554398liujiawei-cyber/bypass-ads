@@ -10,11 +10,11 @@ The application manifest does not request `android.permission.INTERNET`. No anal
 
 The default recorder stores only data needed to diagnose a Shadow decision:
 
-- timestamp, session/scan index, trigger, and latency
+- timestamp, session/scan index, trigger, total latency, and scan work duration
 - package name and window/node/candidate counts
 - sanitized candidate label (`skip`, `close`, `跳过`, `关闭`, `×`) and resource ID
 - candidate geometry, clickability, and clickable-ancestor geometry
-- temporal stability, countdown progression, and position-drift booleans
+- temporal stability, countdown progression, position-drift, and identity-ambiguity booleans
 - boolean semantic risk flags, such as whether a CTA-like sibling was observed
 - score, named evidence/risk reasons, decision, and rejection reason
 
@@ -27,6 +27,8 @@ It does not store:
 - full raw AccessibilityEvent payloads
 
 Retention is bounded to 7 days and 20 MB, whichever constraint is reached first. Data stays in Android app-private storage and can be cleared locally from Diagnostics.
+
+The recorder performs JSONL writes, sync, retention, reads, and clearing on one serial background worker. It requests no screenshot or gesture capability and subscribes to no `TYPE_VIEW_TEXT_CHANGED` events.
 
 ## Future detailed diagnostics
 

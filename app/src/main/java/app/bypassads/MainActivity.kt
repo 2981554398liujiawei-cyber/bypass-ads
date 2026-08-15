@@ -32,6 +32,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -44,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.bypassads.diagnostics.BlackBoxStore
+import app.bypassads.diagnostics.BlackBoxStats
 import app.bypassads.diagnostics.DiagnosticRecord
 import app.bypassads.runtime.RunMode
 import app.bypassads.runtime.RunModeStore
@@ -74,9 +77,18 @@ class MainActivity : ComponentActivity() {
         var clearConfirmationVisible by remember { mutableStateOf(false) }
         val refresh = refreshSignal
         val serviceEnabled = remember(refresh) { isServiceEnabled() }
-        val stats = remember(refresh) { blackBox.todayStats() }
-        val recent = remember(refresh) { blackBox.recentRecords() }
+        var stats by remember { mutableStateOf(BlackBoxStats(0, 0, 0, null)) }
+        var recent by remember { mutableStateOf(emptyList<DiagnosticRecord>()) }
         val lastConnected = remember(refresh) { modeStore.lastServiceConnected() }
+
+        DisposableEffect(blackBox) {
+            onDispose { blackBox.close() }
+        }
+
+        LaunchedEffect(refresh) {
+            blackBox.todayStats { value -> runOnUiThread { stats = value } }
+            blackBox.recentRecords { value -> runOnUiThread { recent = value } }
+        }
 
         MaterialTheme {
             Surface(color = PageBackground, modifier = Modifier.fillMaxSize()) {
@@ -144,9 +156,12 @@ class MainActivity : ComponentActivity() {
                 confirmButton = {
                     TextButton(
                         onClick = {
-                            blackBox.clear()
-                            clearConfirmationVisible = false
-                            refreshSignal++
+                            blackBox.clear {
+                                runOnUiThread {
+                                    clearConfirmationVisible = false
+                                    refreshSignal++
+                                }
+                            }
                         },
                     ) { Text("清空", color = Danger) }
                 },
@@ -381,6 +396,7 @@ class MainActivity : ComponentActivity() {
                     record.decision?.let { Text("Decision：$it", modifier = Modifier.padding(top = 8.dp), fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Ink) }
                     record.score?.let { Text("Score：$it", modifier = Modifier.padding(top = 4.dp), fontSize = 13.sp, color = Muted) }
                     record.latencyMs?.let { Text("Latency：${it}ms", modifier = Modifier.padding(top = 4.dp), fontSize = 13.sp, color = Muted) }
+                    record.scanWorkMs?.let { Text("Scan work：${it}ms", modifier = Modifier.padding(top = 4.dp), fontSize = 13.sp, color = Muted) }
                     record.rejectionReason?.let { Text("拒绝原因：${it.replace('_', ' ')}", modifier = Modifier.padding(top = 4.dp), fontSize = 13.sp, color = Danger) }
                     ReasonList("Evidence", record.evidence)
                     ReasonList("Risk flags", record.risks)
@@ -395,7 +411,7 @@ class MainActivity : ComponentActivity() {
                                 color = Muted,
                             )
                             Text(
-                                "clickable=${candidate.clickable}, hits=${candidate.stabilityHits}, countdown=${candidate.countdownValue}, drift=${candidate.positionDriftDetected}, ctaSibling=${candidate.ctaSiblingDetected}",
+                                "clickable=${candidate.clickable}, hits=${candidate.stabilityHits}, countdown=${candidate.countdownValue}, drift=${candidate.positionDriftDetected}, ctaSibling=${candidate.ctaSiblingDetected}, identityAmbiguous=${candidate.identityAmbiguous}",
                                 modifier = Modifier.padding(top = 2.dp),
                                 fontSize = 11.sp,
                                 lineHeight = 16.sp,

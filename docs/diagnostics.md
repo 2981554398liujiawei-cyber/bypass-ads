@@ -11,14 +11,13 @@ A service connection, package/window trigger, and each burst scan are separate r
   "scan": 2,
   "package": "com.example",
   "trigger": "SCAN",
-  "sourceTrigger": "WINDOW_CHANGED",
+  "sourceTrigger": "CONTENT_CHANGED",
   "windows": 1,
   "nodes": 143,
   "candidates": 1,
   "decision": "WOULD_CLICK",
   "score": 106,
   "evidence": [
-    {"code":"resource_id_skip","points":36},
     {"code":"label_skip","points":24},
     {"code":"top_right","points":18}
   ],
@@ -33,14 +32,18 @@ A service connection, package/window trigger, and each burst scan are separate r
       "countdown":4,
       "countdownStep":true,
       "positionDrift":false,
-      "ctaSibling":false
+      "ctaSibling":false,
+      "identityAmbiguous":false
     }
   ],
-  "latencyMs":141
+  "latencyMs":141,
+  "scanWorkMs":9
 }
 ```
 
-Records use append-and-sync writes. A process interruption can at most leave an incomplete final line; the reader skips invalid lines so earlier history remains usable. Retention removes records older than 7 days, then deletes oldest daily files until the total is at most 20 MB.
+`PACKAGE_CHANGED` is emitted only when the observed package changes. `WINDOW_STATE_CHANGED` and `WINDOWS_CHANGED` begin a burst immediately. `CONTENT_CHANGED` is coalesced per package with a 250 ms debounce. Superseding bursts explicitly remove pending scan callbacks.
+
+Records use append-and-sync writes on one serial background worker; reads, retention, and clearing use that worker as well. A process interruption can at most leave an incomplete final line; the reader skips invalid lines so earlier history remains usable. Retention removes records older than 7 days, then deletes oldest daily files until the total is at most 20 MB.
 
 The Diagnostics screen exposes recent records, score/risk detail, today’s counts, and a confirmed local clear action. It does not upload or export data in M1.
 

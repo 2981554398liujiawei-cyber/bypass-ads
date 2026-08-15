@@ -15,17 +15,17 @@ A clean-room, fully offline Android 15+ Shadow-mode tool for observing safer spl
 
 ## M1 scope
 
-1. Accessibility window/node capture with a 0 / 60 / 140 / 300 / 600 / 1000 ms burst after package/window transitions.
+1. Accessibility window/node capture with a 0 / 60 / 140 / 300 / 600 / 1000 ms burst after package/window transitions. Content-change bursts are coalesced per package for 250 ms.
 2. Conservative candidate detector, temporal tracker, scorer, and pure-Kotlin decision engine.
 3. Shadow decisions (`WOULD_CLICK`, `TOO_RISKY`, `NO_CANDIDATE`) only — never an action.
-4. Local JSONL black box with 7-day / 20-MB retention, details, stats, and manual clearing.
+4. Local JSONL black box with single-worker asynchronous I/O, 7-day / 20-MB retention, details, stats, and manual clearing.
 5. Minimal Compose Home, Diagnostics, and Settings screens.
 6. Pure-JVM safety regression tests in `:core`.
 
 ## Explicitly out of scope
 
 - OCR, screenshots, cloud rules, runtime networking, analytics, crash-reporting SaaS, advertising SDKs.
-- Active clicking, gestures, an Active-mode switch, foreground-service persistence hacks, or Android 14-and-below compatibility.
+- Active clicking, gestures, an Active-mode switch, foreground-service persistence hacks, `TYPE_VIEW_TEXT_CHANGED`, or Android 14-and-below compatibility.
 
 ## Build
 
@@ -42,7 +42,7 @@ The debug APK is emitted at `app/build/outputs/apk/debug/app-debug.apk`.
 1. Confirm `app.bypassads` from the release manifest and no `android.permission.INTERNET` using `apkanalyzer` or `aapt`.
 2. Install on Android 15+ beside `hello.litiaotiao.app`.
 3. Enable **Bypass Ads. · 开屏观察** in Accessibility settings.
-4. Open ordinary apps and confirm `PACKAGE_CHANGED`, `WINDOW_CHANGED`, and `SCAN` records appear in Diagnostics.
+4. Open ordinary apps and confirm `PACKAGE_CHANGED`, `WINDOW_STATE_CHANGED`, `WINDOWS_CHANGED`, `CONTENT_CHANGED`, and `SCAN` records appear in Diagnostics.
 5. Confirm decisions and score/risk breakdowns are recorded, while the device never receives an automated click.
 
 See [architecture](docs/architecture.md), [diagnostics](docs/diagnostics.md), and [privacy](docs/privacy.md).
