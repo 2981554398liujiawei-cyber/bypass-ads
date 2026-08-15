@@ -103,7 +103,7 @@ class ActuationOutcomeTest {
         )
         assertEquals(
             null,
-            ActionProposal.fromDecision(decision, "com.demo.app", 1, 1_000L),
+            ActionProposal.fromDecision(decision, "com.demo.app", 1L, 10L, 1_000L),
         )
     }
 }

@@ -52,4 +52,10 @@ enum class ActuationBlockReason {
 
     /** Countdown behaved abnormally on revalidation. */
     COUNTDOWN_ANOMALY,
+
+    /** This case already had its single allowed actuation attempt. */
+    ATTEMPT_LIMIT_REACHED,
+
+    /** The fresh snapshot is not newer than the proposal. */
+    REVALIDATION_STALE,
 }

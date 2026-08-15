@@ -16,7 +16,7 @@ import kotlin.test.assertIs
 /**
  * Adversarial fixture corpus for the fail-closed [ActuationGate]
  * (ADR-0002, M2.0 §4 task). Dangerous scenarios must all BLOCK with a
- * concrete reason; the clean positive case must reach ALLOW (the gate is not
+ * concrete reason; the clean positive cases must reach ALLOW (the gate is not
  * "always refuse").
  */
 class ActuationGateTest {
@@ -60,12 +60,15 @@ class ActuationGateTest {
     private fun proposal(
         cand: SkipCandidate,
         packageName: String? = "com.demo.app",
-        windowCount: Int = 1,
+        generation: Long = 1L,
+        windowToken: Long = 10L,
+        elapsedMs: Long = 1_000L,
     ) = ActionProposal.fromDecision(
         SkipDecision(DecisionType.WOULD_CLICK, cand, 80),
         packageName,
-        windowCount,
-        1_000L,
+        generation,
+        windowToken,
+        elapsedMs,
     )!!
 
     private fun node(
@@ -97,12 +100,16 @@ class ActuationGateTest {
     private fun fresh(
         matches: List<UiNodeSnapshot>,
         packageName: String? = "com.demo.app",
-        windowCount: Int = 1,
+        generation: Long = 1L,
+        windowToken: Long = 10L,
+        capturedAtMs: Long = 2_000L,
         cta: Boolean = false,
         countdownAnomaly: Boolean = false,
     ) = FreshTargetResolution(
         packageName = packageName,
-        windowCount = windowCount,
+        currentCaseGeneration = generation,
+        currentWindowContextToken = windowToken,
+        freshCapturedAtElapsedMs = capturedAtMs,
         screenWidth = screenWidth,
         screenHeight = screenHeight,
         matches = matches,
@@ -111,8 +118,18 @@ class ActuationGateTest {
     )
 
     private fun topRightSmall(): IntRect = IntRect(900, 60, 1050, 130)
+    private fun topLeftSmall(): IntRect = IntRect(30, 60, 180, 130)
 
-    // ---- positive case ------------------------------------------------------
+    private fun evaluateAllow(
+        prop: ActionProposal,
+        fresh: FreshTargetResolution,
+        attempts: Int = 0,
+        caseActive: Boolean = true,
+        score: Int = 88,
+        risks: List<WeightedReason> = emptyList(),
+    ) = gate.evaluate(prop, true, caseActive, attempts, fresh, score, risks)
+
+    // ---- positive cases ------------------------------------------------------
 
     @Test
     fun `unique top-right small skip with consistent revalidation is allowed`() {
@@ -120,17 +137,20 @@ class ActuationGateTest {
         val prop = proposal(cand)
         val match = node(0, null, "com.demo:id/skip", "跳过", topRightSmall())
 
-        val verdict = gate.evaluate(
-            proposal = prop,
-            modeAllowsAction = true,
-            caseActive = true,
-            generationStale = false,
-            fresh = fresh(listOf(match)),
-            revalidatedScore = 88,
-            revalidatedRisks = emptyList(),
-        )
+        val verdict = evaluateAllow(prop, fresh(listOf(match)))
 
-        assertIs<ActuationVerdict.Allow>(verdict)
+        assertIs<Allow>(verdict)
+    }
+
+    @Test
+    fun `unique top-left small skip is allowed`() {
+        val cand = candidate("跳过", topLeftSmall())
+        val prop = proposal(cand)
+        val match = node(0, null, null, "跳过", topLeftSmall())
+
+        val verdict = evaluateAllow(prop, fresh(listOf(match)))
+
+        assertIs<Allow>(verdict)
     }
 
     @Test
@@ -139,9 +159,9 @@ class ActuationGateTest {
         val prop = proposal(cand)
         val match = node(0, null, null, "Skip", topRightSmall())
 
-        val verdict = gate.evaluate(prop, true, true, false, fresh(listOf(match)), 88, emptyList())
+        val verdict = evaluateAllow(prop, fresh(listOf(match)))
 
-        assertIs<ActuationVerdict.Allow>(verdict)
+        assertIs<Allow>(verdict)
     }
 
     // ---- adversarial corpus: every scenario must BLOCK ----------------------
@@ -152,7 +172,7 @@ class ActuationGateTest {
         val prop = proposal(cand)
         val match = node(0, null, null, "×", IntRect(430, 1050, 650, 1130))
 
-        val verdict = gate.evaluate(prop, true, true, false, fresh(listOf(match)), 88, emptyList())
+        val verdict = evaluateAllow(prop, fresh(listOf(match)))
 
         assertEquals(Block(ActuationBlockReason.GEOMETRY_CHANGED), verdict)
     }
@@ -164,7 +184,7 @@ class ActuationGateTest {
         val prop = proposal(cand)
         val match = node(0, null, null, "关闭", big)
 
-        val verdict = gate.evaluate(prop, true, true, false, fresh(listOf(match)), 88, emptyList())
+        val verdict = evaluateAllow(prop, fresh(listOf(match)))
 
         assertEquals(Block(ActuationBlockReason.LARGE_TARGET), verdict)
     }
@@ -175,7 +195,7 @@ class ActuationGateTest {
         val prop = proposal(cand)
         val match = node(0, null, null, "跳过", topRightSmall())
 
-        val verdict = gate.evaluate(prop, true, true, false, fresh(listOf(match), cta = true), 88, emptyList())
+        val verdict = evaluateAllow(prop, fresh(listOf(match), cta = true))
 
         assertEquals(Block(ActuationBlockReason.CTA_RISK), verdict)
     }
@@ -186,7 +206,7 @@ class ActuationGateTest {
         val prop = proposal(cand)
         val match = node(0, null, null, "跳过", topRightSmall())
 
-        val verdict = gate.evaluate(prop, true, true, false, fresh(listOf(match), cta = true), 88, emptyList())
+        val verdict = evaluateAllow(prop, fresh(listOf(match), cta = true))
 
         assertEquals(Block(ActuationBlockReason.CTA_RISK), verdict)
     }
@@ -200,7 +220,7 @@ class ActuationGateTest {
             node(1, null, null, "跳过", IntRect(900, 200, 1050, 270)),
         )
 
-        val verdict = gate.evaluate(prop, true, true, false, fresh(matches), 88, emptyList())
+        val verdict = evaluateAllow(prop, fresh(matches))
 
         assertEquals(Block(ActuationBlockReason.MULTIPLE_TARGETS), verdict)
     }
@@ -214,7 +234,7 @@ class ActuationGateTest {
             node(1, null, null, "跳过", IntRect(700, 60, 850, 130)),
         )
 
-        val verdict = gate.evaluate(prop, true, true, false, fresh(matches), 88, emptyList())
+        val verdict = evaluateAllow(prop, fresh(matches))
 
         assertEquals(Block(ActuationBlockReason.MULTIPLE_TARGETS), verdict)
     }
@@ -226,7 +246,7 @@ class ActuationGateTest {
         // moved far down-left: normalized center distance > 0.05
         val moved = node(0, null, null, "跳过", IntRect(200, 900, 350, 970))
 
-        val verdict = gate.evaluate(prop, true, true, false, fresh(listOf(moved)), 88, emptyList())
+        val verdict = evaluateAllow(prop, fresh(listOf(moved)))
 
         assertEquals(Block(ActuationBlockReason.GEOMETRY_CHANGED), verdict)
     }
@@ -236,7 +256,7 @@ class ActuationGateTest {
         val cand = candidate("跳过", topRightSmall())
         val prop = proposal(cand)
 
-        val verdict = gate.evaluate(prop, true, true, false, fresh(emptyList()), 88, emptyList())
+        val verdict = evaluateAllow(prop, fresh(emptyList()))
 
         assertEquals(Block(ActuationBlockReason.TARGET_DISAPPEARED), verdict)
     }
@@ -247,20 +267,66 @@ class ActuationGateTest {
         val prop = proposal(cand)
         val match = node(0, null, null, "跳过", topRightSmall())
 
-        val verdict = gate.evaluate(prop, true, true, false, fresh(listOf(match), packageName = "com.evil.app"), 88, emptyList())
+        val verdict = evaluateAllow(prop, fresh(listOf(match), packageName = "com.evil.app"))
 
         assertEquals(Block(ActuationBlockReason.PACKAGE_CHANGED), verdict)
     }
 
     @Test
-    fun `window switched blocks`() {
+    fun `window identity changed blocks even with same count semantics`() {
         val cand = candidate("跳过", topRightSmall())
-        val prop = proposal(cand, windowCount = 1)
+        val prop = proposal(cand, windowToken = 10L)
         val match = node(0, null, null, "跳过", topRightSmall())
 
-        val verdict = gate.evaluate(prop, true, true, false, fresh(listOf(match), windowCount = 2), 88, emptyList())
+        // Same generation, but the window token changed: a splash was replaced
+        // by a main window while the window *count* stayed the same.
+        val verdict = evaluateAllow(prop, fresh(listOf(match), windowToken = 11L))
 
         assertEquals(Block(ActuationBlockReason.WINDOW_CHANGED), verdict)
+    }
+
+    @Test
+    fun `generation moved on blocks`() {
+        val cand = candidate("跳过", topRightSmall())
+        val prop = proposal(cand, generation = 1L)
+        val match = node(0, null, null, "跳过", topRightSmall())
+
+        val verdict = evaluateAllow(prop, fresh(listOf(match), generation = 2L))
+
+        assertEquals(Block(ActuationBlockReason.STALE_GENERATION), verdict)
+    }
+
+    @Test
+    fun `fresh snapshot equal to proposal time blocks as revalidation stale`() {
+        val cand = candidate("跳过", topRightSmall())
+        val prop = proposal(cand, elapsedMs = 1_000L)
+        val match = node(0, null, null, "跳过", topRightSmall())
+
+        val verdict = evaluateAllow(prop, fresh(listOf(match), capturedAtMs = 1_000L))
+
+        assertEquals(Block(ActuationBlockReason.REVALIDATION_STALE), verdict)
+    }
+
+    @Test
+    fun `fresh snapshot older than proposal blocks as revalidation stale`() {
+        val cand = candidate("跳过", topRightSmall())
+        val prop = proposal(cand, elapsedMs = 2_000L)
+        val match = node(0, null, null, "跳过", topRightSmall())
+
+        val verdict = evaluateAllow(prop, fresh(listOf(match), capturedAtMs = 1_000L))
+
+        assertEquals(Block(ActuationBlockReason.REVALIDATION_STALE), verdict)
+    }
+
+    @Test
+    fun `second attempt on the same case blocks as attempt limit reached`() {
+        val cand = candidate("跳过", topRightSmall())
+        val prop = proposal(cand)
+        val match = node(0, null, null, "跳过", topRightSmall())
+
+        val verdict = evaluateAllow(prop, fresh(listOf(match)), attempts = 1)
+
+        assertEquals(Block(ActuationBlockReason.ATTEMPT_LIMIT_REACHED), verdict)
     }
 
     @Test
@@ -269,7 +335,7 @@ class ActuationGateTest {
         val prop = proposal(cand)
         val match = node(0, null, null, "跳过", topRightSmall(), ancestor = IntRect(0, 0, 1080, 2400))
 
-        val verdict = gate.evaluate(prop, true, true, false, fresh(listOf(match)), 88, emptyList())
+        val verdict = evaluateAllow(prop, fresh(listOf(match)))
 
         assertEquals(Block(ActuationBlockReason.ANCESTOR_RISK), verdict)
     }
@@ -280,7 +346,7 @@ class ActuationGateTest {
         val prop = proposal(cand)
         val match = node(0, null, null, "跳过", topRightSmall(), visible = false)
 
-        val verdict = gate.evaluate(prop, true, true, false, fresh(listOf(match)), 88, emptyList())
+        val verdict = evaluateAllow(prop, fresh(listOf(match)))
 
         assertEquals(Block(ActuationBlockReason.NOT_CLICKABLE), verdict)
     }
@@ -291,7 +357,7 @@ class ActuationGateTest {
         val prop = proposal(cand)
         val match = node(0, null, null, "跳过", topRightSmall(), enabled = false)
 
-        val verdict = gate.evaluate(prop, true, true, false, fresh(listOf(match)), 88, emptyList())
+        val verdict = evaluateAllow(prop, fresh(listOf(match)))
 
         assertEquals(Block(ActuationBlockReason.NOT_CLICKABLE), verdict)
     }
@@ -302,9 +368,42 @@ class ActuationGateTest {
         val prop = proposal(cand)
         val match = node(0, null, null, "跳过", topRightSmall(), clickable = false)
 
-        val verdict = gate.evaluate(prop, true, true, false, fresh(listOf(match)), 88, emptyList())
+        val verdict = evaluateAllow(prop, fresh(listOf(match)))
 
         assertEquals(Block(ActuationBlockReason.NOT_CLICKABLE), verdict)
+    }
+
+    @Test
+    fun `bottom-right skip blocks as outside allowed zone`() {
+        val cand = candidate("跳过", IntRect(900, 2200, 1050, 2270))
+        val prop = proposal(cand)
+        val match = node(0, null, null, "跳过", IntRect(900, 2200, 1050, 2270))
+
+        val verdict = evaluateAllow(prop, fresh(listOf(match)))
+
+        assertEquals(Block(ActuationBlockReason.GEOMETRY_CHANGED), verdict)
+    }
+
+    @Test
+    fun `bottom-left skip blocks as outside allowed zone`() {
+        val cand = candidate("跳过", IntRect(30, 2200, 180, 2270))
+        val prop = proposal(cand)
+        val match = node(0, null, null, "跳过", IntRect(30, 2200, 180, 2270))
+
+        val verdict = evaluateAllow(prop, fresh(listOf(match)))
+
+        assertEquals(Block(ActuationBlockReason.GEOMETRY_CHANGED), verdict)
+    }
+
+    @Test
+    fun `bottom-center skip blocks as outside allowed zone`() {
+        val cand = candidate("跳过", IntRect(450, 2200, 630, 2270))
+        val prop = proposal(cand)
+        val match = node(0, null, null, "跳过", IntRect(450, 2200, 630, 2270))
+
+        val verdict = evaluateAllow(prop, fresh(listOf(match)))
+
+        assertEquals(Block(ActuationBlockReason.GEOMETRY_CHANGED), verdict)
     }
 
     @Test
@@ -313,7 +412,7 @@ class ActuationGateTest {
         val prop = proposal(cand)
         val match = node(0, null, null, "跳过", topRightSmall())
 
-        val verdict = gate.evaluate(prop, true, true, false, fresh(listOf(match)), revalidatedScore = 62, revalidatedRisks = emptyList())
+        val verdict = evaluateAllow(prop, fresh(listOf(match)), score = 62)
 
         assertEquals(Block(ActuationBlockReason.SCORE_DROPPED), verdict)
     }
@@ -324,14 +423,10 @@ class ActuationGateTest {
         val prop = proposal(cand)
         val match = node(0, null, null, "跳过", topRightSmall())
 
-        val verdict = gate.evaluate(
-            proposal = prop,
-            modeAllowsAction = true,
-            caseActive = true,
-            generationStale = false,
-            fresh = fresh(listOf(match)),
-            revalidatedScore = 88,
-            revalidatedRisks = listOf(WeightedReason("cta_sibling", -100)),
+        val verdict = evaluateAllow(
+            prop,
+            fresh(listOf(match)),
+            risks = listOf(WeightedReason("cta_sibling", -100)),
         )
 
         assertEquals(Block(ActuationBlockReason.RISK_BLOCKED), verdict)
@@ -343,7 +438,7 @@ class ActuationGateTest {
         val prop = proposal(cand)
         val match = node(0, null, null, "跳过", topRightSmall())
 
-        val verdict = gate.evaluate(prop, true, true, false, fresh(listOf(match), countdownAnomaly = true), 88, emptyList())
+        val verdict = evaluateAllow(prop, fresh(listOf(match), countdownAnomaly = true))
 
         assertEquals(Block(ActuationBlockReason.COUNTDOWN_ANOMALY), verdict)
     }
@@ -354,7 +449,7 @@ class ActuationGateTest {
         val prop = proposal(cand)
         val match = node(0, null, null, "跳过", topRightSmall())
 
-        val verdict = gate.evaluate(prop, true, caseActive = false, generationStale = false, fresh(listOf(match)), 88, emptyList())
+        val verdict = evaluateAllow(prop, fresh(listOf(match)), caseActive = false)
 
         assertEquals(Block(ActuationBlockReason.CASE_STALE), verdict)
     }
@@ -365,7 +460,7 @@ class ActuationGateTest {
         val prop = proposal(cand)
         val match = node(0, null, null, "跳过", topRightSmall())
 
-        val verdict = gate.evaluate(prop, modeAllowsAction = false, caseActive = true, generationStale = false, fresh(listOf(match)), 88, emptyList())
+        val verdict = gate.evaluate(prop, modeAllowsAction = false, caseActive = true, attemptsAlreadyMade = 0, fresh(listOf(match)), 88, emptyList())
 
         assertEquals(Block(ActuationBlockReason.MODE_BLOCKED), verdict)
     }
@@ -376,20 +471,9 @@ class ActuationGateTest {
         val prop = proposal(cand)
         val match = node(0, null, null, "跳过", topRightSmall())
 
-        val verdict = gate.evaluate(prop, modeAllowsAction = false, caseActive = true, generationStale = false, fresh(listOf(match)), 88, emptyList())
+        val verdict = gate.evaluate(prop, modeAllowsAction = false, caseActive = true, attemptsAlreadyMade = 0, fresh(listOf(match)), 88, emptyList())
 
         assertEquals(Block(ActuationBlockReason.MODE_BLOCKED), verdict)
-    }
-
-    @Test
-    fun `stale generation from scan busy blocks`() {
-        val cand = candidate("跳过", topRightSmall())
-        val prop = proposal(cand)
-        val match = node(0, null, null, "跳过", topRightSmall())
-
-        val verdict = gate.evaluate(prop, true, true, generationStale = true, fresh(listOf(match)), 88, emptyList())
-
-        assertEquals(Block(ActuationBlockReason.STALE_GENERATION), verdict)
     }
 
     @Test
@@ -398,7 +482,7 @@ class ActuationGateTest {
         val prop = proposal(cand)
         val match = node(0, null, "com.demo:id/skip_b", "跳过", topRightSmall())
 
-        val verdict = gate.evaluate(prop, true, true, false, fresh(listOf(match)), 88, emptyList())
+        val verdict = evaluateAllow(prop, fresh(listOf(match)))
 
         assertEquals(Block(ActuationBlockReason.IDENTITY_AMBIGUOUS), verdict)
     }

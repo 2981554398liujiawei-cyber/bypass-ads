@@ -49,27 +49,29 @@ holds; otherwise it returns `BLOCK` with a concrete `ActuationBlockReason`.
 | --- | --- | --- |
 | 1 | Action mode is armed (e.g. `ACTIVE`); `OFF`/`SHADOW` never allow | `MODE_BLOCKED` |
 | 2 | The case is still active (not ended / not superseded) | `CASE_STALE` |
-| 3 | No stale generation / scan-busy supersede after the proposal | `STALE_GENERATION` |
-| 4 | Re-resolved package matches the proposal package | `PACKAGE_CHANGED` |
-| 5 | Re-resolved window context matches the proposal window | `WINDOW_CHANGED` |
-| 6 | Exactly one matching target re-resolved | `TARGET_DISAPPEARED` / `MULTIPLE_TARGETS` |
-| 7 | Explicit label still present and identical | `LABEL_CHANGED` |
-| 8 | Identity unambiguous (resourceId, when present, must still match) | `IDENTITY_AMBIGUOUS` |
-| 9 | Geometry still within the allowed zone (small, non-central, top-right preferred) | `GEOMETRY_CHANGED` |
-| 10 | Target still small-sized (area ratio ≤ small-target bound) | `LARGE_TARGET` |
-| 11 | Target still `clickable` / `enabled` / `visibleToUser` | `NOT_CLICKABLE` |
-| 12 | No large clickable ancestor | `ANCESTOR_RISK` |
-| 13 | No CTA sibling (立即体验 / 立即打开 / 下载 / 查看详情 …) | `CTA_RISK` |
-| 14 | Revalidated score still ≥ 80 | `SCORE_DROPPED` |
-| 15 | Revalidated risks still above the severe floor (> −50) | `RISK_BLOCKED` |
+| 3 | No actuation attempt has been made on this case yet (one attempt per case, enforced by the gate) | `ATTEMPT_LIMIT_REACHED` |
+| 4 | Proposal case generation equals the current generation | `STALE_GENERATION` |
+| 5 | Proposal window context token equals the current window token (window identity, not window count) | `WINDOW_CHANGED` |
+| 6 | The fresh snapshot is strictly newer than the proposal | `REVALIDATION_STALE` |
+| 7 | Re-resolved package matches the proposal package | `PACKAGE_CHANGED` |
+| 8 | Exactly one matching target re-resolved | `TARGET_DISAPPEARED` / `MULTIPLE_TARGETS` |
+| 9 | Explicit label still present and identical | `LABEL_CHANGED` |
+| 10 | Identity unambiguous (resourceId, when present, must still match) | `IDENTITY_AMBIGUOUS` |
+| 11 | Geometry still within the active allowed zone — **top-right or top-left only** (right: `x ≥ 0.70 && y ≤ 0.25`; left: `x ≤ 0.30 && y ≤ 0.25`); bottom/side/central positions block | `GEOMETRY_CHANGED` |
+| 12 | Target still small-sized (area ratio ≤ small-target bound) | `LARGE_TARGET` |
+| 13 | Target still `clickable` / `enabled` / `visibleToUser` | `NOT_CLICKABLE` |
+| 14 | No large clickable ancestor | `ANCESTOR_RISK` |
+| 15 | No CTA sibling (立即体验 / 立即打开 / 下载 / 查看详情 …) | `CTA_RISK` |
 | 16 | No countdown anomaly on revalidation (when a countdown was tracked) | `COUNTDOWN_ANOMALY` |
+| 17 | Revalidated score still ≥ 80 | `SCORE_DROPPED` |
+| 18 | Revalidated risks still above the severe floor (> −50) | `RISK_BLOCKED` |
 
 `ActuationBlockReason` values (extensible): `MODE_BLOCKED`, `CASE_STALE`,
-`STALE_GENERATION`, `PACKAGE_CHANGED`, `WINDOW_CHANGED`,
-`TARGET_DISAPPEARED`, `MULTIPLE_TARGETS`, `LABEL_CHANGED`,
-`IDENTITY_AMBIGUOUS`, `GEOMETRY_CHANGED`, `LARGE_TARGET`, `NOT_CLICKABLE`,
-`ANCESTOR_RISK`, `CTA_RISK`, `SCORE_DROPPED`, `RISK_BLOCKED`,
-`COUNTDOWN_ANOMALY`.
+`STALE_GENERATION`, `WINDOW_CHANGED`, `REVALIDATION_STALE`,
+`PACKAGE_CHANGED`, `TARGET_DISAPPEARED`, `MULTIPLE_TARGETS`,
+`LABEL_CHANGED`, `IDENTITY_AMBIGUOUS`, `GEOMETRY_CHANGED`, `LARGE_TARGET`,
+`NOT_CLICKABLE`, `ANCESTOR_RISK`, `CTA_RISK`, `SCORE_DROPPED`,
+`RISK_BLOCKED`, `COUNTDOWN_ANOMALY`, `ATTEMPT_LIMIT_REACHED`.
 
 ## 4. Pre-click re-resolution contract
 
@@ -87,7 +89,9 @@ holds; otherwise it returns `BLOCK` with a concrete `ActuationBlockReason`.
 - Typical `SUCCESS` signals: original target disappeared; original splash
   window disappeared; window/content visibly entered a non-ad state.
 - At most **one** actuation attempt per case
-  (`MAX_ACTUATION_ATTEMPTS_PER_CASE = 1`).
+  (`MAX_ACTUATION_ATTEMPTS_PER_CASE = 1`), **enforced by the gate**: the
+  caller passes `attemptsAlreadyMade` and the gate returns
+  `ATTEMPT_LIMIT_REACHED` once it is ≥ 1.
 - `NO_EFFECT` → do not auto-retry. `UNCERTAIN` → do not auto-retry.
 
 ## 6. M2.0 boundaries (enforced)

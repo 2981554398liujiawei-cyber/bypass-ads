@@ -13,7 +13,12 @@ import app.bypassads.core.model.UiNodeSnapshot
  */
 data class FreshTargetResolution(
     val packageName: String?,
-    val windowCount: Int,
+    /** Current monotonic generation; the gate compares it to the proposal's. */
+    val currentCaseGeneration: Long,
+    /** Current window identity token; the gate compares it to the proposal's. */
+    val currentWindowContextToken: Long,
+    /** Capture time of this fresh snapshot; must be newer than the proposal. */
+    val freshCapturedAtElapsedMs: Long,
     val screenWidth: Int,
     val screenHeight: Int,
     val matches: List<UiNodeSnapshot>,

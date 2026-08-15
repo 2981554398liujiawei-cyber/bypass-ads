@@ -11,7 +11,10 @@ import app.bypassads.core.model.SkipDecision
 data class ActionProposal(
     val candidate: SkipCandidate,
     val packageName: String?,
-    val windowCountAtProposal: Int,
+    /** Monotonic scan/case generation the proposal belongs to (see ShadowScanCoordinator.generation). */
+    val caseGeneration: Long,
+    /** Abstract identity of the window the proposal was made against (M2.1 binds real window identity). */
+    val windowContextToken: Long,
     val proposedAtElapsedMs: Long,
     val countdownValue: Int?,
     val fingerprint: TargetFingerprint,
@@ -26,7 +29,8 @@ data class ActionProposal(
         fun fromDecision(
             decision: SkipDecision,
             packageName: String?,
-            windowCount: Int,
+            caseGeneration: Long,
+            windowContextToken: Long,
             elapsedMs: Long,
             countdownValue: Int? = null,
         ): ActionProposal? {
@@ -35,7 +39,8 @@ data class ActionProposal(
             return ActionProposal(
                 candidate = candidate,
                 packageName = packageName,
-                windowCountAtProposal = windowCount,
+                caseGeneration = caseGeneration,
+                windowContextToken = windowContextToken,
                 proposedAtElapsedMs = elapsedMs,
                 countdownValue = countdownValue,
                 fingerprint = buildTargetFingerprint(candidate, packageName),

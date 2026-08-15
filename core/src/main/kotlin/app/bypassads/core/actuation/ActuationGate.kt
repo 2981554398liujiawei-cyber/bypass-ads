@@ -11,6 +11,14 @@ import app.bypassads.core.model.WeightedReason
  * are two independent safety boundaries; this gate never inherits scorer
  * trust. Every condition must hold for [Allow]; any failure returns a
  * [Block] with a concrete reason.
+ *
+ * Hardened invariants (M2.0.1):
+ * - the gate itself compares proposal vs current generation and window token
+ *   (it cannot be told "fresh enough" by the caller);
+ * - the fresh snapshot must be strictly newer than the proposal;
+ * - at most one actuation attempt per case is enforced here, not just
+ *   declared;
+ * - the active allowed zone is top-left/top-right only.
  */
 class ActuationGate(
     private val clickThreshold: Int = 80,
@@ -24,16 +32,28 @@ class ActuationGate(
         proposal: ActionProposal,
         modeAllowsAction: Boolean,
         caseActive: Boolean,
-        generationStale: Boolean,
+        attemptsAlreadyMade: Int,
         fresh: FreshTargetResolution,
         revalidatedScore: Int,
         revalidatedRisks: List<WeightedReason>,
     ): ActuationVerdict {
         if (!modeAllowsAction) return Block(ActuationBlockReason.MODE_BLOCKED)
         if (!caseActive) return Block(ActuationBlockReason.CASE_STALE)
-        if (generationStale) return Block(ActuationBlockReason.STALE_GENERATION)
+        if (attemptsAlreadyMade >= MAX_ACTUATION_ATTEMPTS_PER_CASE) {
+            return Block(ActuationBlockReason.ATTEMPT_LIMIT_REACHED)
+        }
+
+        // Proposal/current context must be bound to the same case, window, and time.
+        if (proposal.caseGeneration != fresh.currentCaseGeneration) {
+            return Block(ActuationBlockReason.STALE_GENERATION)
+        }
+        if (proposal.windowContextToken != fresh.currentWindowContextToken) {
+            return Block(ActuationBlockReason.WINDOW_CHANGED)
+        }
+        if (fresh.freshCapturedAtElapsedMs <= proposal.proposedAtElapsedMs) {
+            return Block(ActuationBlockReason.REVALIDATION_STALE)
+        }
         if (fresh.packageName != proposal.packageName) return Block(ActuationBlockReason.PACKAGE_CHANGED)
-        if (fresh.windowCount != proposal.windowCountAtProposal) return Block(ActuationBlockReason.WINDOW_CHANGED)
 
         // Uniqueness of the re-resolved target.
         if (fresh.matchCount == 0) return Block(ActuationBlockReason.TARGET_DISAPPEARED)
@@ -60,10 +80,12 @@ class ActuationGate(
         val areaRatio = target.bounds.areaRatio(fresh.screenWidth, fresh.screenHeight)
         if (areaRatio > maxSmallAreaRatio) return Block(ActuationBlockReason.LARGE_TARGET)
 
-        // Central position is outside the allowed zone.
+        // Active allowed zone: top-left or top-right only (ADR-0002 §3, P1-3).
         val cx = target.bounds.centerX.toDouble() / fresh.screenWidth.coerceAtLeast(1)
         val cy = target.bounds.centerY.toDouble() / fresh.screenHeight.coerceAtLeast(1)
-        if (cx in 0.30..0.70 && cy in 0.25..0.75) {
+        val inTopRight = cx >= 0.70 && cy <= 0.25
+        val inTopLeft = cx <= 0.30 && cy <= 0.25
+        if (!inTopRight && !inTopLeft) {
             return Block(ActuationBlockReason.GEOMETRY_CHANGED)
         }
 
