@@ -7,9 +7,6 @@ import java.nio.file.Files
 import java.nio.file.Path
 import org.json.JSONObject
 
-private const val M14_MINIMUM_RECORDS = 300
-private const val M14_MINIMUM_SOAK_DURATION_MS = 60L * 60L * 1_000L
-
 data class JsonlTraceValidationReport(
     val inputLines: Int,
     val ignoredBeforeStart: Int,
@@ -33,8 +30,6 @@ data class JsonlTraceValidationReport(
     val releaseEvidenceReady: Boolean
         get() = traceIntegrityPassed &&
             scanMetricsComplete &&
-            evidenceSummary.postCutoffRecords >= M14_MINIMUM_RECORDS &&
-            evidenceSummary.durationMs >= M14_MINIMUM_SOAK_DURATION_MS &&
             sessionValidation?.passed == true
 
     val passed: Boolean

@@ -56,6 +56,13 @@ checks. Do not commit the sidecar.
 ```json
 {
   "collectionStartEpochMs": 1786810506522,
+  "collectionEndEpochMs": 1786814106522,
+  "controlledRun": {
+    "startEpochMs": 1786810506522,
+    "endEpochMs": 1786811406522
+  },
+  "continuousCollectionConfirmed": true,
+  "serviceBoundAtEnd": true,
   "offCycles": [
     { "offAtEpochMs": 1786811000000, "shadowRestoredAtEpochMs": 1786811030000 }
   ],
@@ -70,27 +77,35 @@ checks. Do not commit the sidecar.
     "wechatMiniProgramNames": [],
     "alipayMiniProgramNames": []
   },
-  "stability": { "crashCount": 0, "anrCount": 0 }
+  "stability": { "crashCount": 0, "anrCount": 0 },
+  "slowReview": {
+    "unexplainedSlowAccessibilityCount": 0,
+    "repeatableMultiSecondBlockingCount": 0
+  }
 }
 ```
 
-The runner checks each OFF interval for at least 30 seconds with no new case or
-`SCAN`, requires a later `SCAN` after every Shadow restore, and requires five
-valid cycles. `workerMaxQueueDepth` refers only to the scan worker; final I/O
-health comes from the Diagnostics UI and is reported separately. Metric fields
-missing from a `SCAN` are reported as missing rather than as zero.
+The runner computes the controlled-window record count from JSONL rather than a
+sidecar claim. The controlled window must be within the collection and last at
+least 15 minutes with at least 300 records. The collection itself must last at
+least 60 minutes, have `continuousCollectionConfirmed=true`, and end with
+`serviceBoundAtEnd=true`. Every OFF interval must be inside the collection,
+strictly ordered and non-overlapping, at least 30 seconds, contain no new case
+or `SCAN`, and have a later `SCAN` before the next OFF. `workerMaxQueueDepth`
+refers only to the scan worker; final I/O health comes from the Diagnostics UI.
+Metric fields missing from a `SCAN` are reported as missing rather than zero.
 
 `passed` means trace integrity passed and, when provided, the local sidecar
-also passed. `releaseEvidenceReady` is stricter: it additionally requires 300
-post-cutoff records, a 60-minute trace span, complete scan metrics, and a
-passing sidecar. Neither result permits raw JSONL or the local sidecar to be
-committed.
+also passed. `releaseEvidenceReady` additionally requires complete scan
+metrics plus all independent M1.4 gates: controlled run, soak continuity and
+end binding, lifecycle, coverage, I/O, stability, and slow-operation review.
+Neither result permits raw JSONL or the local sidecar to be committed.
 
 ## Device matrix
 
 | Device | Manufacturer / model | Android / API | Build fingerprint | Result |
 | --- | --- | --- | --- | --- |
-| `479901bd` | Xiaomi / 2509FPN0BC | Android 16 / API 36 | `Xiaomi/popsicle/popsicle:16/BP2A.250605.031.A3/OS3.0.315.0.WPBCNXM:user/release-keys` | VERIFIED connected physical device; accessibility service is enabled and system-bound (`hasBound=true`) |
+| Xiaomi 2509FPN0BC | Xiaomi / 2509FPN0BC | Android 16 / API 36 | `Xiaomi/popsicle/popsicle:16/BP2A.250605.031.A3/OS3.0.315.0.WPBCNXM:user/release-keys` | VERIFIED connected physical device; accessibility service is enabled and system-bound (`hasBound=true`) |
 
 ## Required real-device evidence
 
@@ -108,8 +123,8 @@ committed.
 
 Mini-program identity must be recorded from the tester-visible context. Package
 name alone is not sufficient evidence. Do not commit raw diagnostics: publish
-only privacy-minimized aggregate metrics and the individual timing records
-needed to explain any slow Accessibility operation.
+only privacy-minimized aggregate metrics, including counts that confirm slow
+Accessibility operations were reviewed.
 
 ## V1.0 boundary
 

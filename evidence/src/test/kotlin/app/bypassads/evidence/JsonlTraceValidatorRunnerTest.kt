@@ -142,6 +142,10 @@ class JsonlTraceValidatorRunnerTest {
             JSONObject(
                 """{
                     "collectionStartEpochMs":1000,
+                    "collectionEndEpochMs":200000,
+                    "controlledRun":{"startEpochMs":1000,"endEpochMs":200000},
+                    "continuousCollectionConfirmed":true,
+                    "serviceBoundAtEnd":true,
                     "offCycles":[
                       {"offAtEpochMs":2000,"shadowRestoredAtEpochMs":32000},
                       {"offAtEpochMs":33000,"shadowRestoredAtEpochMs":63000},
@@ -151,7 +155,8 @@ class JsonlTraceValidatorRunnerTest {
                     ],
                     "finalIoHealth":{"pendingIoJobs":0,"maxPendingIoJobs":3,"recordsWritten":340,"writeFailures":0},
                     "coverage":{"ordinaryAppCount":10,"wechatMiniProgramNames":["A","B","C"],"alipayMiniProgramNames":["D","E","F"]},
-                    "stability":{"crashCount":0,"anrCount":0}
+                    "stability":{"crashCount":0,"anrCount":0},
+                    "slowReview":{"unexplainedSlowAccessibilityCount":0,"repeatableMultiSecondBlockingCount":0}
                 }""".trimIndent(),
             ),
         )
@@ -201,4 +206,71 @@ class JsonlTraceValidatorRunnerTest {
         assertFalse(result.stability!!.passed)
         assertFalse(result.passed)
     }
+
+    @Test
+    fun `release evidence requires every M14 session gate`() {
+        val report = JsonlTraceValidatorRunner.validate(completeJsonl().asSequence(), fromEpochMs = 1000, sidecar = completeSidecar())
+
+        assertTrue(report.traceIntegrityPassed)
+        assertTrue(report.scanMetricsComplete)
+        assertTrue(report.sessionValidation!!.passed)
+        assertTrue(report.releaseEvidenceReady)
+
+        val spreadAcrossSoak = List(300) { index -> TraceObservation(1000L + index * 12_000L, "SCAN", "case-a") } + restoredCycleScans()
+        assertFalse(M14SessionSidecarValidator.validate(completeSidecar(), spreadAcrossSoak, 1000).controlledRun!!.passed)
+        assertFalse(M14SessionSidecarValidator.validate(completeSidecar().copy(continuousCollectionConfirmed = false), completeTrace(), 1000).soak!!.passed)
+        assertFalse(M14SessionSidecarValidator.validate(completeSidecar().copy(slowReview = M14SessionSidecar.SlowReview(1, 0)), completeTrace(), 1000).slowReview!!.passed)
+
+        val overlappingCycles = completeSidecar().offCycles.toMutableList().also { cycles -> cycles[1] = cycles[1].copy(offAtEpochMs = cycles[0].shadowRestoredAtEpochMs) }
+        val lifecycle = M14SessionSidecarValidator.validate(completeSidecar().copy(offCycles = overlappingCycles), completeTrace(), 1000)
+        assertTrue(lifecycle.lifecycleViolationCodes.contains("OFF_CYCLE_2_NOT_STRICTLY_AFTER_PREVIOUS"))
+        assertFalse(lifecycle.passed)
+
+        val beforeCollection = completeSidecar().offCycles.toMutableList().also { cycles -> cycles[0] = cycles[0].copy(offAtEpochMs = 999) }
+        assertTrue(M14SessionSidecarValidator.validate(completeSidecar().copy(offCycles = beforeCollection), completeTrace(), 1000).lifecycleViolationCodes.contains("OFF_CYCLE_1_OUTSIDE_COLLECTION"))
+    }
+
+    private fun completeSidecar(): M14SessionSidecar = M14SessionSidecar.parse(
+        JSONObject(
+            """{
+                "collectionStartEpochMs":1000,
+                "collectionEndEpochMs":3601000,
+                "controlledRun":{"startEpochMs":1000,"endEpochMs":901000},
+                "continuousCollectionConfirmed":true,
+                "serviceBoundAtEnd":true,
+                "offCycles":[
+                  {"offAtEpochMs":950000,"shadowRestoredAtEpochMs":980000},
+                  {"offAtEpochMs":990000,"shadowRestoredAtEpochMs":1020000},
+                  {"offAtEpochMs":1030000,"shadowRestoredAtEpochMs":1060000},
+                  {"offAtEpochMs":1070000,"shadowRestoredAtEpochMs":1100000},
+                  {"offAtEpochMs":1110000,"shadowRestoredAtEpochMs":1140000}
+                ],
+                "finalIoHealth":{"pendingIoJobs":0,"maxPendingIoJobs":2,"recordsWritten":306,"writeFailures":0},
+                "coverage":{"ordinaryAppCount":10,"wechatMiniProgramNames":["one","two","three"],"alipayMiniProgramNames":["four","five","six"]},
+                "stability":{"crashCount":0,"anrCount":0},
+                "slowReview":{"unexplainedSlowAccessibilityCount":0,"repeatableMultiSecondBlockingCount":0}
+            }""".trimIndent(),
+        ),
+    )
+
+    private fun completeTrace(): List<TraceObservation> = List(300) { index -> TraceObservation(1000L + index * 3_000L, "SCAN", "case-a") } + restoredCycleScans()
+
+    private fun restoredCycleScans(): List<TraceObservation> = listOf(
+        TraceObservation(980001, "SCAN", "case-a"),
+        TraceObservation(1020001, "SCAN", "case-a"),
+        TraceObservation(1060001, "SCAN", "case-a"),
+        TraceObservation(1100001, "SCAN", "case-a"),
+        TraceObservation(1140001, "SCAN", "case-a"),
+        TraceObservation(3601000, "SCAN", "case-a"),
+    )
+
+    private fun completeJsonl(): List<String> = buildList {
+        add("""{"time":1000,"session":1,"caseId":"case-a","scan":-1,"trigger":"PACKAGE_CHANGED"}""")
+        repeat(300) { index -> add(scanLine(1000L + index * 3_000L, index)) }
+        val restoreTimes = listOf(980001L, 1020001L, 1060001L, 1100001L, 1140001L, 3601000L)
+        restoreTimes.forEachIndexed { offset, time -> add(scanLine(time, 300 + offset)) }
+        add("""{"time":3601001,"session":1,"caseId":"case-a","scan":-1,"trigger":"CASE_END","scheduledFrames":306,"executedFrames":306,"cancelledFrames":0,"droppedFrames":0,"terminationReason":"COMPLETED"}""")
+    }
+
+    private fun scanLine(time: Long, scan: Int): String = """{"time":$time,"session":1,"caseId":"case-a","scan":$scan,"trigger":"SCAN","scanWorkMs":10,"windowAcquireMs":1,"snapshotMs":2,"detectionMs":3,"decisionMs":4,"rootAcquireMaxMs":5,"childQueryMaxMs":6,"captureBudgetHit":false,"workerBusyDrops":0,"workerMaxQueueDepth":1}"""
 }
