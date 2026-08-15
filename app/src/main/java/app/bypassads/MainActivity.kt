@@ -45,10 +45,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.bypassads.actuation.ExperimentalCapability
 import app.bypassads.diagnostics.BlackBoxStore
 import app.bypassads.diagnostics.BlackBoxStats
 import app.bypassads.diagnostics.BlackBoxIoHealth
 import app.bypassads.diagnostics.DiagnosticRecord
+import app.bypassads.experimental.ExperimentalSettingsStore
 import app.bypassads.runtime.RunMode
 import app.bypassads.runtime.RunModeStore
 import app.bypassads.runtime.AccessibilityRuntimeStateStore
@@ -75,6 +77,7 @@ class MainActivity : ComponentActivity() {
     private fun App() {
         val modeStore = remember { RunModeStore(this) }
         val blackBox = remember { BlackBoxStore(this) }
+        val experimentalSettings = remember { ExperimentalSettingsStore(this) }
         var mode by remember { mutableStateOf(modeStore.get()) }
         var destination by remember { mutableStateOf(Destination.HOME) }
         var selectedRecord by remember { mutableStateOf<DiagnosticRecord?>(null) }
@@ -151,6 +154,11 @@ class MainActivity : ComponentActivity() {
                                 refreshSignal++
                             },
                         )
+
+                        Destination.EXPERIMENTAL -> ExperimentalPage(
+                            settings = experimentalSettings,
+                            onRefresh = { refreshSignal++ },
+                        )
                     }
                 }
             }
@@ -186,14 +194,88 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun DestinationTabs(selected: Destination, onSelect: (Destination) -> Unit) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Destination.entries.forEach { destination ->
-                ModeButton(
-                    label = destination.label,
-                    selected = selected == destination,
-                    onClick = { onSelect(destination) },
-                    modifier = Modifier.weight(1f),
-                )
+            Destination.entries
+                .filter { it != Destination.EXPERIMENTAL || ExperimentalCapability.isExperimentalBuild }
+                .forEach { destination ->
+                    ModeButton(
+                        label = destination.label,
+                        selected = selected == destination,
+                        onClick = { onSelect(destination) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+        }
+    }
+
+    @Composable
+    private fun ExperimentalPage(settings: ExperimentalSettingsStore, onRefresh: () -> Unit) {
+        var enabled by remember { mutableStateOf(settings.activeExperimentalEnabled) }
+        var lastAction by remember { mutableStateOf(settings.lastAction) }
+        var confirmVisible by remember { mutableStateOf(false) }
+
+        DisposableEffect(settings) {
+            val close = settings.observe {
+                enabled = settings.activeExperimentalEnabled
+                lastAction = settings.lastAction
             }
+            onDispose { close.close() }
+        }
+
+        SectionCard(title = "Active Experimental") {
+            Text(
+                "仅实验构建可用（app.bypassads.experimental）。开启后，对实验白名单内 App 的开屏广告页会沿完整安全链路尝试一次节点动作；默认关闭，不后台运行。",
+                fontSize = 14.sp,
+                lineHeight = 21.sp,
+                color = Muted,
+            )
+            Spacer(Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Metric("Shadow", "ON", Modifier.weight(1f))
+                Metric("Active Experimental", if (enabled) "ON" else "OFF", Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(16.dp))
+            if (!enabled) {
+                Button(
+                    onClick = { confirmVisible = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = Ink, contentColor = Color.White),
+                    shape = RoundedCornerShape(14.dp),
+                ) { Text("开启实验 Active") }
+            } else {
+                Button(
+                    onClick = { settings.activeExperimentalEnabled = false },
+                    colors = ButtonDefaults.buttonColors(containerColor = SoftRed, contentColor = Danger),
+                    shape = RoundedCornerShape(14.dp),
+                ) { Text("立即关闭（Kill Switch）") }
+            }
+            Spacer(Modifier.height(16.dp))
+            Text("Last Action：${lastAction.ifEmpty { "—" }}", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Ink)
+            Text(
+                "仅记录判定与结果（如 BLOCK:CTA_RISK / ALLOW:UNCERTAIN），不记录节点文本、界面内容或截图；记录只保存在本机。",
+                modifier = Modifier.padding(top = 6.dp),
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+                color = Faint,
+            )
+        }
+
+        if (confirmVisible) {
+            AlertDialog(
+                onDismissRequest = { confirmVisible = false },
+                title = { Text("开启实验 Active 模式？") },
+                text = { Text("风险提示：开启后将自动执行节点动作，可能误判并点击错误内容；仅用于测试；随时可关闭。") },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            settings.activeExperimentalEnabled = true
+                            confirmVisible = false
+                            onRefresh()
+                        },
+                    ) { Text("确认开启", color = Danger) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmVisible = false }) { Text("取消") }
+                },
+            )
         }
     }
 
@@ -488,6 +570,7 @@ class MainActivity : ComponentActivity() {
         HOME("首页"),
         DIAGNOSTICS("诊断"),
         SETTINGS("设置"),
+        EXPERIMENTAL("实验"),
     }
 
     private companion object {

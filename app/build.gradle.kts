@@ -55,6 +55,7 @@ android {
         debug {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
+            buildConfigField("boolean", "ACTIVE_EXPERIMENTAL", "false")
         }
         release {
             if (releaseSigningReady) {
@@ -71,6 +72,20 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            buildConfigField("boolean", "ACTIVE_EXPERIMENTAL", "false")
+        }
+        create("experimental") {
+            // M2.2: isolated experimental build. Separate applicationId, never
+            // minified, debug-signed so it can be installed side by side with
+            // RC. ACTIVE_EXPERIMENTAL gates the real actuation capability;
+            // release/debug builds always compile with it false.
+            applicationIdSuffix = ".experimental"
+            versionNameSuffix = "-experimental"
+            buildConfigField("boolean", "ACTIVE_EXPERIMENTAL", "true")
+            signingConfig = signingConfigs.getByName("debug")
+            isDebuggable = true
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 
