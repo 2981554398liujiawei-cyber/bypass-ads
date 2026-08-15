@@ -47,17 +47,56 @@ gradlew.bat :evidence:run --args="--input C:\private\m1-4.jsonl --from-epoch-ms 
 The input is a local, temporary copy of the device-private diagnostics file.
 Do not commit it. Only the count-only output belongs in this document.
 
+For the five OFF-to-SHADOW cycles, final I/O health, coverage, and stability,
+create a separate **local-only** JSON sidecar and pass it with
+`--session-sidecar C:\private\m1-4-session.json`. The runner never emits the
+mini-program names in its output; it emits only their counts and uniqueness
+checks. Do not commit the sidecar.
+
+```json
+{
+  "collectionStartEpochMs": 1786810506522,
+  "offCycles": [
+    { "offAtEpochMs": 1786811000000, "shadowRestoredAtEpochMs": 1786811030000 }
+  ],
+  "finalIoHealth": {
+    "pendingIoJobs": 0,
+    "maxPendingIoJobs": 0,
+    "recordsWritten": 0,
+    "writeFailures": 0
+  },
+  "coverage": {
+    "ordinaryAppCount": 0,
+    "wechatMiniProgramNames": [],
+    "alipayMiniProgramNames": []
+  },
+  "stability": { "crashCount": 0, "anrCount": 0 }
+}
+```
+
+The runner checks each OFF interval for at least 30 seconds with no new case or
+`SCAN`, requires a later `SCAN` after every Shadow restore, and requires five
+valid cycles. `workerMaxQueueDepth` refers only to the scan worker; final I/O
+health comes from the Diagnostics UI and is reported separately. Metric fields
+missing from a `SCAN` are reported as missing rather than as zero.
+
+`passed` means trace integrity passed and, when provided, the local sidecar
+also passed. `releaseEvidenceReady` is stricter: it additionally requires 300
+post-cutoff records, a 60-minute trace span, complete scan metrics, and a
+passing sidecar. Neither result permits raw JSONL or the local sidecar to be
+committed.
+
 ## Device matrix
 
 | Device | Manufacturer / model | Android / API | Build fingerprint | Result |
 | --- | --- | --- | --- | --- |
-| None attached at baseline | NOT VERIFIED | NOT VERIFIED | NOT VERIFIED | `adb devices -l` reported no devices |
+| `479901bd` | Xiaomi / 2509FPN0BC | Android 16 / API 36 | `Xiaomi/popsicle/popsicle:16/BP2A.250605.031.A3/OS3.0.315.0.WPBCNXM:user/release-keys` | VERIFIED connected physical device; accessibility service is enabled and system-bound (`hasBound=true`) |
 
 ## Required real-device evidence
 
 | Gate | Required result | Current evidence |
 | --- | --- | --- |
-| Device matrix | At least one Android 15+ device; two OEMs strongly preferred | NOT VERIFIED |
+| Device matrix | At least one Android 15+ device; two OEMs strongly preferred | VERIFIED for one Xiaomi Android 16 physical device; second OEM NOT VERIFIED |
 | Controlled scanner run | At least 15 minutes and 300 records per tested device | NOT VERIFIED |
 | Trace integrity | Zero validator violations and malformed JSONL lines | NOT VERIFIED |
 | I/O integrity | `writeFailures = 0`; queues return to idle | NOT VERIFIED |
