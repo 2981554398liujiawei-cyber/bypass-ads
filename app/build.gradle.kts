@@ -34,6 +34,29 @@ if (releaseTaskRequested) {
     }
 }
 
+// M2.2 signer A/B diagnostics: the experimental build can be signed with an
+// independent test keystore (never the RC key) by pointing
+// BYPASS_ADS_EXPERIMENTAL_SIGNING_PROPERTIES at an external properties file
+// (storeFile/storePassword/keyAlias/keyPassword). Without that variable the
+// build falls back to the debug signer as before. The keystore/passwords
+// themselves never live in this repository.
+val experimentalSigningPropertiesPath = System.getenv("BYPASS_ADS_EXPERIMENTAL_SIGNING_PROPERTIES")
+    ?.takeIf { it.isNotBlank() }
+    ?.let(::file)
+val experimentalSigningProperties = Properties().apply {
+    if (experimentalSigningPropertiesPath?.isFile == true) {
+        experimentalSigningPropertiesPath.inputStream().use(::load)
+    }
+}
+val experimentalSigningKeys = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
+val experimentalStoreFile = experimentalSigningProperties.getProperty("storeFile")
+    ?.takeIf { it.isNotBlank() }
+    ?.let(rootProject::file)
+    ?.canonicalFile
+val experimentalSigningReady = experimentalSigningKeys.all { key -> !experimentalSigningProperties.getProperty(key).isNullOrBlank() } &&
+    experimentalStoreFile?.isFile == true &&
+    !experimentalStoreFile.toPath().startsWith(rootProject.projectDir.canonicalFile.toPath())
+
 android {
     namespace = "app.bypassads"
     compileSdk = 37
@@ -82,7 +105,16 @@ android {
             applicationIdSuffix = ".experimental"
             versionNameSuffix = "-experimental"
             buildConfigField("boolean", "ACTIVE_EXPERIMENTAL", "true")
-            signingConfig = signingConfigs.getByName("debug")
+            if (experimentalSigningReady) {
+                signingConfig = signingConfigs.create("experimentalTest") {
+                    storeFile = requireNotNull(experimentalStoreFile)
+                    storePassword = requireNotNull(experimentalSigningProperties.getProperty("storePassword"))
+                    keyAlias = requireNotNull(experimentalSigningProperties.getProperty("keyAlias"))
+                    keyPassword = requireNotNull(experimentalSigningProperties.getProperty("keyPassword"))
+                }
+            } else {
+                signingConfig = signingConfigs.getByName("debug")
+            }
             isDebuggable = true
             isMinifyEnabled = false
             isShrinkResources = false
