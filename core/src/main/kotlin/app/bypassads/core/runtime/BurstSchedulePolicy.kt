@@ -36,6 +36,10 @@ class BurstSchedulePolicy(
     fun onEvent(enabled: Boolean, trigger: ScanTrigger, packageIdentity: PackageIdentity, nowMs: Long): EventPlan {
         if (!enabled) return EventPlan.Ignore
         if (activePackage != null) {
+            if (activePackage is PackageIdentity.Unknown && packageIdentity is PackageIdentity.Known) {
+                activePackage = packageIdentity
+                return EventPlan.CoalesceActive(trigger)
+            }
             if (activePackage == packageIdentity || packageIdentity is PackageIdentity.Unknown) return EventPlan.CoalesceActive(trigger)
             val hadPendingContent = pendingContent != null
             pendingContent = null

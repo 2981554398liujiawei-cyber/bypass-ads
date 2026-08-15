@@ -31,6 +31,16 @@ class BurstSchedulePolicyTest {
     }
 
     @Test
+    fun `unknown active case promotes when a known package arrives`() {
+        val policy = BurstSchedulePolicy()
+        assertIs<EventPlan.StartBurst>(policy.onEvent(true, ScanTrigger.WINDOWS_CHANGED, pkg(null), 0L))
+        policy.markBurstStarted(pkg(null))
+
+        assertIs<EventPlan.CoalesceActive>(policy.onEvent(true, ScanTrigger.WINDOWS_CHANGED, pkg("com.demo"), 1L))
+        assertIs<EventPlan.CoalesceActive>(policy.onEvent(true, ScanTrigger.WINDOWS_CHANGED, pkg("com.demo"), 2L))
+    }
+
+    @Test
     fun `a package change supersedes the active burst`() {
         val policy = BurstSchedulePolicy()
         assertIs<EventPlan.StartBurst>(policy.onEvent(true, ScanTrigger.PACKAGE_CHANGED, pkg("com.one"), 0L))
