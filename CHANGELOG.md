@@ -1,6 +1,13 @@
 # Changelog
 
-## 1.0.0-rc1 - Unreleased
+## 1.0.0-rc1 - Experimental preview
+
+> Status per M1.6 audit: 8/10 release gates verified. Released for public
+> testing as an experimental preview because the only available Android 15+
+> physical device (Xiaomi / HyperOS) does not support reliable continuous
+> background observation: the OEM power engine unbinds the accessibility
+> service while the app idles in background and rebinds it on return to
+> foreground. See `docs/release-candidate.md` for the full record.
 
 ### Added
 

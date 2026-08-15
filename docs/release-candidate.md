@@ -1,4 +1,13 @@
-# 1.0.0-rc1 Release Candidate
+# 1.0.0-rc1 Experimental Preview
+
+> **Status: experimental preview, not a formal release-candidate gate PASS.**
+> The M1.6 audit verified 8/10 release gates; the remaining limitation is
+> device-scope: on the only available Android 15+ physical device (a Xiaomi /
+> HyperOS device), the OEM power engine unbinds the accessibility service while
+> the app process idles in background, so reliable *continuous background
+> observation* is not guaranteed there. Per audit decision, this build is
+> released for public testing as an experimental preview while the runtime
+> itself stays frozen at `708c6b6`.
 
 ## Product scope
 
@@ -96,7 +105,7 @@ retained here.
 | Signature verification | PASS — `apksigner verify` v2 scheme, RSA 4096, certificate `CN=liujiawei, O=Bypass Ads` |
 | Release APK manifest | `app.bypassads` / `1000001` / `1.0.0-rc1` / minSdk 35 / targetSdk 37; no `INTERNET`, no dangerous permissions |
 | Release APK SHA-256 | `fcc44dcdfd3157ff43e3dee318427eea69d0d13e071510acd6129199e516d87f` |
-| Reproducibility | Diagnostic-log build produced the identical SHA-256 (R8 strips `Log.d`) |
+| Reproducibility | R8 equivalence check: a diagnostic-log build produced the identical SHA-256 (R8 strips `Log.d`). Two cold `clean assembleRelease` runs yield different SHA-256 due to zip-entry timestamps; byte-level reproducibility is not claimed |
 
 ## Signed release smoke (API 36 physical device)
 
@@ -106,16 +115,30 @@ Service manually enabled by the user; aggregate results only.
 | --- | --- |
 | System-bound | PASS — service present in Bound/Enabled accessibility lists |
 | Shadow scanning | PASS — `SCAN`/`CASE_END` produced across app switches (thousands of records during normal use; decisions `NO_CANDIDATE`, 0 `WOULD_CLICK`) |
-| OFF pause | Covered by the debug-artifact lifecycle gate — identical runtime code (R8 only strips logs); `OFF` produced zero scans and Shadow resumed on restore |
+| OFF pause | PASS (API 35 signed release, emulator, non-destructive UI-only flow): `OFF` produced zero black-box lines across ~35s of window events; switching back to `SHADOW` resumed `SCAN`/`CASE_END` immediately. The API 36 physical OFF toggle is user-confirmed pending (see device note) |
 | Crash/ANR | PASS — no crash/ANR in device logs; process stable across hours |
 | Home status truthfulness | PASS — UI state follows the real service state in both directions (verified with temporary diagnostic logs, then removed); the home "waiting for service connection" text appears only while the service is actually unbound |
 
-Device note (documented behavior, not a code defect): on this device the OEM
+## Supported device scope (M1.6 audit P1-1)
+
+On the only available Android 15+ physical device (Xiaomi / HyperOS), the OEM
 power engine (`SmartPower`) unbinds the accessibility service when the app
-process idles in background; the system automatically rebinds it on return to
-foreground (enabled list is preserved, no user action required). The
-long-running third-party comparison service stays bound, attributed to its
-keep-alive mechanism, which this project deliberately does not implement.
+process idles in background (~3s after backgrounding) and rebinds it on return
+to foreground (enabled list preserved, no user action required). The UI
+truthfully reflects this. This project deliberately implements no keep-alive,
+foreground service, self-start, or OEM hack (audit prohibition).
+
+Consequences, recorded per audit decision:
+
+- This Xiaomi/HyperOS device does **not** support reliable continuous
+  background Shadow observation; observation is reliable while Bypass Ads.
+  stays foreground or returns to foreground.
+- Without a second Android 15+ device to demonstrate sustained background
+  binding elsewhere, this build is released as an **experimental preview**
+  (public testing), not as a formal release-candidate gate PASS.
+- A long-running third-party comparison service stays bound on the same
+  device, attributed to its keep-alive mechanism, which this project does not
+  implement.
 
 ## API 35 compatibility smoke (emulator)
 
