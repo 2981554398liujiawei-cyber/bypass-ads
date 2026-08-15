@@ -115,7 +115,7 @@ Service manually enabled by the user; aggregate results only.
 | --- | --- |
 | System-bound | PASS — service present in Bound/Enabled accessibility lists |
 | Shadow scanning | PASS — `SCAN`/`CASE_END` produced across app switches (thousands of records during normal use; decisions `NO_CANDIDATE`, 0 `WOULD_CLICK`) |
-| OFF pause | PASS (API 35 signed release, emulator, non-destructive UI-only flow): `OFF` produced zero black-box lines across ~35s of window events; switching back to `SHADOW` resumed `SCAN`/`CASE_END` immediately. The API 36 physical OFF toggle is user-confirmed pending (see device note) |
+| OFF pause | PASS — API 35 signed release (emulator, non-destructive UI-only flow): `OFF` produced zero black-box lines across ~35s of window events; switching back to `SHADOW` resumed `SCAN`/`CASE_END` immediately. API 36 physical device (user-performed, then re-verified by the tool): home counter stayed unchanged (`5213`) across 30+ seconds of app use in `OFF`, and resumed (`5213` → `5214`) after switching back to `SHADOW` and opening an app |
 | Crash/ANR | PASS — no crash/ANR in device logs; process stable across hours |
 | Home status truthfulness | PASS — UI state follows the real service state in both directions (verified with temporary diagnostic logs, then removed); the home "waiting for service connection" text appears only while the service is actually unbound |
 
