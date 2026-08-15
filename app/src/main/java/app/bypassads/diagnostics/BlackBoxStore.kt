@@ -74,9 +74,10 @@ class BlackBoxRepository internal constructor(
                     output.fd.sync()
                 }
                 recordsWritten++
-                trackedBytes = currentBytes()
+                trackedBytes += bytes.size
                 appendCountSinceRetention++
-                if (lastRetentionDay != day || appendCountSinceRetention >= RETENTION_INTERVAL || trackedBytes > maxBytes) {
+                // Size enforcement is immediate; age retention remains deliberately low-frequency.
+                if (trackedBytes > maxBytes || lastRetentionDay != day || appendCountSinceRetention >= RETENTION_INTERVAL) {
                     enforceRetention()
                     appendCountSinceRetention = 0
                     lastRetentionDay = day
@@ -95,8 +96,11 @@ class BlackBoxRepository internal constructor(
 
     fun clear(callback: (() -> Unit)? = null) {
         enqueue {
-            recordFiles().forEach(File::delete)
-            trackedBytes = currentBytes()
+            recordFiles().forEach { file ->
+                val bytes = file.length()
+                if (file.delete()) trackedBytes -= bytes
+            }
+            trackedBytes = trackedBytes.coerceAtLeast(0L)
             callback?.invoke()
         }
     }
@@ -138,8 +142,6 @@ class BlackBoxRepository internal constructor(
 
     private fun recordFiles(): List<File> = dir.listFiles().orEmpty().filter { it.extension == "jsonl" }
 
-    private fun currentBytes(): Long = recordFiles().sumOf(File::length)
-
     private fun enforceRetention() {
         val cutoff = LocalDate.now().minusDays(RETENTION_DAYS)
         recordFiles().forEach { file ->
@@ -147,7 +149,7 @@ class BlackBoxRepository internal constructor(
             val length = file.length()
             if (date != null && date.isBefore(cutoff) && file.delete()) trackedBytes -= length
         }
-        var bytes = currentBytes()
+        var bytes = trackedBytes
         recordFiles().sortedBy { it.name }.forEach { file ->
             if (bytes > maxBytes) {
                 val length = file.length()
@@ -157,7 +159,7 @@ class BlackBoxRepository internal constructor(
                 }
             }
         }
-        trackedBytes = currentBytes()
+        trackedBytes = bytes.coerceAtLeast(0L)
     }
 
     private fun dayFor(epochMs: Long): LocalDate = Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault()).toLocalDate()
