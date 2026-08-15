@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "app.lttnext"
+    namespace = "app.bypassads"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "app.lttnext"
+        applicationId = "app.bypassads"
         minSdk = 35
         targetSdk = 37
         versionCode = 1

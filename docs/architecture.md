@@ -30,7 +30,7 @@ Pure Kotlin. No Android APIs.
 ### `:app`
 Android integration.
 
-- `LttAccessibilityService`: event trigger + burst scheduling
+- `BypassAdsAccessibilityService`: event trigger + burst scheduling
 - `NodeSnapshotBuilder`: converts Android accessibility nodes to core snapshots
 - `BlackBoxStore`: bounded local JSONL diagnostics
 - Compose status UI

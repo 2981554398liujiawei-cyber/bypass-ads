@@ -1,4 +1,4 @@
-package app.lttnext.runtime
+package app.bypassads.runtime
 
 enum class RunMode {
     OFF,

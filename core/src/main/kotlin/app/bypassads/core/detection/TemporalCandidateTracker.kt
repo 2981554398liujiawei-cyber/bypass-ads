@@ -1,6 +1,6 @@
-package app.lttnext.core.detection
+package app.bypassads.core.detection
 
-import app.lttnext.core.model.CandidateFeatures
+import app.bypassads.core.model.CandidateFeatures
 
 /**
  * Enriches privacy-safe candidate features within a single burst. No raw UI text is retained.

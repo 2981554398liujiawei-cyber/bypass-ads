@@ -1,20 +1,20 @@
-package app.lttnext.accessibility
+package app.bypassads.accessibility
 
 import android.accessibilityservice.AccessibilityService
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
-import app.lttnext.core.decision.DecisionEngine
-import app.lttnext.core.detection.CandidateDetector
-import app.lttnext.core.detection.TemporalCandidateTracker
-import app.lttnext.diagnostics.BlackBoxRecord
-import app.lttnext.diagnostics.BlackBoxStore
-import app.lttnext.runtime.RunMode
-import app.lttnext.runtime.RunModeStore
+import app.bypassads.core.decision.DecisionEngine
+import app.bypassads.core.detection.CandidateDetector
+import app.bypassads.core.detection.TemporalCandidateTracker
+import app.bypassads.diagnostics.BlackBoxRecord
+import app.bypassads.diagnostics.BlackBoxStore
+import app.bypassads.runtime.RunMode
+import app.bypassads.runtime.RunModeStore
 import java.util.concurrent.atomic.AtomicLong
 
-class LttAccessibilityService : AccessibilityService() {
+class BypassAdsAccessibilityService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
     private val snapshotBuilder = NodeSnapshotBuilder()
     private val detector = CandidateDetector()

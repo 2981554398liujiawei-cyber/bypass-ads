@@ -1,6 +1,6 @@
 # Privacy model
 
-LTT Next uses Android Accessibility APIs, which can expose sensitive UI content. The project therefore treats local diagnostics as sensitive by default.
+Bypass Ads. uses Android Accessibility APIs, which can expose sensitive UI content. The project therefore treats local diagnostics as sensitive by default.
 
 ## Runtime network policy
 

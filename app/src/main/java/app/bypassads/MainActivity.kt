@@ -1,4 +1,4 @@
-package app.lttnext
+package app.bypassads
 
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
@@ -39,9 +39,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import app.lttnext.diagnostics.BlackBoxStore
-import app.lttnext.runtime.RunMode
-import app.lttnext.runtime.RunModeStore
+import app.bypassads.diagnostics.BlackBoxStore
+import app.bypassads.runtime.RunMode
+import app.bypassads.runtime.RunModeStore
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -71,7 +71,7 @@ class MainActivity : ComponentActivity() {
                         .windowInsetsPadding(WindowInsets.safeDrawing)
                         .padding(horizontal = 24.dp, vertical = 28.dp),
                 ) {
-                    Text("LTT Next", fontSize = 30.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+                    Text("Bypass Ads.", fontSize = 30.sp, fontWeight = FontWeight.SemiBold, color = Ink)
                     Text(
                         "离线 · Android 15+ · 开发预览",
                         modifier = Modifier.padding(top = 4.dp),
@@ -105,7 +105,7 @@ class MainActivity : ComponentActivity() {
                     SectionCard(title = "无障碍服务") {
                         Text(
                             if (serviceEnabled) "服务已启用。打开其他 App 时会进行 1 秒多帧观察。"
-                            else "需要手动开启 LTT Next · 开屏观察。",
+                            else "需要手动开启 Bypass Ads. · 开屏观察。",
                             fontSize = 14.sp,
                             lineHeight = 21.sp,
                             color = Muted,

@@ -1,11 +1,11 @@
-package app.lttnext.accessibility
+package app.bypassads.accessibility
 
 import android.graphics.Rect
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
-import app.lttnext.core.model.IntRect
-import app.lttnext.core.model.UiNodeSnapshot
-import app.lttnext.core.model.UiSnapshot
+import app.bypassads.core.model.IntRect
+import app.bypassads.core.model.UiNodeSnapshot
+import app.bypassads.core.model.UiSnapshot
 
 class NodeSnapshotBuilder {
     fun capture(

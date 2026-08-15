@@ -1,8 +1,8 @@
-package app.lttnext.core.detection
+package app.bypassads.core.detection
 
-import app.lttnext.core.model.CandidateFeatures
-import app.lttnext.core.model.SkipCandidate
-import app.lttnext.core.model.WeightedReason
+import app.bypassads.core.model.CandidateFeatures
+import app.bypassads.core.model.SkipCandidate
+import app.bypassads.core.model.WeightedReason
 
 class CandidateScorer {
     fun score(features: CandidateFeatures): SkipCandidate {

@@ -1,8 +1,8 @@
-package app.lttnext.diagnostics
+package app.bypassads.diagnostics
 
 import android.content.Context
-import app.lttnext.core.model.CandidateFeatures
-import app.lttnext.core.model.IntRect
+import app.bypassads.core.model.CandidateFeatures
+import app.bypassads.core.model.IntRect
 import java.io.File
 import java.time.Instant
 import java.time.LocalDate
@@ -76,7 +76,7 @@ class BlackBoxStore(context: Context) {
     }
 
     private fun IntRect.json(): String = "[$left,$top,$right,$bottom]"
-    private fun List<app.lttnext.core.model.WeightedReason>.reasonsJson(): String = joinToString(prefix = "[", postfix = "]") {
+    private fun List<app.bypassads.core.model.WeightedReason>.reasonsJson(): String = joinToString(prefix = "[", postfix = "]") {
         "{\"code\":\"${escape(it.code)}\",\"points\":${it.points}}"
     }
     private fun String?.json(): String = if (this == null) "null" else "\"${escape(this)}\""

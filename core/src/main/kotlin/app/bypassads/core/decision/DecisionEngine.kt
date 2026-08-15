@@ -1,8 +1,8 @@
-package app.lttnext.core.decision
+package app.bypassads.core.decision
 
-import app.lttnext.core.model.DecisionType
-import app.lttnext.core.model.SkipCandidate
-import app.lttnext.core.model.SkipDecision
+import app.bypassads.core.model.DecisionType
+import app.bypassads.core.model.SkipCandidate
+import app.bypassads.core.model.SkipDecision
 
 class DecisionEngine(
     private val clickThreshold: Int = 80,

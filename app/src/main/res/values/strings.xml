@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">LTT Next</string>
-    <string name="accessibility_service_label">LTT Next · 开屏观察</string>
+    <string name="app_name">Bypass Ads.</string>
+    <string name="accessibility_service_label">Bypass Ads. · 开屏观察</string>
     <string name="accessibility_service_description">在本机读取界面结构以识别开屏广告。开发阶段默认仅观察并记录决策，不执行点击；应用不申请联网权限。</string>
 </resources>

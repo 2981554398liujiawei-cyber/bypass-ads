@@ -1,4 +1,4 @@
-package app.lttnext.core.model
+package app.bypassads.core.model
 
 data class WeightedReason(
     val code: String,

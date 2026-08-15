@@ -1,11 +1,11 @@
-package app.lttnext.core.decision
+package app.bypassads.core.decision
 
-import app.lttnext.core.detection.CandidateDetector
-import app.lttnext.core.detection.TemporalCandidateTracker
-import app.lttnext.core.model.DecisionType
-import app.lttnext.core.model.IntRect
-import app.lttnext.core.model.UiNodeSnapshot
-import app.lttnext.core.model.UiSnapshot
+import app.bypassads.core.detection.CandidateDetector
+import app.bypassads.core.detection.TemporalCandidateTracker
+import app.bypassads.core.model.DecisionType
+import app.bypassads.core.model.IntRect
+import app.bypassads.core.model.UiNodeSnapshot
+import app.bypassads.core.model.UiSnapshot
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue

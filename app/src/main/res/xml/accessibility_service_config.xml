@@ -9,4 +9,4 @@
     android:description="@string/accessibility_service_description"
     android:isAccessibilityTool="false"
     android:notificationTimeout="40"
-    android:settingsActivity="app.lttnext.MainActivity" />
+    android:settingsActivity="app.bypassads.MainActivity" />

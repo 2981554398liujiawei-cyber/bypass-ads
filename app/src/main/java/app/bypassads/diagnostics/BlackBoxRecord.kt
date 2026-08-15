@@ -1,7 +1,7 @@
-package app.lttnext.diagnostics
+package app.bypassads.diagnostics
 
-import app.lttnext.core.model.CandidateFeatures
-import app.lttnext.core.model.SkipDecision
+import app.bypassads.core.model.CandidateFeatures
+import app.bypassads.core.model.SkipDecision
 
 data class BlackBoxRecord(
     val epochMs: Long,

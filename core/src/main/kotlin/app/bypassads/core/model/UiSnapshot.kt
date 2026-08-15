@@ -1,4 +1,4 @@
-package app.lttnext.core.model
+package app.bypassads.core.model
 
 data class UiNodeSnapshot(
     val index: Int,

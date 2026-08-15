@@ -1,4 +1,4 @@
-# LTT Next
+# Bypass Ads.
 
 A clean-room, offline Android 15+ experiment for safer splash-ad skipping.
 
@@ -9,7 +9,7 @@ A clean-room, offline Android 15+ experiment for safer splash-ad skipping.
 - Runtime is fully offline. The manifest intentionally does **not** request `android.permission.INTERNET`.
 - Android 15+ only (`minSdk 35`).
 - Compiles/targets API 37.
-- Independent application ID: `app.lttnext` (debug builds use `app.lttnext.debug`), so it can coexist with legacy LiTiaoTiao.
+- Independent application ID: `app.bypassads` (debug builds use `app.bypassads.debug`), so it can coexist with legacy LiTiaoTiao.
 - False positives are treated as more costly than missed ads.
 - Black-box diagnostics are local, bounded, and privacy-minimized.
 - Open source under MIT (provisional until first public release).
