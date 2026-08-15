@@ -55,12 +55,17 @@ object JsonlTraceValidatorRunner {
                 ignoredBeforeStart++
                 return@forEach
             }
-            if (json.isNull("caseId") || !json.has("caseId")) {
-                nonCaseRecords++
+            val trigger = runCatching { json.traceTrigger() }.getOrElse {
+                unadaptableCaseRecords++
+                return@forEach
+            }
+            val caseId = json.nullableString("caseId")
+            if (caseId == null) {
+                if (trigger == TraceTrigger.SERVICE_CONNECTED) nonCaseRecords++ else unadaptableCaseRecords++
                 return@forEach
             }
             caseRecords++
-            val entry = runCatching { json.toTraceEntry() }.getOrElse {
+            val entry = runCatching { json.toTraceEntry(trigger, caseId) }.getOrElse {
                 unadaptableCaseRecords++
                 return@forEach
             }
@@ -78,12 +83,11 @@ object JsonlTraceValidatorRunner {
         )
     }
 
-    private fun JSONObject.toTraceEntry(): CaseTraceEntry {
-        val trigger = runCatching { TraceTrigger.valueOf(getString("trigger")) }.getOrElse {
-            throw IllegalArgumentException("Unknown trigger")
-        }
+    private fun JSONObject.traceTrigger(): TraceTrigger = TraceTrigger.valueOf(getString("trigger"))
+
+    private fun JSONObject.toTraceEntry(trigger: TraceTrigger, caseId: String): CaseTraceEntry {
         return CaseTraceEntry(
-            caseId = getString("caseId"),
+            caseId = caseId,
             sessionId = getLong("session"),
             scanIndex = getInt("scan"),
             isScan = trigger == TraceTrigger.SCAN,
@@ -97,7 +101,7 @@ object JsonlTraceValidatorRunner {
     }
 
     private fun JSONObject.nullableInt(key: String): Int? = if (!has(key) || isNull(key)) null else getInt(key)
-    private fun JSONObject.nullableString(key: String): String? = if (!has(key) || isNull(key)) null else getString(key)
+    private fun JSONObject.nullableString(key: String): String? = if (!has(key) || isNull(key)) null else getString(key).takeIf(String::isNotBlank)
 
     private enum class TraceTrigger {
         SERVICE_CONNECTED,

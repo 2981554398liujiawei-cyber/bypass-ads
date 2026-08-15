@@ -70,6 +70,22 @@ class JsonlTraceValidatorRunnerTest {
     }
 
     @Test
+    fun `accepts only service connection records without a case identity`() {
+        val report = JsonlTraceValidatorRunner.validate(
+            sequenceOf(
+                """{"time":100,"session":7,"caseId":null,"scan":-1,"trigger":"SERVICE_CONNECTED"}""",
+                """{"time":101,"session":7,"caseId":null,"scan":0,"trigger":"SCAN"}""",
+                """{"time":102,"session":7,"scan":-1,"trigger":"CASE_END"}""",
+                """{"time":103,"session":7,"caseId":null,"scan":-1,"trigger":"UNKNOWN"}""",
+            ),
+        )
+
+        assertFalse(report.passed)
+        assertEquals(1, report.nonCaseRecords)
+        assertEquals(3, report.unadaptableCaseRecords)
+    }
+
+    @Test
     fun `rejects command line options without a value`() {
         assertFailsWith<IllegalStateException> {
             parseOptions(arrayOf("--input", "trace.jsonl", "--from-epoch-ms"))
