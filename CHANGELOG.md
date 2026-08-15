@@ -9,6 +9,9 @@
 - Explicit release build guard: an unsigned `assembleRelease` is rejected.
 - M1.4 real-device Shadow evidence accepted with privacy-minimized aggregate
   results only.
+- M1.5 RC closure record: debug-artifact regression on an API 36 physical
+  device (Shadow scan, OFF pause, restore, binding, no crash/ANR, complete
+  scan metrics) with debug APK SHA-256 in `docs/release-candidate.md`.
 
 ### Changed
 

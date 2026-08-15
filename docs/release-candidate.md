@@ -73,17 +73,35 @@ only for the documented smoke test.
 Record only aggregate pass/fail results, artifact metadata, and SHA-256 in the
 final release note.
 
+## RC validation record (debug artifact)
+
+M1.5 Shadow release-candidate closure on an API 36 physical device. Aggregate
+pass/fail results only; no package names, case IDs, or raw traces are retained
+here.
+
+| Check | Result |
+| --- | --- |
+| M1.4 Shadow runtime gate | PASS — see [m1-4-real-device-shadow-gate](m1-4-real-device-shadow-gate.md); its evidence stays anchored to its historical commits |
+| RC packaging/UI regression | PASS — release-prep commit `708c6b6` changed packaging/UI/metadata/privacy files only; no detector/scorer/scheduler/Accessibility-runtime behavior change |
+| Static capability scan | PASS — no node action, gesture/global action, screenshot, OCR, networking, `INTERNET`, or new permission in `app`/`core` source |
+| Debug APK SHA-256 | `ff708bba1e2e5da9b1ebb8196f5035a04c6aa1c6fdcd511557e1f2065f19e82e` |
+| Debug build + unit tests | PASS — `:evidence:test`, `:core:test`, `:app:testDebugUnitTest`, `:app:assembleDebug` |
+| Device lifecycle | PASS — service system-bound; Shadow produces `SCAN`/`CASE_END`; `OFF` produces no scan; Shadow resumes on restore; no crash/ANR; black-box I/O metrics complete (`scanMetricsComplete=true`) |
+| Trace validator | `malformedJsonLines=0`, `unadaptableCaseRecords=0`; 2 residual violations located by root cause: one pre-M1.4 record outside the M1.4 `--from-epoch-ms` window, one trace interrupted by an install during RC regression. Neither is in the M1.4 validation window; the validator was not relaxed |
+| Automatic actuation | NOT IMPLEMENTED — decisions remain Shadow diagnostics only |
+
 ## Artifact provenance
 
-Populate this table only after the signed RC build and smoke matrix complete.
+Populate the release rows only after the signed RC build and smoke matrix
+complete. The debug regression above does not replace a signed release build.
 
 | Field | Value |
 | --- | --- |
-| Runtime source commit | Pending signed RC build |
-| Evidence/tooling head | Pending signed RC build |
+| Runtime source commit | `708c6b6` (`chore(release): prepare shadow release candidate`) |
+| Evidence/tooling head | `708c6b6` |
 | Release APK SHA-256 | Pending signed RC build |
 | Application ID | `app.bypassads` |
 | versionCode / versionName | `1000001` / `1.0.0-rc1` |
 | minSdk / targetSdk | 35 / 37 |
-| API 36 physical smoke | Pending |
+| API 36 physical smoke | PASS (debug artifact regression) |
 | API 35 compatibility smoke | Pending |
