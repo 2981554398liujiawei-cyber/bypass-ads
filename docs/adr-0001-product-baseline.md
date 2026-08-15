@@ -1,6 +1,6 @@
 # ADR-0001: Product baseline
 
-Status: Accepted for v0.1
+Status: Accepted for Shadow-only V1.0 RC
 
 ## Decisions
 
@@ -9,9 +9,9 @@ Status: Accepted for v0.1
 - Compile and target SDK: API 37.
 - UI: Jetpack Compose with a small custom visual system.
 - Coexistence: independent application ID (`app.bypassads`).
-- Development mode: Shadow-first; no actuation in v0.1.
+- Release mode: Shadow-only; `RunMode` is limited to `SHADOW` and `OFF`, with no actuation in V1.0 RC.
 - Diagnostics: local bounded black box.
-- Licensing: MIT provisionally, to be confirmed before the first public release.
+- Licensing: MIT.
 
 ## Rationale
 

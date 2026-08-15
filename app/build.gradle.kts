@@ -1,6 +1,37 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.compose.compiler)
+}
+
+val releasePropertiesPath = System.getenv("BYPASS_ADS_SIGNING_PROPERTIES")
+    ?.takeIf { it.isNotBlank() }
+    ?.let(::file)
+val releaseProperties = Properties().apply {
+    if (releasePropertiesPath?.isFile == true) {
+        releasePropertiesPath.inputStream().use(::load)
+    }
+}
+val releaseSigningKeys = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
+val releaseStoreFile = releaseProperties.getProperty("storeFile")
+    ?.takeIf { it.isNotBlank() }
+    ?.let(rootProject::file)
+    ?.canonicalFile
+val releaseSigningReady = releaseSigningKeys.all { key -> !releaseProperties.getProperty(key).isNullOrBlank() } &&
+    releaseStoreFile?.isFile == true &&
+    !releaseStoreFile.toPath().startsWith(rootProject.projectDir.canonicalFile.toPath())
+val releaseTaskRequested = gradle.startParameter.taskNames.any { taskName ->
+    taskName == "assembleRelease" ||
+        taskName == "bundleRelease" ||
+        taskName == ":app:assembleRelease" ||
+        taskName == ":app:bundleRelease"
+}
+
+if (releaseTaskRequested) {
+    check(releaseSigningReady) {
+        "Release signing is required. Set BYPASS_ADS_SIGNING_PROPERTIES to an external properties file described in docs/release-candidate.md."
+    }
 }
 
 android {
@@ -11,8 +42,8 @@ android {
         applicationId = "app.bypassads"
         minSdk = 35
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0-dev"
+        versionCode = 1_000_001
+        versionName = "1.0.0-rc1"
     }
 
     buildFeatures {
@@ -26,7 +57,16 @@ android {
             versionNameSuffix = "-debug"
         }
         release {
+            if (releaseSigningReady) {
+                signingConfig = signingConfigs.create("release") {
+                    storeFile = requireNotNull(releaseStoreFile)
+                    storePassword = requireNotNull(releaseProperties.getProperty("storePassword"))
+                    keyAlias = requireNotNull(releaseProperties.getProperty("keyAlias"))
+                    keyPassword = requireNotNull(releaseProperties.getProperty("keyPassword"))
+                }
+            }
             isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

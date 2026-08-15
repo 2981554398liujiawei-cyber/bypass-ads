@@ -10,3 +10,11 @@
 .cxx
 *.jks
 *.keystore
+*.p12
+*.pem
+*.der
+release.properties
+signing.properties
+key.properties
+*.apk
+*.aab

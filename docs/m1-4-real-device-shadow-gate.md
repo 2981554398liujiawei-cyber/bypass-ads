@@ -1,8 +1,9 @@
 # M1.4 Real-device Shadow Gate
 
-Status: **M1.4 Shadow real-device gate passed; NOT READY FOR V1.0**. This
-document records privacy-minimized real evidence only. Passing this gate does
-not authorize automatic actuation or a V1.0 release.
+Status: **M1.4 Shadow real-device gate passed**. This document records
+privacy-minimized real evidence only. This gate alone did not authorize a
+release; the separate V1.0 RC remains Shadow-only and does not authorize
+automatic actuation.
 
 ## Build baseline
 

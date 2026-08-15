@@ -47,6 +47,6 @@ Records use append-and-sync writes on one serial background worker; reads, reten
 
 The Diagnostics screen also shows local queue health: pending jobs, peak pending jobs, completed writes, and write failures. Retention runs on the first write of a day, every 64 appends, or immediately if the active daily file exceeds the 20 MB cap.
 
-The Diagnostics screen exposes recent records, score/risk detail, today’s counts, and a confirmed local clear action. It does not upload or export data in M1.
+The Diagnostics screen exposes recent records, score/risk detail, today’s counts, and a confirmed local clear action. It does not upload or export data in V1.0 RC.
 
 Candidate features are deliberately sanitized to geometry, resource ID, clickability, temporal counters, and boolean risks. This allows future replay work without retaining arbitrary UI text.

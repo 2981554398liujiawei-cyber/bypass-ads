@@ -15,7 +15,7 @@ Accessibility events
   -> local black-box log
 ```
 
-M1 deliberately ends at the decision log. There is no actuator in this code path.
+V1.0 RC deliberately ends at the decision log. There is no actuator in this code path.
 
 ## Modules
 
@@ -51,9 +51,9 @@ Android integration:
 - Resource ID + conventional label + top-corner geometry + small clickable target is strong evidence, not a permission to act.
 - The service requests no gesture capability and contains no node action, global action, or gesture call. `RunMode` has only `SHADOW` and `OFF`.
 
-## Deferred work after M1
+## Not part of this release
 
 1. Collect real Shadow records.
 2. Build replay import/export from sanitized candidate features.
 3. Add outcome verification and an adversarial fixture corpus.
-4. Design an actuator only after replay evidence demonstrates an acceptably low false-positive risk.
+4. Design an actuator only after a separate product decision and audit establish false-positive evidence, outcome verification, and rollback policy.

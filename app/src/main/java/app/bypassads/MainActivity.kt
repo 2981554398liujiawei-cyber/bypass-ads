@@ -299,7 +299,7 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun Settings(mode: RunMode, onModeChange: (RunMode) -> Unit) {
         SectionCard(title = "运行模式") {
-            Text("M1 仅提供 Shadow：会识别、评分并写入黑匣子，但永远不执行节点点击或手势。", fontSize = 14.sp, lineHeight = 21.sp, color = Muted)
+            Text("V1.0 RC 仅提供 Shadow：会识别、评分并写入黑匣子，但永远不执行节点点击或手势。", fontSize = 14.sp, lineHeight = 21.sp, color = Muted)
             Spacer(Modifier.height(16.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 ModeButton("Shadow", mode == RunMode.SHADOW, { onModeChange(RunMode.SHADOW) }, Modifier.weight(1f))
@@ -312,7 +312,7 @@ class MainActivity : ComponentActivity() {
         }
         Spacer(Modifier.height(14.dp))
         SectionCard(title = "关于") {
-            Text("Bypass Ads. 是 Android 15+ 的离线开屏广告观察工具。核心判断逻辑保持在可测试、可回放的纯 Kotlin 模块中。", fontSize = 14.sp, lineHeight = 21.sp, color = Muted)
+            Text("Bypass Ads. ${BuildConfig.VERSION_NAME} 是 Android 15+ 的完全离线开屏广告观察与诊断工具，仅提供 OFF/Shadow，不自动跳过广告。", fontSize = 14.sp, lineHeight = 21.sp, color = Muted)
         }
     }
 
