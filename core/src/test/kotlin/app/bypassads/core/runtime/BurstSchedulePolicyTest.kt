@@ -47,4 +47,13 @@ class BurstSchedulePolicyTest {
         assertIs<EventPlan.Ignore>(policy.onEvent(false, ScanTrigger.CONTENT_CHANGED, "com.demo", 0L))
         assertIs<EventPlan.Ignore>(policy.onEvent(false, ScanTrigger.WINDOWS_CHANGED, "com.demo", 0L))
     }
+
+    @Test
+    fun `disabling cancels content already waiting for debounce`() {
+        val policy = BurstSchedulePolicy()
+        policy.onEvent(true, ScanTrigger.CONTENT_CHANGED, "com.demo", 0L)
+        policy.disable()
+        assertIs<EventPlan.Ignore>(policy.onContentDebounceElapsed("com.demo", 250L))
+        assertIs<EventPlan.StartBurst>(policy.onEvent(true, ScanTrigger.CONTENT_CHANGED, "com.demo", 300L).let { policy.onContentDebounceElapsed("com.demo", 550L) })
+    }
 }

@@ -51,6 +51,10 @@ class BurstSchedulePolicy(private val contentDebounceMs: Long = CONTENT_DEBOUNCE
         return EventPlan.StartBurst(packageName, ScanTrigger.CONTENT_CHANGED, cancelPendingContent = false, cancelActiveBurst = true)
     }
 
+    fun disable() {
+        pendingContent = null
+    }
+
     private data class PendingContent(val packageName: String?, val dueAtMs: Long)
 
     companion object {

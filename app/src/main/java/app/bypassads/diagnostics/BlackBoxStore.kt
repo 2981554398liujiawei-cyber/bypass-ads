@@ -11,46 +11,101 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 import org.json.JSONArray
 import org.json.JSONObject
 
 /** All file work is serialized away from accessibility and Compose main paths. */
 class BlackBoxStore(context: Context) {
-    private val dir = File(context.filesDir, DIRECTORY_NAME).apply { mkdirs() }
+    private val repository = BlackBoxRuntime.repository(context.applicationContext)
+
+    fun append(record: BlackBoxRecord) = repository.append(record)
+    fun recentRecords(limit: Int = DEFAULT_RECENT_LIMIT, callback: (List<DiagnosticRecord>) -> Unit) = repository.recentRecords(limit, callback)
+    fun todayStats(callback: (BlackBoxStats) -> Unit) = repository.todayStats(callback)
+    fun clear(callback: (() -> Unit)? = null) = repository.clear(callback)
+    fun health(callback: (BlackBoxIoHealth) -> Unit) = repository.health(callback)
+
+    /** Repository lifetime is the application process, not an Activity or Service client. */
+    fun close() = Unit
+
+    private companion object { const val DEFAULT_RECENT_LIMIT = 50 }
+}
+
+data class BlackBoxIoHealth(
+    val pendingIoJobs: Int,
+    val maxPendingIoJobs: Int,
+    val recordsWritten: Long,
+    val writeFailures: Long,
+)
+
+internal object BlackBoxRuntime {
+    @Volatile private var shared: BlackBoxRepository? = null
+
+    fun repository(context: Context): BlackBoxRepository = shared ?: synchronized(this) {
+        shared ?: BlackBoxRepository(File(context.filesDir, DIRECTORY_NAME).apply { mkdirs() }).also { shared = it }
+    }
+
+    private const val DIRECTORY_NAME = "bypass_ads_blackbox"
+}
+
+class BlackBoxRepository internal constructor(private val dir: File) {
     private val io: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "bypass-ads-blackbox").apply { isDaemon = true }
     }
+    private val pendingJobs = AtomicInteger()
+    private val maxPendingJobs = AtomicInteger()
+    private var recordsWritten = 0L
+    private var writeFailures = 0L
+    private var appendCountSinceRetention = 0
+    private var lastRetentionDay: LocalDate? = null
 
     fun append(record: BlackBoxRecord) {
-        io.execute {
+        enqueue {
             val day = dayFor(record.epochMs)
             val bytes = (BlackBoxJsonCodec.encode(record) + "\n").toByteArray(Charsets.UTF_8)
-            FileOutputStream(File(dir, "$day.jsonl"), true).use { output ->
-                output.write(bytes)
-                output.flush()
-                output.fd.sync()
-            }
-            enforceRetention()
+            runCatching {
+                FileOutputStream(File(dir, "$day.jsonl"), true).use { output ->
+                    output.write(bytes)
+                    output.flush()
+                    output.fd.sync()
+                }
+                recordsWritten++
+                appendCountSinceRetention++
+                val dayFile = File(dir, "$day.jsonl")
+                if (lastRetentionDay != day || appendCountSinceRetention >= RETENTION_INTERVAL || dayFile.length() > MAX_BYTES) {
+                    enforceRetention()
+                    appendCountSinceRetention = 0
+                    lastRetentionDay = day
+                }
+            }.onFailure { writeFailures++ }
         }
     }
 
     fun recentRecords(limit: Int = DEFAULT_RECENT_LIMIT, callback: (List<DiagnosticRecord>) -> Unit) {
-        io.execute { callback(readRecentRecords(limit)) }
+        enqueue { callback(readRecentRecords(limit)) }
     }
 
     fun todayStats(callback: (BlackBoxStats) -> Unit) {
-        io.execute { callback(readTodayStats()) }
+        enqueue { callback(readTodayStats()) }
     }
 
     fun clear(callback: (() -> Unit)? = null) {
-        io.execute {
+        enqueue {
             recordFiles().forEach(File::delete)
             callback?.invoke()
         }
     }
 
-    fun close() {
-        io.shutdown()
+    fun health(callback: (BlackBoxIoHealth) -> Unit) {
+        enqueue { callback(BlackBoxIoHealth(pendingJobs.get(), maxPendingJobs.get(), recordsWritten, writeFailures)) }
+    }
+
+    private fun enqueue(work: () -> Unit) {
+        val pending = pendingJobs.incrementAndGet()
+        maxPendingJobs.accumulateAndGet(pending, ::maxOf)
+        io.execute {
+            try { work() } finally { pendingJobs.decrementAndGet() }
+        }
     }
 
     private fun readRecentRecords(limit: Int): List<DiagnosticRecord> = recordFiles()
@@ -100,6 +155,7 @@ class BlackBoxStore(context: Context) {
         const val RETENTION_DAYS = 7L
         const val MAX_BYTES = 20L * 1024L * 1024L
         const val DEFAULT_RECENT_LIMIT = 50
+        const val RETENTION_INTERVAL = 64
     }
 }
 

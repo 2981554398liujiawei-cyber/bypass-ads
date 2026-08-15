@@ -28,7 +28,7 @@ It does not store:
 
 Retention is bounded to 7 days and 20 MB, whichever constraint is reached first. Data stays in Android app-private storage and can be cleared locally from Diagnostics.
 
-The recorder performs JSONL writes, sync, retention, reads, and clearing on one serial background worker. It requests no screenshot or gesture capability and subscribes to no `TYPE_VIEW_TEXT_CHANGED` events.
+The recorder performs JSONL writes, sync, retention, reads, and clearing on one application-process serial background worker shared by the service and UI. Local queue health counters contain no content, device ID, or network data. It requests no screenshot or gesture capability and subscribes to no `TYPE_VIEW_TEXT_CHANGED` events.
 
 ## Future detailed diagnostics
 

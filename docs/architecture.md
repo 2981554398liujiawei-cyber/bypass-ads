@@ -36,7 +36,7 @@ Android integration:
 
 - `BypassAdsAccessibilityService`: package/window trigger and burst scheduling. It observes window-state, windows, and content events only; content events are debounced for 250 ms.
 - `NodeSnapshotBuilder`: Android accessibility nodes to core snapshots
-- `BlackBoxStore`: bounded, crash-tolerant local JSONL diagnostics on a single serial worker
+- `BlackBoxStore`: client facade over an application-process singleton repository, so Service and UI serialize every JSONL read/write/clear/retention operation through one worker
 - Compose Home, Diagnostics, and Settings UI
 
 ## Safety rules

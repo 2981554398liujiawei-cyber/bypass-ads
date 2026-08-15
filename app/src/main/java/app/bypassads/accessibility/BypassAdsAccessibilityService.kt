@@ -16,6 +16,7 @@ import app.bypassads.core.runtime.EventPlan
 import app.bypassads.core.runtime.ScanTrigger
 import app.bypassads.runtime.RunMode
 import app.bypassads.runtime.RunModeStore
+import java.io.Closeable
 import java.util.concurrent.atomic.AtomicLong
 
 class BypassAdsAccessibilityService : AccessibilityService() {
@@ -33,11 +34,17 @@ class BypassAdsAccessibilityService : AccessibilityService() {
     private var activeSession = 0L
     private var pendingContentCallback: Runnable? = null
     private var lastObservedPackage: String? = null
+    private var modeObserver: Closeable? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         runModeStore = RunModeStore(this)
         blackBox = BlackBoxStore(this)
+        modeObserver = runModeStore.observeModeChanges { mode ->
+            if (mode == RunMode.OFF) {
+                if (Looper.myLooper() == Looper.getMainLooper()) disableRuntime() else handler.post(::disableRuntime)
+            }
+        }
         runModeStore.markServiceConnected()
         blackBox.append(
             BlackBoxRecord(
@@ -64,8 +71,17 @@ class BypassAdsAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         activeSession = sessionCounter.incrementAndGet()
         handler.removeCallbacksAndMessages(null)
-        if (::blackBox.isInitialized) blackBox.close()
+        modeObserver?.close()
+        modeObserver = null
         super.onDestroy()
+    }
+
+    private fun disableRuntime() {
+        activeSession = sessionCounter.incrementAndGet()
+        schedulePolicy.disable()
+        cancelPendingContent()
+        cancelScheduledScans()
+        temporalTracker.reset()
     }
 
     private fun applyPlan(plan: EventPlan) {
@@ -113,7 +129,11 @@ class BypassAdsAccessibilityService : AccessibilityService() {
             ),
         )
         BURST_DELAYS_MS.forEachIndexed { index, delay ->
-            val callback = Runnable { scan(session, index, packageHint, trigger, triggeredAtElapsedMs) }
+            lateinit var callback: Runnable
+            callback = Runnable {
+                scheduledScans.remove(callback)
+                scan(session, index, packageHint, trigger, triggeredAtElapsedMs)
+            }
             scheduledScans += callback
             handler.postDelayed(callback, delay)
         }

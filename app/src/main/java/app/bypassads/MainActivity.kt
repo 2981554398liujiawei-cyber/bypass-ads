@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.bypassads.diagnostics.BlackBoxStore
 import app.bypassads.diagnostics.BlackBoxStats
+import app.bypassads.diagnostics.BlackBoxIoHealth
 import app.bypassads.diagnostics.DiagnosticRecord
 import app.bypassads.runtime.RunMode
 import app.bypassads.runtime.RunModeStore
@@ -79,6 +80,7 @@ class MainActivity : ComponentActivity() {
         val serviceEnabled = remember(refresh) { isServiceEnabled() }
         var stats by remember { mutableStateOf(BlackBoxStats(0, 0, 0, null)) }
         var recent by remember { mutableStateOf(emptyList<DiagnosticRecord>()) }
+        var ioHealth by remember { mutableStateOf<BlackBoxIoHealth?>(null) }
         val lastConnected = remember(refresh) { modeStore.lastServiceConnected() }
 
         DisposableEffect(blackBox) {
@@ -88,6 +90,7 @@ class MainActivity : ComponentActivity() {
         LaunchedEffect(refresh) {
             blackBox.todayStats { value -> runOnUiThread { stats = value } }
             blackBox.recentRecords { value -> runOnUiThread { recent = value } }
+            blackBox.health { value -> runOnUiThread { ioHealth = value } }
         }
 
         MaterialTheme {
@@ -127,6 +130,7 @@ class MainActivity : ComponentActivity() {
 
                         Destination.DIAGNOSTICS -> Diagnostics(
                             records = recent,
+                            ioHealth = ioHealth,
                             onRefresh = { refreshSignal++ },
                             onSelectRecord = { selectedRecord = it },
                             onClear = { clearConfirmationVisible = true },
@@ -246,6 +250,7 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun Diagnostics(
         records: List<DiagnosticRecord>,
+        ioHealth: BlackBoxIoHealth?,
         onRefresh: () -> Unit,
         onSelectRecord: (DiagnosticRecord) -> Unit,
         onClear: () -> Unit,
@@ -261,6 +266,15 @@ class MainActivity : ComponentActivity() {
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier.weight(1f),
                 ) { Text("清空日志") }
+            }
+            ioHealth?.let { health ->
+                Text(
+                    "I/O queue ${health.pendingIoJobs} pending, peak ${health.maxPendingIoJobs}, writes ${health.recordsWritten}, failures ${health.writeFailures}",
+                    modifier = Modifier.padding(top = 12.dp),
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                    color = Faint,
+                )
             }
         }
         Spacer(Modifier.height(14.dp))

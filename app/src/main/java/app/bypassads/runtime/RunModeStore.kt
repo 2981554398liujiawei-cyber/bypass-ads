@@ -1,6 +1,8 @@
 package app.bypassads.runtime
 
 import android.content.Context
+import android.content.SharedPreferences
+import java.io.Closeable
 
 class RunModeStore(context: Context) {
     private val prefs = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
@@ -18,6 +20,14 @@ class RunModeStore(context: Context) {
     }
 
     fun lastServiceConnected(): Long = prefs.getLong(LAST_CONNECTED, 0L)
+
+    fun observeModeChanges(listener: (RunMode) -> Unit): Closeable {
+        val preferenceListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == KEY) listener(get())
+        }
+        prefs.registerOnSharedPreferenceChangeListener(preferenceListener)
+        return Closeable { prefs.unregisterOnSharedPreferenceChangeListener(preferenceListener) }
+    }
 
     private companion object {
         const val PREFERENCES_NAME = "bypass_ads_runtime"
