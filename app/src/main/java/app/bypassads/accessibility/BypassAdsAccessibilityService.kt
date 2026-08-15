@@ -18,6 +18,7 @@ import app.bypassads.runtime.RunMode
 import app.bypassads.runtime.RunModeStore
 import java.io.Closeable
 import java.util.concurrent.atomic.AtomicLong
+import java.util.UUID
 
 class BypassAdsAccessibilityService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
@@ -99,7 +100,7 @@ class BypassAdsAccessibilityService : AccessibilityService() {
             is EventPlan.StartBurst -> {
                 if (plan.cancelPendingContent) cancelPendingContent()
                 if (plan.cancelActiveBurst) cancelScheduledScans()
-                startBurst(plan.packageName, plan.trigger.toBlackBoxTrigger())
+        startBurst(plan.packageName, plan.trigger.toBlackBoxTrigger())
             }
         }
     }
@@ -116,6 +117,7 @@ class BypassAdsAccessibilityService : AccessibilityService() {
 
     private fun startBurst(packageHint: String?, trigger: BlackBoxTrigger) {
         val session = sessionCounter.incrementAndGet()
+        val caseId = UUID.randomUUID().toString()
         val triggeredAtElapsedMs = SystemClock.elapsedRealtime()
         activeSession = session
         temporalTracker.reset()
@@ -123,6 +125,7 @@ class BypassAdsAccessibilityService : AccessibilityService() {
             BlackBoxRecord(
                 epochMs = System.currentTimeMillis(),
                 sessionId = session,
+                caseId = caseId,
                 scanIndex = -1,
                 packageName = packageHint,
                 trigger = trigger,
@@ -132,7 +135,7 @@ class BypassAdsAccessibilityService : AccessibilityService() {
             lateinit var callback: Runnable
             callback = Runnable {
                 scheduledScans.remove(callback)
-                scan(session, index, packageHint, trigger, triggeredAtElapsedMs)
+                scan(session, caseId, index, packageHint, trigger, triggeredAtElapsedMs)
             }
             scheduledScans += callback
             handler.postDelayed(callback, delay)
@@ -141,6 +144,7 @@ class BypassAdsAccessibilityService : AccessibilityService() {
 
     private fun scan(
         session: Long,
+        caseId: String,
         scanIndex: Int,
         packageHint: String?,
         sourceTrigger: BlackBoxTrigger,
@@ -165,6 +169,7 @@ class BypassAdsAccessibilityService : AccessibilityService() {
             BlackBoxRecord(
                 epochMs = System.currentTimeMillis(),
                 sessionId = session,
+                caseId = caseId,
                 scanIndex = scanIndex,
                 packageName = snapshot.packageName,
                 trigger = BlackBoxTrigger.SCAN,

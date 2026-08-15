@@ -17,7 +17,7 @@ class BlackBoxJsonCodecTest {
     fun `round trip preserves privacy-minimized candidate decision fields`() {
         val feature = CandidateFeatures(4, "skip", "com.demo:id/ad_skip", IntRect(900, 60, 1050, 130), true, true, true, IntRect(890, 50, 1060, 140), 1080, 2400, 3, 4, true, true, true, true)
         val decision = SkipDecision(DecisionType.TOO_RISKY, SkipCandidate(feature, 73, listOf(WeightedReason("label_skip", 24)), listOf(WeightedReason("identity_ambiguous", -100))), 80, "severe_risk")
-        val record = BlackBoxRecord(10L, 7L, 2, "com.demo", BlackBoxTrigger.SCAN, BlackBoxTrigger.CONTENT_CHANGED, 1, 12, listOf(feature), decision, 141L, 9L)
+        val record = BlackBoxRecord(epochMs = 10L, sessionId = 7L, caseId = "case-1", scanIndex = 2, packageName = "com.demo", trigger = BlackBoxTrigger.SCAN, sourceTrigger = BlackBoxTrigger.CONTENT_CHANGED, windowCount = 1, nodeCount = 12, candidateFeatures = listOf(feature), decision = decision, latencyMs = 141L, scanWorkMs = 9L)
 
         val decoded = assertNotNull(BlackBoxJsonCodec.decodeOrNull(BlackBoxJsonCodec.encode(record)))
         val candidate = decoded.candidates.single()

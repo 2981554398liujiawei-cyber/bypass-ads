@@ -16,6 +16,7 @@ enum class BlackBoxTrigger {
 data class BlackBoxRecord(
     val epochMs: Long,
     val sessionId: Long,
+    val caseId: String? = null,
     val scanIndex: Int,
     val packageName: String?,
     val trigger: BlackBoxTrigger,
@@ -49,6 +50,7 @@ data class DiagnosticCandidate(
 data class DiagnosticRecord(
     val epochMs: Long,
     val sessionId: Long,
+    val caseId: String?,
     val scanIndex: Int,
     val packageName: String?,
     val trigger: BlackBoxTrigger,

@@ -58,6 +58,7 @@ class BlackBoxRepository internal constructor(private val dir: File) {
     private var writeFailures = 0L
     private var appendCountSinceRetention = 0
     private var lastRetentionDay: LocalDate? = null
+    private var trackedBytes = dir.listFiles().orEmpty().filter { it.extension == "jsonl" }.sumOf(File::length)
 
     fun append(record: BlackBoxRecord) {
         enqueue {
@@ -70,9 +71,10 @@ class BlackBoxRepository internal constructor(private val dir: File) {
                     output.fd.sync()
                 }
                 recordsWritten++
+                trackedBytes += bytes.size
                 appendCountSinceRetention++
                 val dayFile = File(dir, "$day.jsonl")
-                if (lastRetentionDay != day || appendCountSinceRetention >= RETENTION_INTERVAL || dayFile.length() > MAX_BYTES) {
+                if (lastRetentionDay != day || appendCountSinceRetention >= RETENTION_INTERVAL || trackedBytes > MAX_BYTES) {
                     enforceRetention()
                     appendCountSinceRetention = 0
                     lastRetentionDay = day
@@ -92,12 +94,13 @@ class BlackBoxRepository internal constructor(private val dir: File) {
     fun clear(callback: (() -> Unit)? = null) {
         enqueue {
             recordFiles().forEach(File::delete)
+            trackedBytes = 0L
             callback?.invoke()
         }
     }
 
     fun health(callback: (BlackBoxIoHealth) -> Unit) {
-        enqueue { callback(BlackBoxIoHealth(pendingJobs.get(), maxPendingJobs.get(), recordsWritten, writeFailures)) }
+        enqueue { callback(BlackBoxIoHealth((pendingJobs.get() - 1).coerceAtLeast(0), maxPendingJobs.get(), recordsWritten, writeFailures)) }
     }
 
     private fun enqueue(work: () -> Unit) {
@@ -137,13 +140,15 @@ class BlackBoxRepository internal constructor(private val dir: File) {
         val cutoff = LocalDate.now().minusDays(RETENTION_DAYS)
         recordFiles().forEach { file ->
             val date = runCatching { LocalDate.parse(file.nameWithoutExtension) }.getOrNull()
-            if (date != null && date.isBefore(cutoff)) file.delete()
+            val length = file.length()
+            if (date != null && date.isBefore(cutoff) && file.delete()) trackedBytes -= length
         }
         var bytes = recordFiles().sumOf(File::length)
         recordFiles().sortedBy { it.name }.forEach { file ->
             if (bytes > MAX_BYTES) {
-                bytes -= file.length()
-                file.delete()
+                val length = file.length()
+                bytes -= length
+                if (file.delete()) trackedBytes -= length
             }
         }
     }
@@ -162,6 +167,7 @@ class BlackBoxRepository internal constructor(private val dir: File) {
 object BlackBoxJsonCodec {
     fun encode(record: BlackBoxRecord): String = JSONObject().apply {
         put("time", record.epochMs); put("session", record.sessionId); put("scan", record.scanIndex)
+        put("caseId", record.caseId ?: JSONObject.NULL)
         put("package", record.packageName ?: JSONObject.NULL); put("trigger", record.trigger.name)
         put("sourceTrigger", record.sourceTrigger?.name ?: JSONObject.NULL); put("windows", record.windowCount); put("nodes", record.nodeCount)
         put("candidates", record.candidateFeatures.size); put("decision", record.decision?.type?.name ?: JSONObject.NULL)
@@ -174,7 +180,7 @@ object BlackBoxJsonCodec {
     fun decodeOrNull(line: String): DiagnosticRecord? = runCatching {
         val json = JSONObject(line)
         DiagnosticRecord(
-            epochMs = json.getLong("time"), sessionId = json.optLong("session"), scanIndex = json.optInt("scan"),
+            epochMs = json.getLong("time"), sessionId = json.optLong("session"), caseId = json.nullableString("caseId"), scanIndex = json.optInt("scan"),
             packageName = json.nullableString("package"), trigger = json.enumOrDefault("trigger", BlackBoxTrigger.SCAN),
             sourceTrigger = json.nullableEnum("sourceTrigger"), windowCount = json.optInt("windows"), nodeCount = json.optInt("nodes"),
             candidateCount = json.optInt("candidates"), decision = json.nullableString("decision"), rejectionReason = json.nullableString("rejectionReason"),
