@@ -40,12 +40,13 @@ class NodeSnapshotBuilder(private val elapsedMs: () -> Long = SystemClock::elaps
         var firstPackage: String? = null
 
         for (window in windows) {
-            if (!state.canContinue()) break
+            if (!state.canQuery()) break
             state.windowsTraversed++
             val rootStartedAtMs = elapsedMs()
-            val root = window.root
+            // Explicitly disable descendant prefetch for bounded capture on Android 15+.
+            val root = window.getRoot(0)
             state.rootAcquireMaxMs = maxOf(state.rootAcquireMaxMs, elapsedMs() - rootStartedAtMs)
-            if (root == null || !state.canContinue()) continue
+            if (root == null || !state.canQuery()) continue
             if (firstPackage == null) firstPackage = root.packageName?.toString()
             traverse(root, null, 0, null, nodes, state)
         }
@@ -57,18 +58,21 @@ class NodeSnapshotBuilder(private val elapsedMs: () -> Long = SystemClock::elaps
     }
 
     private fun traverse(node: AccessibilityNodeInfo, parentIndex: Int?, depth: Int, clickableAncestor: IntRect?, output: MutableList<UiNodeSnapshot>, state: CaptureState) {
-        if (!state.canContinue()) return
-        if (output.size >= MAX_NODES) { state.budgetReason = "NODE_LIMIT"; return }
-        if (depth > MAX_DEPTH) { state.budgetReason = "DEPTH_LIMIT"; return }
+        if (!state.canQuery()) return
+        if (output.size >= MAX_NODES) { state.hit("NODE_LIMIT"); return }
+        if (depth > MAX_DEPTH) { state.hit("DEPTH_LIMIT"); return }
         state.maxDepth = maxOf(state.maxDepth, depth)
         val rect = Rect().also(node::getBoundsInScreen).toIntRect()
         val currentIndex = output.size
         output += UiNodeSnapshot(currentIndex, parentIndex, node.viewIdResourceName, node.text?.toString(), node.contentDescription?.toString(), node.className?.toString(), node.packageName?.toString(), rect, node.isClickable, node.isEnabled, node.isVisibleToUser, depth, clickableAncestor)
         val nextAncestor = if (node.isClickable) rect else clickableAncestor
         for (i in 0 until node.childCount) {
-            if (!state.canContinue()) break
+            if (!state.canQuery() || output.size >= MAX_NODES) {
+                if (output.size >= MAX_NODES) state.hit("NODE_LIMIT")
+                break
+            }
             val childStartedAtMs = elapsedMs()
-            val child = node.getChild(i)
+            val child = node.getChild(i, 0)
             state.childQueryMaxMs = maxOf(state.childQueryMaxMs, elapsedMs() - childStartedAtMs)
             if (child != null) traverse(child, currentIndex, depth + 1, nextAncestor, output, state)
         }
@@ -80,11 +84,13 @@ class NodeSnapshotBuilder(private val elapsedMs: () -> Long = SystemClock::elaps
         var rootAcquireMaxMs = 0L
         var childQueryMaxMs = 0L
         var budgetReason: String? = null
-        fun canContinue(): Boolean {
+        fun canQuery(): Boolean {
+            if (budgetReason != null) return false
             if (elapsedMs() - startedAtMs < CAPTURE_DEADLINE_MS) return true
-            budgetReason = "TIME_LIMIT"
+            hit("TIME_LIMIT")
             return false
         }
+        fun hit(reason: String) { if (budgetReason == null) budgetReason = reason }
     }
 
     private fun Rect.toIntRect() = IntRect(left, top, right, bottom)

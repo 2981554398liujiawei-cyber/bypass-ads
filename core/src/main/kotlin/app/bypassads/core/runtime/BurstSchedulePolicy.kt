@@ -10,13 +10,13 @@ enum class ScanTrigger {
 sealed interface EventPlan {
     data object Ignore : EventPlan
     data class DebounceContent(
-        val packageName: String?,
+        val packageIdentity: PackageIdentity,
         val delayMs: Long,
         val cancelExistingContent: Boolean,
     ) : EventPlan
 
     data class StartBurst(
-        val packageName: String?,
+        val packageIdentity: PackageIdentity,
         val trigger: ScanTrigger,
         val cancelPendingContent: Boolean,
         val supersedesActiveBurst: Boolean,
@@ -31,48 +31,48 @@ class BurstSchedulePolicy(
     private val contentMaxWaitMs: Long = CONTENT_MAX_WAIT_MS,
 ) {
     private var pendingContent: PendingContent? = null
-    private var activePackage: String? = null
+    private var activePackage: PackageIdentity? = null
 
-    fun onEvent(enabled: Boolean, trigger: ScanTrigger, packageName: String?, nowMs: Long): EventPlan {
+    fun onEvent(enabled: Boolean, trigger: ScanTrigger, packageIdentity: PackageIdentity, nowMs: Long): EventPlan {
         if (!enabled) return EventPlan.Ignore
         if (activePackage != null) {
-            if (activePackage == packageName) return EventPlan.CoalesceActive(trigger)
+            if (activePackage == packageIdentity || packageIdentity is PackageIdentity.Unknown) return EventPlan.CoalesceActive(trigger)
             val hadPendingContent = pendingContent != null
             pendingContent = null
             activePackage = null
-            return EventPlan.StartBurst(packageName, trigger, hadPendingContent, supersedesActiveBurst = true)
+            return EventPlan.StartBurst(packageIdentity, trigger, hadPendingContent, supersedesActiveBurst = true)
         }
 
         if (trigger != ScanTrigger.CONTENT_CHANGED) {
             val hadPendingContent = pendingContent != null
             pendingContent = null
-            return EventPlan.StartBurst(packageName, trigger, hadPendingContent, supersedesActiveBurst = false)
+            return EventPlan.StartBurst(packageIdentity, trigger, hadPendingContent, supersedesActiveBurst = false)
         }
 
         val previous = pendingContent
-        val firstAtMs = previous?.takeIf { it.packageName == packageName }?.firstAtMs ?: nowMs
+        val firstAtMs = previous?.takeIf { it.packageIdentity == packageIdentity }?.firstAtMs ?: nowMs
         val dueAtMs = minOf(nowMs + contentDebounceMs, firstAtMs + contentMaxWaitMs)
-        pendingContent = PendingContent(packageName, firstAtMs, dueAtMs)
+        pendingContent = PendingContent(packageIdentity, firstAtMs, dueAtMs)
         return EventPlan.DebounceContent(
-            packageName = packageName,
+            packageIdentity = packageIdentity,
             delayMs = dueAtMs - nowMs,
             cancelExistingContent = previous != null,
         )
     }
 
-    fun onContentDebounceElapsed(packageName: String?, nowMs: Long): EventPlan {
+    fun onContentDebounceElapsed(packageIdentity: PackageIdentity, nowMs: Long): EventPlan {
         val pending = pendingContent ?: return EventPlan.Ignore
-        if (pending.packageName != packageName || nowMs < pending.dueAtMs) return EventPlan.Ignore
+        if (pending.packageIdentity != packageIdentity || nowMs < pending.dueAtMs) return EventPlan.Ignore
         pendingContent = null
-        return if (activePackage == packageName) {
+        return if (activePackage == packageIdentity || packageIdentity is PackageIdentity.Unknown) {
             EventPlan.CoalesceActive(ScanTrigger.CONTENT_CHANGED)
         } else {
-            EventPlan.StartBurst(packageName, ScanTrigger.CONTENT_CHANGED, cancelPendingContent = false, supersedesActiveBurst = activePackage != null)
+            EventPlan.StartBurst(packageIdentity, ScanTrigger.CONTENT_CHANGED, cancelPendingContent = false, supersedesActiveBurst = activePackage != null)
         }
     }
 
-    fun markBurstStarted(packageName: String?) {
-        activePackage = packageName
+    fun markBurstStarted(packageIdentity: PackageIdentity) {
+        activePackage = packageIdentity
     }
 
     fun markBurstFinished() {
@@ -84,7 +84,7 @@ class BurstSchedulePolicy(
         activePackage = null
     }
 
-    private data class PendingContent(val packageName: String?, val firstAtMs: Long, val dueAtMs: Long)
+    private data class PendingContent(val packageIdentity: PackageIdentity, val firstAtMs: Long, val dueAtMs: Long)
 
     companion object {
         const val CONTENT_DEBOUNCE_MS = 250L
