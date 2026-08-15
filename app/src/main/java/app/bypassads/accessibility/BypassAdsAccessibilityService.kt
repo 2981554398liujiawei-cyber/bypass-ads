@@ -6,9 +6,25 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
+import app.bypassads.actuation.AndroidNodeActuator
+import app.bypassads.actuation.ExperimentalCapability
+import app.bypassads.core.actuation.ActionProposal
+import app.bypassads.core.actuation.ActuationCaseState
+import app.bypassads.core.actuation.ActuationGate
+import app.bypassads.core.actuation.ActuationResult
+import app.bypassads.core.actuation.ActuationSession
+import app.bypassads.core.actuation.ExperimentalTrialGuard
+import app.bypassads.core.actuation.FreshTargetResolver
+import app.bypassads.core.actuation.TrialGuardDecision
 import app.bypassads.core.decision.DecisionEngine
 import app.bypassads.core.detection.CandidateDetector
 import app.bypassads.core.detection.TemporalCandidateTracker
+import app.bypassads.core.model.CandidateFeatures
+import app.bypassads.core.model.DecisionType
+import app.bypassads.core.model.IntRect
+import app.bypassads.core.model.SkipDecision
+import app.bypassads.core.model.UiSnapshot
 import app.bypassads.core.runtime.BurstSchedulePolicy
 import app.bypassads.core.runtime.EventPlan
 import app.bypassads.core.runtime.ScanTrigger
@@ -17,6 +33,7 @@ import app.bypassads.diagnostics.BlackBoxRecord
 import app.bypassads.diagnostics.BlackBoxStore
 import app.bypassads.diagnostics.BlackBoxTrigger
 import app.bypassads.diagnostics.CaseTerminationReason
+import app.bypassads.experimental.ExperimentalSettingsStore
 import app.bypassads.runtime.RunMode
 import app.bypassads.runtime.RunModeStore
 import app.bypassads.runtime.AccessibilityRuntimeStateStore
@@ -40,6 +57,12 @@ class BypassAdsAccessibilityService : AccessibilityService() {
 
     private lateinit var runModeStore: RunModeStore
     private lateinit var blackBox: BlackBoxStore
+    private lateinit var experimentalSettings: ExperimentalSettingsStore
+    private var experimentalSettingsObserver: Closeable? = null
+    private val trialGuard = ExperimentalTrialGuard(allowlist = EXPERIMENTAL_ALLOWLIST)
+    private val actuationGate = ActuationGate()
+    private val freshTargetResolver = FreshTargetResolver()
+    private val nodeActuator = AndroidNodeActuator { bounds -> findNodeAt(bounds) }
     @Volatile private var activeSession = 0L
     private var pendingContentCallback: Runnable? = null
     private var lastObservedPackage: String? = null
@@ -53,6 +76,9 @@ class BypassAdsAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         runModeStore = RunModeStore(this)
         blackBox = BlackBoxStore(this)
+        experimentalSettings = ExperimentalSettingsStore(this)
+        trialGuard.enabled = experimentalSettings.activeExperimentalEnabled
+        experimentalSettingsObserver = experimentalSettings.observe { trialGuard.enabled = experimentalSettings.activeExperimentalEnabled }
         launcherPackage = packageManager.resolveActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), 0)?.activityInfo?.packageName
         modeObserver = runModeStore.observeModeChanges { mode -> if (mode == RunMode.OFF) handler.post(::disableRuntime) }
         runModeStore.markServiceConnected()
@@ -83,6 +109,8 @@ class BypassAdsAccessibilityService : AccessibilityService() {
         scanWorker.shutdownNow()
         modeObserver?.close()
         modeObserver = null
+        experimentalSettingsObserver?.close()
+        experimentalSettingsObserver = null
         super.onDestroy()
     }
 
@@ -188,6 +216,9 @@ class BypassAdsAccessibilityService : AccessibilityService() {
             val decisionMs = SystemClock.elapsedRealtime() - decisionStartedAtMs
             if (request.session != activeSession || runModeStore.get() == RunMode.OFF) return
             blackBox.append(BlackBoxRecord(System.currentTimeMillis(), request.session, request.caseId, request.scanIndex, snapshot.packageName, BlackBoxTrigger.SCAN, request.sourceTrigger, snapshot.windowCount, snapshot.nodes.size, features, decision, SystemClock.elapsedRealtime() - request.triggeredAtElapsedMs, SystemClock.elapsedRealtime() - scanStartedAtMs, windowAcquireMs = acquireMs, snapshotMs = snapshotMs, detectionMs = detectionMs, decisionMs = decisionMs, windowsTraversed = captured.metrics.windowsTraversed, nodesVisited = captured.metrics.nodesVisited, maxDepth = captured.metrics.maxDepth, rootAcquireMaxMs = captured.metrics.rootAcquireMaxMs, childQueryMaxMs = captured.metrics.childQueryMaxMs, captureBudgetHit = captured.metrics.budgetHit, captureBudgetReason = captured.metrics.budgetReason, workerBusyDrops = workerDroppedRequests, workerMaxQueueDepth = workerMaxQueueDepth))
+            if (decision.type == DecisionType.WOULD_CLICK && ExperimentalCapability.policy.actuatorAllowed) {
+                experimentalActuation(request, snapshot, decision, features)
+            }
         } catch (_: Exception) {
             handler.post { activeCase?.takeIf { it.sessionId == request.session }?.let { terminateActiveCase(CaseTerminationReason.INTERNAL_ERROR) } }
         } finally {
@@ -202,12 +233,126 @@ class BypassAdsAccessibilityService : AccessibilityService() {
         AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> ScanTrigger.CONTENT_CHANGED
         else -> null
     }
+
+    // ---- M2.2 experimental actuation path ----------------------------------
+
+    /**
+     * The only production path that can reach a real node click. Runs on the
+     * scan worker thread after a WOULD_CLICK decision; every step is guarded:
+     * capability policy -> trial guard (kill switch / allowlist / budget) ->
+     * proposal -> fresh re-capture -> revalidation -> ActuationGate ->
+     * ActuationSession -> NodeActuator. Any bypass is impossible by
+     * construction (ADR-0002, M2.1, M2.2 task cards).
+     */
+    private fun experimentalActuation(request: ScanRequest, snapshot: UiSnapshot, decision: SkipDecision, features: List<CandidateFeatures>) {
+        try {
+            ExperimentalCapability.policy.requireActuatorAllowed()
+            val case = activeCase?.takeIf { it.sessionId == request.session } ?: return
+            val guardResult = trialGuard.evaluate(snapshot.packageName)
+            if (guardResult != TrialGuardDecision.ALLOW) {
+                blackBox.append(BlackBoxRecord(System.currentTimeMillis(), request.session, request.caseId, request.scanIndex, snapshot.packageName, BlackBoxTrigger.ACTION_ATTEMPT, request.sourceTrigger, actuationVerdict = "GUARD:${guardResult.name}"))
+                return
+            }
+            val caseState = case.actuationCaseState
+                ?: ActuationCaseState(case.caseId, case.sessionId, case.startedAtElapsedMs).also { case.actuationCaseState = it }
+            val proposal = ActionProposal.fromDecision(
+                decision,
+                snapshot.packageName,
+                case.sessionId,
+                windowTokenOf(snapshot),
+                SystemClock.elapsedRealtime(),
+                countdownValue = features.firstOrNull()?.countdownValue,
+            ) ?: return
+
+            // Fresh re-capture and full revalidation against the latest window tree.
+            val freshCaptured = snapshotBuilder.capture(windows.orEmpty(), request.packageHint, request.screenWidth, request.screenHeight)
+            val freshSnapshot = freshCaptured.snapshot
+            if (freshSnapshot.packageName == packageName || freshSnapshot.packageName == launcherPackage) return
+            val freshFeatures = synchronized(temporalTracker) { temporalTracker.enrich(detector.extract(freshSnapshot)) }
+            val freshDecision = decisionEngine.decide(detector.score(freshFeatures))
+            if (freshDecision.type != DecisionType.WOULD_CLICK || freshDecision.candidate == null) {
+                blackBox.append(BlackBoxRecord(System.currentTimeMillis(), request.session, request.caseId, request.scanIndex, freshSnapshot.packageName, BlackBoxTrigger.ACTION_ATTEMPT, request.sourceTrigger, actuationVerdict = "REVALIDATION:${freshDecision.type}"))
+                return
+            }
+            val freshCandidate = freshDecision.candidate ?: return
+            val fresh = freshTargetResolver.resolve(
+                snapshot = freshSnapshot,
+                packageName = freshSnapshot.packageName,
+                caseGeneration = case.sessionId,
+                windowContextToken = windowTokenOf(freshSnapshot),
+                capturedAtElapsedMs = freshSnapshot.capturedAtElapsedMs,
+                fingerprint = proposal.fingerprint,
+            )
+
+            val result = ActuationSession(actuationGate, caseState, nodeActuator).run(
+                proposal = proposal,
+                fresh = fresh,
+                modeAllowsAction = trialGuard.enabled,
+                revalidatedScore = freshCandidate.score,
+                revalidatedRisks = freshCandidate.risks,
+            )
+            val epoch = System.currentTimeMillis()
+            when (result) {
+                is ActuationResult.Executed -> {
+                    trialGuard.recordAction()
+                    experimentalSettings.lastAction = "ALLOW:${result.outcome.name}"
+                    blackBox.append(BlackBoxRecord(epoch, request.session, request.caseId, request.scanIndex, freshSnapshot.packageName, BlackBoxTrigger.ACTION_ATTEMPT, request.sourceTrigger, actuationVerdict = "ALLOW", actuationOutcome = result.outcome.name))
+                }
+                is ActuationResult.Blocked -> {
+                    experimentalSettings.lastAction = "BLOCK:${result.reason.name}"
+                    blackBox.append(BlackBoxRecord(epoch, request.session, request.caseId, request.scanIndex, freshSnapshot.packageName, BlackBoxTrigger.ACTION_ATTEMPT, request.sourceTrigger, actuationVerdict = "BLOCK:${result.reason.name}"))
+                }
+            }
+        } catch (_: Exception) {
+            // Experimental path must never interrupt the Shadow observation pipeline.
+        }
+    }
+
+    /** Window identity token for proposal/fresh binding (M2.0 abstract token). */
+    private fun windowTokenOf(snapshot: UiSnapshot): Long {
+        var hash = snapshot.windowCount.toLong()
+        snapshot.nodes.forEach { node -> hash = hash * 31 + node.bounds.hashCode() }
+        return hash
+    }
+
+    /** Re-look-up the smallest clickable node whose bounds contain the target centre. */
+    private fun findNodeAt(bounds: IntRect): AccessibilityNodeInfo? {
+        val rect = android.graphics.Rect()
+        return windows.orEmpty().asSequence()
+            .mapNotNull { it.root }
+            .flatMap { root -> treeNodes(root) }
+            .filter { node ->
+                node.getBoundsInScreen(rect)
+                node.isVisibleToUser && node.isClickable && rect.contains(bounds.centerX, bounds.centerY)
+            }
+            .minByOrNull { node ->
+                node.getBoundsInScreen(rect)
+                rect.width().toLong() * rect.height()
+            }
+    }
+
+    private fun treeNodes(root: AccessibilityNodeInfo): Sequence<AccessibilityNodeInfo> = sequence {
+        yield(root)
+        for (i in 0 until root.childCount) {
+            root.getChild(i)?.let { child -> yieldAll(treeNodes(child)) }
+        }
+    }
+
     private fun ScanTrigger.toBlackBoxTrigger(): BlackBoxTrigger = when (this) {
         ScanTrigger.WINDOW_STATE_CHANGED -> BlackBoxTrigger.WINDOW_STATE_CHANGED; ScanTrigger.WINDOWS_CHANGED -> BlackBoxTrigger.WINDOWS_CHANGED; ScanTrigger.CONTENT_CHANGED -> BlackBoxTrigger.CONTENT_CHANGED; ScanTrigger.PACKAGE_CHANGED -> BlackBoxTrigger.PACKAGE_CHANGED
     }
     private fun String?.toPackageIdentity(): PackageIdentity = this?.let(PackageIdentity::Known) ?: PackageIdentity.Unknown
     private fun PackageIdentity.packageNameOrNull(): String? = (this as? PackageIdentity.Known)?.packageName
     private data class ScanRequest(val session: Long, val caseId: String, val scanIndex: Int, val packageHint: String?, val sourceTrigger: BlackBoxTrigger, val triggeredAtElapsedMs: Long, val screenWidth: Int, val screenHeight: Int)
-    private class ActiveCase(val sessionId: Long, val caseId: String, val packageName: String?, val initialTrigger: BlackBoxTrigger, val startedAtElapsedMs: Long, val scheduledFrames: Int, var executedFrames: Int = 0, var cancelledFrames: Int = 0, var droppedFrames: Int = 0, var coalescedWindowEvents: Int = 0, var coalescedContentEvents: Int = 0) { fun coalesce(trigger: ScanTrigger) { if (trigger == ScanTrigger.CONTENT_CHANGED) coalescedContentEvents++ else coalescedWindowEvents++ } }
-    private companion object { val BURST_DELAYS_MS = longArrayOf(0L, 60L, 140L, 300L, 600L, 1_000L) }
+    private class ActiveCase(val sessionId: Long, val caseId: String, val packageName: String?, val initialTrigger: BlackBoxTrigger, val startedAtElapsedMs: Long, val scheduledFrames: Int, var executedFrames: Int = 0, var cancelledFrames: Int = 0, var droppedFrames: Int = 0, var coalescedWindowEvents: Int = 0, var coalescedContentEvents: Int = 0, var actuationCaseState: ActuationCaseState? = null) { fun coalesce(trigger: ScanTrigger) { if (trigger == ScanTrigger.CONTENT_CHANGED) coalescedContentEvents++ else coalescedWindowEvents++ } }
+    private companion object {
+        val BURST_DELAYS_MS = longArrayOf(0L, 60L, 140L, 300L, 600L, 1_000L)
+        /**
+         * M2.2 experimental allowlist (stage 1): test/internal apps only.
+         * Intentionally empty by default — every package is Shadow-observed;
+         * the trial fills in actual test package names before real-device runs.
+         * 微信 / 支付宝 / 银行 / 系统设置 are never active targets.
+         */
+        val EXPERIMENTAL_ALLOWLIST: Set<String> = emptySet()
+    }
 }

@@ -12,6 +12,8 @@ enum class BlackBoxTrigger {
     CONTENT_CHANGED,
     SCAN,
     CASE_END,
+    /** M2.2: experimental actuation attempt (guard verdict / gate verdict / outcome). */
+    ACTION_ATTEMPT,
 }
 
 enum class CaseTerminationReason {
@@ -58,6 +60,10 @@ data class BlackBoxRecord(
     val coalescedContentEvents: Int? = null,
     val caseDurationMs: Long? = null,
     val terminationReason: CaseTerminationReason? = null,
+    /** M2.2: actuation gate verdict, e.g. "ALLOW", "BLOCK:CTA_RISK", "GUARD:KILL_SWITCH_OFF". */
+    val actuationVerdict: String? = null,
+    /** M2.2: post-action outcome, e.g. "SUCCESS", "NO_EFFECT", "UNCERTAIN". */
+    val actuationOutcome: String? = null,
 )
 
 data class DiagnosticReason(
@@ -118,6 +124,8 @@ data class DiagnosticRecord(
     val coalescedContentEvents: Int?,
     val caseDurationMs: Long?,
     val terminationReason: CaseTerminationReason?,
+    val actuationVerdict: String?,
+    val actuationOutcome: String?,
 )
 
 data class BlackBoxStats(
