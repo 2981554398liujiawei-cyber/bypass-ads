@@ -40,6 +40,7 @@ class TemporalCandidateTracker {
                     stabilityHits = hits,
                     countdownStepObserved = current.countdownStepObserved || countdownProgressed,
                     positionDriftDetected = current.positionDriftDetected || previous?.driftObserved == true || positionDrifted,
+                    identityAmbiguous = current.identityAmbiguous || previous?.identityAmbiguous == true || ambiguousGroup,
                 )
             }
             observations[key] = enriched.map { candidate ->
@@ -49,6 +50,7 @@ class TemporalCandidateTracker {
                     centerX = candidate.bounds.centerX,
                     centerY = candidate.bounds.centerY,
                     driftObserved = candidate.positionDriftDetected,
+                    identityAmbiguous = candidate.identityAmbiguous,
                     missedFrames = 0,
                 )
             }
@@ -76,6 +78,7 @@ class TemporalCandidateTracker {
         val centerX: Int,
         val centerY: Int,
         val driftObserved: Boolean,
+        val identityAmbiguous: Boolean,
         val missedFrames: Int,
     )
 

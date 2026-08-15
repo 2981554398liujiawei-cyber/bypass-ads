@@ -21,6 +21,7 @@ data class CandidateFeatures(
     val countdownStepObserved: Boolean = false,
     val positionDriftDetected: Boolean = false,
     val ctaSiblingDetected: Boolean = false,
+    val identityAmbiguous: Boolean = false,
 )
 
 data class SkipCandidate(

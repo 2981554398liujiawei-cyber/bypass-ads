@@ -16,10 +16,14 @@ class DecisionEngineTest {
     private val engine = DecisionEngine()
 
     @Test
-    fun `precise top-right skip node is accepted`() {
-        val decision = engine.decide(
-            detector.detect(snapshot(node(0, null, "com.demo:id/ad_skip", "跳过 4", IntRect(900, 60, 1050, 130), true))),
+    fun `precise top-right skip node is accepted only after stable frames`() {
+        val tracker = TemporalCandidateTracker()
+        val frame = detector.extract(
+            snapshot(node(0, null, "com.demo:id/ad_skip", "跳过 4", IntRect(900, 60, 1050, 130), true)),
         )
+
+        tracker.enrich(frame)
+        val decision = engine.decide(detector.score(tracker.enrich(frame)))
 
         assertEquals(DecisionType.WOULD_CLICK, decision.type)
         assertTrue(decision.candidate!!.score >= 80)
@@ -45,23 +49,29 @@ class DecisionEngineTest {
     }
 
     @Test
-    fun `fake cross backed by full-screen clickable ancestor is rejected`() {
-        val decision = engine.decide(
-            detector.detect(
-                snapshot(node(0, 1, null, "✕", IntRect(960, 70, 1030, 140), false, IntRect(0, 0, 1080, 2400))),
-            ),
+    fun `large clickable ancestor remains unsafe after stable frames`() {
+        val tracker = TemporalCandidateTracker()
+        val frame = detector.extract(
+            snapshot(node(0, 1, null, "跳过", IntRect(960, 70, 1030, 140), true, IntRect(0, 0, 1080, 2400))),
         )
+
+        tracker.enrich(frame)
+        val decision = engine.decide(detector.score(tracker.enrich(frame)))
 
         assertEquals(DecisionType.TOO_RISKY, decision.type)
         assertTrue(decision.candidate!!.risks.any { it.code == "large_clickable_ancestor" })
     }
 
     @Test
-    fun `skip label next to CTA sibling is rejected`() {
+    fun `skip label next to CTA sibling remains unsafe after stable frames`() {
         val parent = node(0, null, null, null, IntRect(850, 30, 1080, 260), false)
         val skip = node(1, 0, "com.demo:id/ad_skip", "跳过", IntRect(920, 60, 1050, 130), true)
         val cta = node(2, 0, null, "立即领取", IntRect(880, 150, 1050, 220), true)
-        val candidate = detector.detect(snapshot(parent, skip, cta)).first()
+        val tracker = TemporalCandidateTracker()
+        val frame = detector.extract(snapshot(parent, skip, cta))
+
+        tracker.enrich(frame)
+        val candidate = detector.score(tracker.enrich(frame)).single()
 
         assertTrue(candidate.risks.any { it.code == "cta_sibling" })
         assertEquals(DecisionType.TOO_RISKY, engine.decide(listOf(candidate)).type)
@@ -70,8 +80,12 @@ class DecisionEngineTest {
     @Test
     fun `spatially separated trusted candidates are rejected as a conflict`() {
         val right = node(0, null, "com.demo:id/ad_skip", "跳过", IntRect(900, 60, 1050, 130), true)
-        val left = node(1, null, "com.demo:id/skip_overlay", "跳过", IntRect(30, 60, 190, 130), true)
-        val decision = engine.decide(detector.detect(snapshot(right, left)))
+        val otherRight = node(1, null, "com.demo:id/skip_overlay", "跳过", IntRect(700, 60, 850, 130), true)
+        val tracker = TemporalCandidateTracker()
+        val frame = detector.extract(snapshot(right, otherRight))
+
+        tracker.enrich(frame)
+        val decision = engine.decide(detector.score(tracker.enrich(frame)))
 
         assertEquals(DecisionType.TOO_RISKY, decision.type)
         assertEquals("conflicting_candidates", decision.rejectionReason)
@@ -167,7 +181,7 @@ class DecisionEngineTest {
 
         assertEquals(1, appeared.stabilityHits)
         assertFalse(appeared.positionDriftDetected)
-        assertEquals(DecisionType.WOULD_CLICK, engine.decide(detector.score(listOf(appeared))).type)
+        assertEquals(DecisionType.TOO_RISKY, engine.decide(detector.score(listOf(appeared))).type)
     }
 
     @Test
@@ -191,6 +205,34 @@ class DecisionEngineTest {
 
         assertTrue(enriched.all { it.stabilityHits == 1 })
         assertTrue(enriched.none { it.positionDriftDetected })
+        assertTrue(enriched.all { it.identityAmbiguous })
+        assertTrue(enriched.all { feature ->
+            engine.decide(detector.score(listOf(feature))).type == DecisionType.TOO_RISKY
+        })
+    }
+
+    @Test
+    fun `resource id without an explicit text signal is not a candidate`() {
+        val decision = engine.decide(
+            detector.detect(snapshot(node(0, null, "com.demo:id/skip_onboarding", null, IntRect(900, 60, 1050, 130), true))),
+        )
+
+        assertEquals(DecisionType.NO_CANDIDATE, decision.type)
+    }
+
+    @Test
+    fun `node without a matching package is ignored`() {
+        val unknownPackageNode = node(
+            index = 0,
+            parentIndex = null,
+            id = "com.demo:id/ad_skip",
+            text = "跳过",
+            bounds = IntRect(900, 60, 1050, 130),
+            clickable = true,
+            packageName = null,
+        )
+
+        assertEquals(DecisionType.NO_CANDIDATE, engine.decide(detector.detect(snapshot(unknownPackageNode))).type)
     }
 
     @Test
@@ -217,6 +259,7 @@ class DecisionEngineTest {
         bounds: IntRect,
         clickable: Boolean,
         ancestor: IntRect? = null,
+        packageName: String? = "com.demo",
     ) = UiNodeSnapshot(
         index = index,
         parentIndex = parentIndex,
@@ -224,7 +267,7 @@ class DecisionEngineTest {
         text = text,
         contentDescription = null,
         className = "android.widget.TextView",
-        packageName = "com.demo",
+        packageName = packageName,
         bounds = bounds,
         clickable = clickable,
         enabled = true,

@@ -9,12 +9,6 @@ class CandidateScorer {
         val evidence = mutableListOf<WeightedReason>()
         val risks = mutableListOf<WeightedReason>()
         val normalized = features.label.lowercase()
-        val resourceId = features.resourceId?.lowercase().orEmpty()
-
-        when {
-            resourceId.contains("skip") -> evidence += WeightedReason("resource_id_skip", 36)
-            resourceId.contains("close") -> evidence += WeightedReason("resource_id_close", 28)
-        }
 
         when {
             normalized == "跳过" || normalized == "skip" -> evidence += WeightedReason("label_skip", 24)
@@ -39,15 +33,13 @@ class CandidateScorer {
         if (features.stabilityHits >= 2) evidence += WeightedReason("stable_across_frames", 10)
         if (features.countdownStepObserved) evidence += WeightedReason("countdown_progression", 18)
         if (features.positionDriftDetected) risks += WeightedReason("rapid_position_drift", -70)
-        if (features.ctaSiblingDetected) risks += WeightedReason("cta_sibling", -35)
+        if (features.ctaSiblingDetected) risks += WeightedReason("cta_sibling", -100)
+        if (features.identityAmbiguous) risks += WeightedReason("ambiguous_identity", -100)
 
         features.nearestClickableAncestorBounds?.let { parentBounds ->
             val parentRatio = parentBounds.areaRatio(features.screenWidth, features.screenHeight)
             if (parentRatio >= 0.20) {
-                risks += WeightedReason(
-                    "large_clickable_ancestor",
-                    if (features.clickable) -35 else -60,
-                )
+                risks += WeightedReason("large_clickable_ancestor", -100)
             }
         }
 

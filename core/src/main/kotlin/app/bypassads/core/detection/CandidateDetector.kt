@@ -8,12 +8,15 @@ import app.bypassads.core.model.UiSnapshot
 class CandidateDetector(
     private val scorer: CandidateScorer = CandidateScorer(),
 ) {
-    fun extract(snapshot: UiSnapshot): List<CandidateFeatures> = snapshot.nodes
-        .asSequence()
-        .filter { it.visibleToUser && it.enabled }
-        .filter { snapshot.packageName == null || it.packageName == null || it.packageName == snapshot.packageName }
-        .mapNotNull { node -> toFeatures(snapshot, node) }
-        .toList()
+    fun extract(snapshot: UiSnapshot): List<CandidateFeatures> {
+        val packageName = snapshot.packageName ?: return emptyList()
+        return snapshot.nodes
+            .asSequence()
+            .filter { it.visibleToUser && it.enabled }
+            .filter { it.packageName == packageName }
+            .mapNotNull { node -> toFeatures(snapshot, node) }
+            .toList()
+    }
 
     fun score(features: List<CandidateFeatures>): List<SkipCandidate> = features
         .map(scorer::score)
@@ -22,7 +25,7 @@ class CandidateDetector(
     fun detect(snapshot: UiSnapshot): List<SkipCandidate> = score(extract(snapshot))
 
     private fun toFeatures(snapshot: UiSnapshot, node: UiNodeSnapshot): CandidateFeatures? {
-        val rawLabel = bestLabel(node.text, node.contentDescription, node.resourceId) ?: return null
+        val rawLabel = bestLabel(node.text, node.contentDescription) ?: return null
         return CandidateFeatures(
             nodeIndex = node.index,
             label = sanitizeLabel(rawLabel),
@@ -47,19 +50,16 @@ class CandidateDetector(
             .any { ctaRegex.containsMatchIn(it) }
     }
 
-    private fun bestLabel(text: String?, description: String?, resourceId: String?): String? {
+    private fun bestLabel(text: String?, description: String?): String? {
         val values = listOfNotNull(text, description).map { it.trim() }
         val direct = values.firstOrNull { labelRegex.containsMatchIn(it) || crossOnly.matches(it) }
-        if (direct != null) return direct.take(40)
-        val id = resourceId?.lowercase().orEmpty()
-        return if (id.contains("skip") || id.contains("close")) "<resource-id>" else null
+        return direct?.take(40)
     }
 
     private fun extractCountdown(value: String): Int? = Regex("(?<!\\d)(\\d{1,2})(?!\\d)")
         .find(value)?.groupValues?.getOrNull(1)?.toIntOrNull()
 
     private fun sanitizeLabel(value: String): String = when {
-        value == "<resource-id>" -> value
         value.contains("跳过") || value.contains("跳過") -> "跳过"
         value.contains("关闭") || value.contains("關閉") -> "关闭"
         value.lowercase().contains("skip") -> "skip"
