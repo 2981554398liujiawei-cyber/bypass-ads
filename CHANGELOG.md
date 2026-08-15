@@ -12,6 +12,10 @@
 - M1.5 RC closure record: debug-artifact regression on an API 36 physical
   device (Shadow scan, OFF pause, restore, binding, no crash/ANR, complete
   scan metrics) with debug APK SHA-256 in `docs/release-candidate.md`.
+- M1.6 signed RC closure: signed release APK (external keystore, signature
+  verification, SHA-256), signed-release smoke on an API 36 physical device,
+  API 35 emulator compatibility smoke, and the home-status truthfulness
+  verdict, all recorded in `docs/release-candidate.md`.
 
 ### Changed
 

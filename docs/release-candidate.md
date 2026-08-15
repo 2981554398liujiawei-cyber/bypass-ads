@@ -73,35 +73,70 @@ only for the documented smoke test.
 Record only aggregate pass/fail results, artifact metadata, and SHA-256 in the
 final release note.
 
-## RC validation record (debug artifact)
+## RC validation record
 
-M1.5 Shadow release-candidate closure on an API 36 physical device. Aggregate
-pass/fail results only; no package names, case IDs, or raw traces are retained
-here.
+M1.5/M1.6 Shadow release-candidate closure. Aggregate pass/fail results only;
+no package names, case IDs, raw traces, keystore material, or passwords are
+retained here.
 
 | Check | Result |
 | --- | --- |
 | M1.4 Shadow runtime gate | PASS — see [m1-4-real-device-shadow-gate](m1-4-real-device-shadow-gate.md); its evidence stays anchored to its historical commits |
 | RC packaging/UI regression | PASS — release-prep commit `708c6b6` changed packaging/UI/metadata/privacy files only; no detector/scorer/scheduler/Accessibility-runtime behavior change |
 | Static capability scan | PASS — no node action, gesture/global action, screenshot, OCR, networking, `INTERNET`, or new permission in `app`/`core` source |
-| Debug APK SHA-256 | `ff708bba1e2e5da9b1ebb8196f5035a04c6aa1c6fdcd511557e1f2065f19e82e` |
 | Debug build + unit tests | PASS — `:evidence:test`, `:core:test`, `:app:testDebugUnitTest`, `:app:assembleDebug` |
-| Device lifecycle | PASS — service system-bound; Shadow produces `SCAN`/`CASE_END`; `OFF` produces no scan; Shadow resumes on restore; no crash/ANR; black-box I/O metrics complete (`scanMetricsComplete=true`) |
 | Trace validator | `malformedJsonLines=0`, `unadaptableCaseRecords=0`; 2 residual violations located by root cause: one pre-M1.4 record outside the M1.4 `--from-epoch-ms` window, one trace interrupted by an install during RC regression. Neither is in the M1.4 validation window; the validator was not relaxed |
 | Automatic actuation | NOT IMPLEMENTED — decisions remain Shadow diagnostics only |
 
-## Artifact provenance
+## Signed RC build and verification (M1.6)
 
-Populate the release rows only after the signed RC build and smoke matrix
-complete. The debug regression above does not replace a signed release build.
+| Check | Result |
+| --- | --- |
+| Signed release build | PASS — `assembleRelease` with external signing properties; R8 minify + resource shrink enabled |
+| Signature verification | PASS — `apksigner verify` v2 scheme, RSA 4096, certificate `CN=liujiawei, O=Bypass Ads` |
+| Release APK manifest | `app.bypassads` / `1000001` / `1.0.0-rc1` / minSdk 35 / targetSdk 37; no `INTERNET`, no dangerous permissions |
+| Release APK SHA-256 | `fcc44dcdfd3157ff43e3dee318427eea69d0d13e071510acd6129199e516d87f` |
+| Reproducibility | Diagnostic-log build produced the identical SHA-256 (R8 strips `Log.d`) |
+
+## Signed release smoke (API 36 physical device)
+
+Service manually enabled by the user; aggregate results only.
+
+| Check | Result |
+| --- | --- |
+| System-bound | PASS — service present in Bound/Enabled accessibility lists |
+| Shadow scanning | PASS — `SCAN`/`CASE_END` produced across app switches (thousands of records during normal use; decisions `NO_CANDIDATE`, 0 `WOULD_CLICK`) |
+| OFF pause | Covered by the debug-artifact lifecycle gate — identical runtime code (R8 only strips logs); `OFF` produced zero scans and Shadow resumed on restore |
+| Crash/ANR | PASS — no crash/ANR in device logs; process stable across hours |
+| Home status truthfulness | PASS — UI state follows the real service state in both directions (verified with temporary diagnostic logs, then removed); the home "waiting for service connection" text appears only while the service is actually unbound |
+
+Device note (documented behavior, not a code defect): on this device the OEM
+power engine (`SmartPower`) unbinds the accessibility service when the app
+process idles in background; the system automatically rebinds it on return to
+foreground (enabled list is preserved, no user action required). The
+long-running third-party comparison service stays bound, attributed to its
+keep-alive mechanism, which this project deliberately does not implement.
+
+## API 35 compatibility smoke (emulator)
+
+| Check | Result |
+| --- | --- |
+| Signed release install + launch | PASS |
+| Accessibility enable + system-bound | PASS |
+| Shadow scan | PASS — at least one `SCAN` with `CASE_END COMPLETED` |
+| Startup crash/ANR | PASS |
+
+## Artifact provenance
 
 | Field | Value |
 | --- | --- |
 | Runtime source commit | `708c6b6` (`chore(release): prepare shadow release candidate`) |
-| Evidence/tooling head | `708c6b6` |
-| Release APK SHA-256 | Pending signed RC build |
+| Build/head commit | `0e54f31` (`docs(release): record shadow RC validation`) |
+| Evidence/tooling head | `0e54f31` |
+| Release APK SHA-256 | `fcc44dcdfd3157ff43e3dee318427eea69d0d13e071510acd6129199e516d87f` |
+| Signature | v2, RSA 4096, `CN=liujiawei, O=Bypass Ads` |
 | Application ID | `app.bypassads` |
 | versionCode / versionName | `1000001` / `1.0.0-rc1` |
 | minSdk / targetSdk | 35 / 37 |
-| API 36 physical smoke | PASS (debug artifact regression) |
-| API 35 compatibility smoke | Pending |
+| API 36 physical smoke | PASS (signed release) |
+| API 35 compatibility smoke | PASS (emulator) |
