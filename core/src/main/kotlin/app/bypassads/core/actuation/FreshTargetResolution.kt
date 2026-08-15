@@ -6,12 +6,15 @@ import app.bypassads.core.model.UiNodeSnapshot
  * Result of re-resolving the target against a freshly acquired window tree,
  * immediately before actuation (ADR-0002 §4).
  *
- * The caller (a future actuator) is responsible for producing this from the
- * latest tree; the gate only consumes it. `matches` holds the nodes whose
- * label/contentDescription equals the proposal label. Zero matches and more
- * than one match must both block.
+ * Construction is `internal` on purpose (M2.1 hard gate): the only way to
+ * obtain an instance from outside this module is through
+ * [FreshTargetResolver] — callers can never hand-craft a "looks safe"
+ * resolution, and (being a plain final class) there is no public `copy()`
+ * escape hatch either. `matches` holds the nodes whose label/contentDescription
+ * equals the proposal label. Zero matches and more than one match must both
+ * block.
  */
-data class FreshTargetResolution(
+class FreshTargetResolution internal constructor(
     val packageName: String?,
     /** Current monotonic generation; the gate compares it to the proposal's. */
     val currentCaseGeneration: Long,
@@ -27,4 +30,31 @@ data class FreshTargetResolution(
 ) {
     val matchCount: Int get() = matches.size
     val uniqueMatch: UiNodeSnapshot? get() = matches.singleOrNull()
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is FreshTargetResolution) return false
+        return packageName == other.packageName &&
+            currentCaseGeneration == other.currentCaseGeneration &&
+            currentWindowContextToken == other.currentWindowContextToken &&
+            freshCapturedAtElapsedMs == other.freshCapturedAtElapsedMs &&
+            screenWidth == other.screenWidth &&
+            screenHeight == other.screenHeight &&
+            matches == other.matches &&
+            ctaSiblingDetected == other.ctaSiblingDetected &&
+            countdownAnomaly == other.countdownAnomaly
+    }
+
+    override fun hashCode(): Int {
+        var result = packageName?.hashCode() ?: 0
+        result = 31 * result + currentCaseGeneration.hashCode()
+        result = 31 * result + currentWindowContextToken.hashCode()
+        result = 31 * result + freshCapturedAtElapsedMs.hashCode()
+        result = 31 * result + screenWidth
+        result = 31 * result + screenHeight
+        result = 31 * result + matches.hashCode()
+        result = 31 * result + ctaSiblingDetected.hashCode()
+        result = 31 * result + countdownAnomaly.hashCode()
+        return result
+    }
 }
