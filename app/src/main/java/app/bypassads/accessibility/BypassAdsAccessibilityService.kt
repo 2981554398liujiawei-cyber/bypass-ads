@@ -19,6 +19,7 @@ import app.bypassads.diagnostics.BlackBoxTrigger
 import app.bypassads.diagnostics.CaseTerminationReason
 import app.bypassads.runtime.RunMode
 import app.bypassads.runtime.RunModeStore
+import app.bypassads.runtime.AccessibilityRuntimeStateStore
 import java.io.Closeable
 import java.util.UUID
 import java.util.concurrent.Executors
@@ -56,6 +57,7 @@ class BypassAdsAccessibilityService : AccessibilityService() {
         modeObserver = runModeStore.observeModeChanges { mode -> if (mode == RunMode.OFF) handler.post(::disableRuntime) }
         runModeStore.markServiceConnected()
         blackBox.append(BlackBoxRecord(System.currentTimeMillis(), activeSession, scanIndex = -1, packageName = null, trigger = BlackBoxTrigger.SERVICE_CONNECTED))
+        AccessibilityRuntimeStateStore.markConnected()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -74,6 +76,7 @@ class BypassAdsAccessibilityService : AccessibilityService() {
     override fun onInterrupt() = Unit
 
     override fun onDestroy() {
+        AccessibilityRuntimeStateStore.markDisconnected()
         if (::blackBox.isInitialized) terminateActiveCase(CaseTerminationReason.SERVICE_DESTROYED)
         activeSession = sessionCounter.incrementAndGet()
         handler.removeCallbacksAndMessages(null)

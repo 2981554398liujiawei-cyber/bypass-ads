@@ -51,6 +51,9 @@ import app.bypassads.diagnostics.BlackBoxIoHealth
 import app.bypassads.diagnostics.DiagnosticRecord
 import app.bypassads.runtime.RunMode
 import app.bypassads.runtime.RunModeStore
+import app.bypassads.runtime.AccessibilityRuntimeStateStore
+import app.bypassads.runtime.AccessibilityStatus
+import app.bypassads.runtime.AccessibilityStatusReducer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -77,7 +80,12 @@ class MainActivity : ComponentActivity() {
         var selectedRecord by remember { mutableStateOf<DiagnosticRecord?>(null) }
         var clearConfirmationVisible by remember { mutableStateOf(false) }
         val refresh = refreshSignal
-        val serviceEnabled = remember(refresh) { isServiceEnabled() }
+        val systemReportsEnabled = remember(refresh) { isServiceEnabled() }
+        val accessibilityStatus = AccessibilityStatusReducer.reduce(
+            runtimeState = AccessibilityRuntimeStateStore.current,
+            systemReportsEnabled = systemReportsEnabled,
+            mode = mode,
+        )
         var stats by remember { mutableStateOf(BlackBoxStats(0, 0, 0, null)) }
         var recent by remember { mutableStateOf(emptyList<DiagnosticRecord>()) }
         var ioHealth by remember { mutableStateOf<BlackBoxIoHealth?>(null) }
@@ -116,8 +124,7 @@ class MainActivity : ComponentActivity() {
 
                     when (destination) {
                         Destination.HOME -> Home(
-                            serviceEnabled = serviceEnabled,
-                            mode = mode,
+                            accessibilityStatus = accessibilityStatus,
                             lastConnected = lastConnected,
                             recordCount = stats.recordCount,
                             wouldClickCount = stats.wouldClickCount,
@@ -192,8 +199,7 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun Home(
-        serviceEnabled: Boolean,
-        mode: RunMode,
+        accessibilityStatus: AccessibilityStatus,
         lastConnected: Long,
         recordCount: Int,
         wouldClickCount: Int,
@@ -201,7 +207,7 @@ class MainActivity : ComponentActivity() {
         latestDecision: DiagnosticRecord?,
         onOpenAccessibilitySettings: () -> Unit,
     ) {
-        StatusCard(serviceEnabled, mode, lastConnected)
+        StatusCard(accessibilityStatus, lastConnected)
         Spacer(Modifier.height(14.dp))
 
         SectionCard(title = "今日观察") {
@@ -224,8 +230,7 @@ class MainActivity : ComponentActivity() {
 
         SectionCard(title = "无障碍服务") {
             Text(
-                if (serviceEnabled) "服务已启用。打开其他 App 时会进行 0 / 60 / 140 / 300 / 600 / 1000 ms 多帧观察。"
-                else "需要手动开启 Bypass Ads. · 开屏观察。",
+                accessibilityStatus.description,
                 fontSize = 14.sp,
                 lineHeight = 21.sp,
                 color = Muted,
@@ -235,7 +240,7 @@ class MainActivity : ComponentActivity() {
                 onClick = onOpenAccessibilitySettings,
                 colors = ButtonDefaults.buttonColors(containerColor = Ink, contentColor = Color.White),
                 shape = RoundedCornerShape(14.dp),
-            ) { Text(if (serviceEnabled) "查看系统设置" else "开启无障碍") }
+            ) { Text(if (accessibilityStatus.shouldOpenSettings) "查看系统设置" else "开启无障碍") }
         }
         Spacer(Modifier.height(26.dp))
         Text(
@@ -312,8 +317,8 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun StatusCard(enabled: Boolean, mode: RunMode, lastConnected: Long) {
-        val healthy = enabled && mode == RunMode.SHADOW
+    private fun StatusCard(status: AccessibilityStatus, lastConnected: Long) {
+        val healthy = status.isObserving
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -323,11 +328,7 @@ class MainActivity : ComponentActivity() {
             Column {
                 Text("运行状态", fontSize = 13.sp, color = Muted)
                 Text(
-                    when {
-                        mode == RunMode.OFF -> "已暂停"
-                        enabled -> "Shadow 正在观察"
-                        else -> "等待开启服务"
-                    },
+                    status.headline,
                     modifier = Modifier.padding(top = 7.dp),
                     fontSize = 24.sp,
                     fontWeight = FontWeight.SemiBold,
