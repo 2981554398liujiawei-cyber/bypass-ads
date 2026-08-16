@@ -41,6 +41,7 @@ class CandidateDetector(
             screenHeight = snapshot.screenHeight,
             countdownValue = extractCountdown(rawLabel),
             ctaSiblingDetected = hasCtaSibling(snapshot, node),
+            className = node.className,
         )
     }
 

@@ -5,31 +5,41 @@ import app.bypassads.core.model.IntRect
 import app.bypassads.core.model.UiSnapshot
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
  * Real-App Fast Path rule matching (M2.3 Real-App Pilot).
  *
  * A rule fires only when package + sanitized label + top-right region +
- * stability + area bound all match, and never on ambiguous/CTA/drifting
- * targets. The produced candidate must carry the exact fastPathRuleId and a
- * score above the click threshold so it can ride the normal decision pipeline.
+ * stability + area bound + splash fingerprint (class + center zone) all
+ * match, and never on ambiguous/CTA/drifting targets. The produced candidate
+ * must carry the exact fastPathRuleId and a score above the click threshold
+ * so it can ride the normal decision pipeline.
  */
 class RealAppFastPathTest {
 
     private val rules = listOf(
-        FastPathRule(ruleId = "weibo_splash_skip_v1", packageName = "com.sina.weibo", label = "跳过", minStabilityHits = 2),
+        FastPathRule(
+            ruleId = "weibo_splash_skip_v1",
+            packageName = "com.sina.weibo",
+            label = "跳过",
+            minStabilityHits = 2,
+            anchorClassName = "android.widget.TextView",
+            minCenterXRatio = 0.80,
+            maxCenterYRatio = 0.15,
+        ),
     )
     private val fastPath = RealAppFastPath(rules)
 
     private val screenWidth = 1200
     private val screenHeight = 2416
 
+    /** Real observed weibo splash skip: TextView at [984,215,1158,311]. */
     private fun feature(
         nodeIndex: Int = 0,
         label: String = "跳过",
         bounds: IntRect = IntRect(984, 215, 1158, 311),
+        className: String? = "android.widget.TextView",
         clickable: Boolean = false,
         stabilityHits: Int = 6,
         cta: Boolean = false,
@@ -50,12 +60,13 @@ class RealAppFastPathTest {
         ctaSiblingDetected = cta,
         identityAmbiguous = ambiguous,
         positionDriftDetected = drift,
+        className = className,
     )
 
     private fun snapshot(packageName: String?) = UiSnapshot(packageName, screenWidth, screenHeight, 2_000L, 1, emptyList())
 
     @Test
-    fun `matching weibo skip produces a fast path candidate with rule id`() {
+    fun `matching weibo splash skip produces a fast path candidate with rule id`() {
         val result = fastPath.score(snapshot("com.sina.weibo"), listOf(feature()))
 
         assertEquals(1, result.size)
@@ -110,9 +121,25 @@ class RealAppFastPathTest {
     }
 
     @Test
+    fun `same position but different class does not fire (splash fingerprint)`() {
+        // e.g. an in-app "跳过" drawn as a Button instead of the splash TextView.
+        val button = feature(className = "android.widget.Button")
+        val result = fastPath.score(snapshot("com.sina.weibo"), listOf(button))
+
+        assertTrue(result.isEmpty())
+    }
+
+    @Test
+    fun `same class but off-fingerprint position does not fire (splash fingerprint)`() {
+        // e.g. a right-edge "跳过" lower on the page — not the observed splash zone.
+        val lower = feature(bounds = IntRect(984, 400, 1158, 496)) // center y ~0.19 > 0.15
+        val result = fastPath.score(snapshot("com.sina.weibo"), listOf(lower))
+
+        assertTrue(result.isEmpty())
+    }
+
+    @Test
     fun `label matches sanitized rule label`() {
-        // features.label is already sanitized by the detector pipeline; the
-        // rule label is sanitized the same way, so both sides agree.
         val result = fastPath.score(snapshot("com.sina.weibo"), listOf(feature()))
 
         assertEquals(1, result.size)

@@ -543,7 +543,19 @@ class BypassAdsAccessibilityService : AccessibilityService() {
          * rule is required to ever reach actuation on it.
          */
         val FAST_PATH_RULES: List<FastPathRule> = listOf(
-            FastPathRule(ruleId = "weibo_splash_skip_v1", packageName = "com.sina.weibo", label = "跳过", minStabilityHits = 2),
+            // Splash fingerprint from 4/4 shadow cold starts: "跳过" is a
+            // com.sina.weibo TextView (no resourceId) centered at
+            // ~(0.89, 0.11) — class + center-zone + top-right + small area
+            // scope the rule to the observed splash page.
+            FastPathRule(
+                ruleId = "weibo_splash_skip_v1",
+                packageName = "com.sina.weibo",
+                label = "跳过",
+                minStabilityHits = 2,
+                anchorClassName = "android.widget.TextView",
+                minCenterXRatio = 0.80,
+                maxCenterYRatio = 0.15,
+            ),
         )
         /** M2.3 P1-2: Fast Path only fires inside a cold-launch splash window. */
         const val FAST_PATH_WINDOW_MS = 6_000L

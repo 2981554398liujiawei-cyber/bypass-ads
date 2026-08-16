@@ -45,11 +45,23 @@ data class FastPathRule(
     val minStabilityHits: Int = 2,
     /** Maximum anchor area ratio; the rule only fires on genuinely small targets. */
     val maxAnchorAreaRatio: Double = FAST_PATH_MAX_ANCHOR_AREA_RATIO,
+    /**
+     * Splash fingerprint (M2.3 P1-2): the anchor class name the rule requires
+     * exactly. Extracted from real shadow evidence — never invented. Together
+     * with the label/region/stability checks this scopes the rule to the
+     * observed splash page so an ordinary in-app "跳过" can not fire it.
+     */
+    val anchorClassName: String? = null,
+    /** Minimum normalized center X ratio for the anchor (splash fingerprint). */
+    val minCenterXRatio: Double = 0.0,
+    /** Maximum normalized center Y ratio for the anchor (splash fingerprint; top zone). */
+    val maxCenterYRatio: Double = 1.0,
 ) {
     init {
         require(ruleId.isNotBlank()) { "ruleId must not be blank" }
         require(minStabilityHits >= 1) { "minStabilityHits must be >= 1" }
         require(maxAnchorAreaRatio in 0.01..0.20) { "maxAnchorAreaRatio out of range" }
+        require(minCenterXRatio in 0.0..1.0 && maxCenterYRatio in 0.0..1.0) { "fingerprint ratios out of range" }
     }
 }
 
@@ -71,6 +83,14 @@ class RealAppFastPath(
         return features.asSequence()
             .filter { it.label == label }
             .filter { it.stabilityHits >= rule.minStabilityHits }
+            // Splash fingerprint (M2.3 P1-2): class + normalized center zone,
+            // taken from real shadow evidence — ordinary in-app pages with a
+            // top-right "跳过" but a different class/position can not fire.
+            .filter { rule.anchorClassName == null || it.className == rule.anchorClassName }
+            .filter {
+                it.bounds.centerX.toDouble() / width >= rule.minCenterXRatio &&
+                    it.bounds.centerY.toDouble() / height <= rule.maxCenterYRatio
+            }
             // Top-right region — the same zone ActuationGate requires for any
             // allowed click; kept here as a second, earlier safety layer.
             .filter {

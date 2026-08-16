@@ -22,6 +22,8 @@ data class CandidateFeatures(
     val positionDriftDetected: Boolean = false,
     val ctaSiblingDetected: Boolean = false,
     val identityAmbiguous: Boolean = false,
+    /** Node class name (e.g. android.widget.TextView) — used by Fast Path splash fingerprints. */
+    val className: String? = null,
 )
 
 data class SkipCandidate(
