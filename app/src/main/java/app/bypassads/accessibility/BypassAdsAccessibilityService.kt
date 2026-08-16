@@ -13,6 +13,7 @@ import app.bypassads.actuation.ExperimentalCapability
 import app.bypassads.core.actuation.ActionProposal
 import app.bypassads.core.actuation.ActuationCaseState
 import app.bypassads.core.actuation.ActuationGate
+import app.bypassads.core.actuation.ActuationOutcomeClassifier
 import app.bypassads.core.actuation.ActuationResult
 import app.bypassads.core.actuation.ActuationSession
 import app.bypassads.core.actuation.ExperimentalTrialGuard
@@ -309,7 +310,8 @@ class BypassAdsAccessibilityService : AccessibilityService() {
                     trialGuard.recordAction()
                     experimentalSettings.actionBudgetRemaining = trialGuard.actionBudgetRemaining
                     experimentalSettings.lastAction = "ALLOW:${result.outcome.name}"
-                    blackBox.append(BlackBoxRecord(epoch, request.session, request.caseId, request.scanIndex, freshSnapshot.packageName, BlackBoxTrigger.ACTION_ATTEMPT, request.sourceTrigger, actuationVerdict = "ALLOW", actuationOutcome = result.outcome.name))
+                    blackBox.append(BlackBoxRecord(epoch, request.session, request.caseId, request.scanIndex, freshSnapshot.packageName, BlackBoxTrigger.ACTION_ATTEMPT, request.sourceTrigger, actuationVerdict = "ALLOW", actuationOutcome = result.outcome.name, actuationDispatchReported = nodeActuator.lastDispatchReported))
+                    scheduleOutcomeVerification(proposal, fresh, request.caseId, request.session, freshSnapshot.packageName)
                 }
                 is ActuationResult.Blocked -> {
                     experimentalSettings.lastAction = "BLOCK:${result.reason.name}"
@@ -354,6 +356,62 @@ class BypassAdsAccessibilityService : AccessibilityService() {
         listOfNotNull(node.text?.toString(), node.contentDescription?.toString())
             .map { it.trim() }.filter { it.isNotEmpty() }
 
+    /**
+     * M2.2 P1 passive post-action verification: after an allowed single click
+     * the case stays closed for further attempts, but the outcome is converged
+     * later by observing the window tree. This path never clicks again and
+     * never re-opens the case state. The verification window (2.5 s) is
+     * shorter than the testad S1 5 s countdown, so a disappearing target in
+     * that window is attributable to the click, not to natural expiry.
+     */
+    private fun scheduleOutcomeVerification(proposal: ActionProposal, fresh: app.bypassads.core.actuation.FreshTargetResolution, caseId: String, session: Long, targetPackage: String?) {
+        val label = proposal.fingerprint.label
+        val bounds = fresh.uniqueMatch?.bounds ?: proposal.fingerprint.bounds
+        handler.postDelayed({
+            val v = verifyOutcome(label, bounds, targetPackage)
+            val outcome = ActuationOutcomeClassifier.classify(
+                targetDisappeared = v.targetGone,
+                splashWindowGone = false,
+                nonAdStateVisible = false,
+                targetStillPresent = !v.targetGone,
+                windowStillPresent = v.windowPresent,
+            )
+            experimentalSettings.lastAction = "ALLOW:${outcome.name}"
+            blackBox.append(BlackBoxRecord(System.currentTimeMillis(), session, caseId, scanIndex = -1, packageName = targetPackage, trigger = BlackBoxTrigger.OUTCOME_VERIFIED, actuationOutcome = outcome.name, windowCount = v.windowCount, nodeCount = v.nodeCount))
+        }, OUTCOME_VERIFICATION_DELAY_MS)
+    }
+
+    private data class OutcomeVerification(val targetGone: Boolean, val windowPresent: Boolean, val windowCount: Int, val nodeCount: Int)
+
+    /**
+     * Passive check: is the approved target (sanitized label + bounds center)
+     * still present in the live window tree, and is the target window still
+     * present? A light read of the current window list — no click, no capture.
+     */
+    private fun verifyOutcome(label: String, bounds: IntRect, targetPackage: String?): OutcomeVerification {
+        val windowsNow = windows.orEmpty()
+        if (windowsNow.isEmpty()) return OutcomeVerification(targetGone = false, windowPresent = false, windowCount = 0, nodeCount = 0)
+        val rect = android.graphics.Rect()
+        var windowPresent = false
+        var matched = 0
+        var nodes = 0
+        for (w in windowsNow) {
+            val root = w.root ?: continue
+            for (node in treeNodes(root)) {
+                nodes++
+                if (node.packageName?.toString() == targetPackage) windowPresent = true
+                node.getBoundsInScreen(rect)
+                if ((targetPackage == null || node.packageName?.toString() == targetPackage) &&
+                    nodeText(node).any { LabelSanitizer.sanitizeLabel(it) == label } &&
+                    rect.contains(bounds.centerX, bounds.centerY)
+                ) {
+                    matched++
+                }
+            }
+        }
+        return OutcomeVerification(targetGone = matched == 0, windowPresent = windowPresent, windowCount = windowsNow.size, nodeCount = nodes)
+    }
+
     private fun areaWithin(rect: android.graphics.Rect, bounds: IntRect): Boolean {
         val live = rect.width().toLong() * rect.height()
         val approved = bounds.area.toLong()
@@ -376,6 +434,8 @@ class BypassAdsAccessibilityService : AccessibilityService() {
     private class ActiveCase(val sessionId: Long, val caseId: String, val packageName: String?, val initialTrigger: BlackBoxTrigger, val startedAtElapsedMs: Long, val scheduledFrames: Int, var executedFrames: Int = 0, var cancelledFrames: Int = 0, var droppedFrames: Int = 0, var coalescedWindowEvents: Int = 0, var coalescedContentEvents: Int = 0, var actuationCaseState: ActuationCaseState? = null) { fun coalesce(trigger: ScanTrigger) { if (trigger == ScanTrigger.CONTENT_CHANGED) coalescedContentEvents++ else coalescedWindowEvents++ } }
     private companion object {
         val BURST_DELAYS_MS = longArrayOf(0L, 60L, 140L, 300L, 600L, 1_000L)
+        /** M2.2 P1: passive outcome verification delay after a dispatched click. */
+        const val OUTCOME_VERIFICATION_DELAY_MS = 2500L
         /**
          * M2.2 experimental allowlist (stage 1): test/internal apps only.
          * Intentionally empty by default — every package is Shadow-observed;

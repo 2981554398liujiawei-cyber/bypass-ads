@@ -5,6 +5,7 @@ import app.bypassads.core.actuation.ActuationOutcome
 import app.bypassads.core.actuation.ActuationVerdict
 import app.bypassads.core.actuation.FreshTargetResolution
 import app.bypassads.core.actuation.NodeActuator
+import app.bypassads.core.actuation.dispatchOutcome
 import app.bypassads.core.model.IntRect
 import app.bypassads.core.model.LabelSanitizer
 
@@ -32,14 +33,19 @@ data class ApprovedTarget(
  * - The live node is re-looked-up at execution time against the approved
  *   identity (package / label / resourceId / bounds). 0 matches -> NO_EFFECT;
  *   more than 1 match -> UNCERTAIN and no click; exactly 1 -> click.
+ * - Outcome honesty (M2.2 P1, planner-approved): the `performAction` boolean
+ *   is unreliable on HyperOS (observed false while the click still takes
+ *   effect), so a single dispatched click is always reported UNCERTAIN
+ *   immediately; the final SUCCESS / NO_EFFECT is decided later by the
+ *   passive post-action verification, never by a second click.
  * - This class decides nothing: no scoring, no policy, no fallback.
- *
- * NOT wired to any runtime path outside the experimental build's guarded
- * flow: release/debug policy keeps it unreachable.
  */
 class AndroidNodeActuator(
     private val nodeLookup: (ApprovedTarget) -> List<AccessibilityNodeInfo>,
 ) : NodeActuator {
+
+    /** Raw `performAction` return value of the most recent dispatch; diagnostic only, never used for outcome. */
+    @Volatile var lastDispatchReported: Boolean? = null
 
     override fun actuate(
         verdict: ActuationVerdict.Allow,
@@ -53,14 +59,14 @@ class AndroidNodeActuator(
             bounds = target.bounds,
         )
         val matches = nodeLookup(approved)
-        if (matches.isEmpty()) return ActuationOutcome.NO_EFFECT
-        if (matches.size > 1) return ActuationOutcome.UNCERTAIN
+        if (matches.size != 1) return dispatchOutcome(matches.size) // 0 -> NO_EFFECT (no click); >1 -> UNCERTAIN (no click)
 
-        val ok = matches[0].performAction(AccessibilityNodeInfo.ACTION_CLICK)
-        // performAction=true only proves the click was dispatched; outcome
-        // confirmation (target/window gone) happens via the classifier on a
-        // later observation, so the honest immediate value is UNCERTAIN.
-        return if (ok) ActuationOutcome.UNCERTAIN else ActuationOutcome.NO_EFFECT
+        lastDispatchReported = matches[0].performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        // performAction=true only proves the click was dispatched; the boolean
+        // is not reliable on HyperOS, and confirmation (target/window gone)
+        // happens via the passive verifier on a later observation. The honest
+        // immediate value is therefore always UNCERTAIN for a dispatched click.
+        return ActuationOutcome.UNCERTAIN
     }
 
     private fun approvedLabel(target: app.bypassads.core.model.UiNodeSnapshot): String {

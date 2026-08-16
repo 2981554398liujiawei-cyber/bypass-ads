@@ -195,6 +195,7 @@ object BlackBoxJsonCodec {
         put("coalescedWindowEvents", record.coalescedWindowEvents ?: JSONObject.NULL); put("coalescedContentEvents", record.coalescedContentEvents ?: JSONObject.NULL)
         put("caseDurationMs", record.caseDurationMs ?: JSONObject.NULL); put("terminationReason", record.terminationReason?.name ?: JSONObject.NULL)
         put("actuationVerdict", record.actuationVerdict ?: JSONObject.NULL); put("actuationOutcome", record.actuationOutcome ?: JSONObject.NULL)
+        put("dispatchReported", record.actuationDispatchReported ?: JSONObject.NULL)
     }.toString()
 
     fun decodeOrNull(line: String): DiagnosticRecord? = runCatching {
@@ -216,6 +217,7 @@ object BlackBoxJsonCodec {
             coalescedWindowEvents = json.nullableInt("coalescedWindowEvents"), coalescedContentEvents = json.nullableInt("coalescedContentEvents"),
             caseDurationMs = json.nullableLong("caseDurationMs"), terminationReason = json.nullableCaseTerminationReason("terminationReason"),
             actuationVerdict = json.nullableString("actuationVerdict"), actuationOutcome = json.nullableString("actuationOutcome"),
+            actuationDispatchReported = json.nullableBoolean("dispatchReported"),
         )
     }.getOrNull()
 

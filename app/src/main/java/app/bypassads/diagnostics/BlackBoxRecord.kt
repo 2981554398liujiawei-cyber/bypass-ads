@@ -14,6 +14,8 @@ enum class BlackBoxTrigger {
     CASE_END,
     /** M2.2: experimental actuation attempt (guard verdict / gate verdict / outcome). */
     ACTION_ATTEMPT,
+    /** M2.2 P1: passive post-action outcome verification (target/window observed after the attempt window). */
+    OUTCOME_VERIFIED,
 }
 
 enum class CaseTerminationReason {
@@ -64,6 +66,8 @@ data class BlackBoxRecord(
     val actuationVerdict: String? = null,
     /** M2.2: post-action outcome, e.g. "SUCCESS", "NO_EFFECT", "UNCERTAIN". */
     val actuationOutcome: String? = null,
+    /** M2.2 P1: raw performAction boolean of the last dispatched click; diagnostic only, not used for outcome. */
+    val actuationDispatchReported: Boolean? = null,
 )
 
 data class DiagnosticReason(
@@ -126,6 +130,7 @@ data class DiagnosticRecord(
     val terminationReason: CaseTerminationReason?,
     val actuationVerdict: String?,
     val actuationOutcome: String?,
+    val actuationDispatchReported: Boolean? = null,
 )
 
 data class BlackBoxStats(
