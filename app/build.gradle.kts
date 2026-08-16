@@ -64,7 +64,12 @@ android {
     defaultConfig {
         applicationId = "app.bypassads"
         minSdk = 35
-        targetSdk = 37
+        // HyperOS/API36 trial: 33 is the highest targetSdk that keeps
+        // third-party AccessibilityEvent delivery working. Pinned per-task:
+        // *Experimental tasks -> 33 (compat baseline for the experimental APK)
+        // everything else (RC/debug) -> 37. AGP 9 exposes no clean per-variant
+        // targetSdk override (buildType/flavor/VariantBuilder all unsupported).
+        targetSdk = if (gradle.startParameter.taskNames.any { it.contains("Experimental", true) }) 33 else 37
         versionCode = 1_000_001
         versionName = "1.0.0-rc1"
     }
