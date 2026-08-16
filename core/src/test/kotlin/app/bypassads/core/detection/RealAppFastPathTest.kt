@@ -28,6 +28,16 @@ class RealAppFastPathTest {
             minCenterXRatio = 0.80,
             maxCenterYRatio = 0.15,
         ),
+        FastPathRule(
+            ruleId = "zhihu_splash_skip_v1",
+            packageName = "com.zhihu.android",
+            label = "跳过",
+            minStabilityHits = 1,
+            anchorClassName = "android.widget.TextView",
+            anchorResourceId = "com.zhihu.android:id/btn_skip",
+            minCenterXRatio = 0.80,
+            maxCenterYRatio = 0.15,
+        ),
     )
     private val fastPath = RealAppFastPath(rules)
 
@@ -40,6 +50,7 @@ class RealAppFastPathTest {
         label: String = "跳过",
         bounds: IntRect = IntRect(984, 215, 1158, 311),
         className: String? = "android.widget.TextView",
+        resourceId: String? = null,
         clickable: Boolean = false,
         stabilityHits: Int = 6,
         cta: Boolean = false,
@@ -48,7 +59,7 @@ class RealAppFastPathTest {
     ) = CandidateFeatures(
         nodeIndex = nodeIndex,
         label = label,
-        resourceId = null,
+        resourceId = resourceId,
         bounds = bounds,
         clickable = clickable,
         enabled = true,
@@ -138,6 +149,32 @@ class RealAppFastPathTest {
         // e.g. a right-edge "跳过" lower on the page — not the observed splash zone.
         val lower = feature(bounds = IntRect(984, 400, 1158, 496)) // center y ~0.19 > 0.15
         val result = fastPath.score(snapshot("com.sina.weibo"), listOf(lower))
+
+        assertTrue(result.isEmpty())
+    }
+
+    @Test
+    fun `zhihu skip with stable resource id fires its own rule`() {
+        val zhihu = feature(
+            bounds = IntRect(998, 123, 1155, 199),
+            resourceId = "com.zhihu.android:id/btn_skip",
+            clickable = true,
+            stabilityHits = 1,
+        )
+        val result = fastPath.score(snapshot("com.zhihu.android"), listOf(zhihu))
+
+        assertEquals(1, result.size)
+        assertEquals("zhihu_splash_skip_v1", result[0].fastPathRuleId)
+    }
+
+    @Test
+    fun `zhihu skip with wrong resource id does not fire`() {
+        val zhihu = feature(
+            bounds = IntRect(998, 123, 1155, 199),
+            resourceId = "com.zhihu.android:id/other",
+            stabilityHits = 1,
+        )
+        val result = fastPath.score(snapshot("com.zhihu.android"), listOf(zhihu))
 
         assertTrue(result.isEmpty())
     }

@@ -580,7 +580,7 @@ class BypassAdsAccessibilityService : AccessibilityService() {
          * M2.3 Real-App Pilot: com.sina.weibo added after shadow evidence
          * (label "跳过", top-right, stable across 4/4 cold starts).
          */
-        val EXPERIMENTAL_ALLOWLIST: Set<String> = setOf("app.bypassads.testad", "com.sina.weibo")
+        val EXPERIMENTAL_ALLOWLIST: Set<String> = setOf("app.bypassads.testad", "com.sina.weibo", "com.zhihu.android")
 
         /**
          * M2.3 Real-App Pilot Fast Path rules — added only after human-reviewed
@@ -590,10 +590,8 @@ class BypassAdsAccessibilityService : AccessibilityService() {
          * rule is required to ever reach actuation on it.
          */
         val FAST_PATH_RULES: List<FastPathRule> = listOf(
-            // Splash fingerprint from 4/4 shadow cold starts: "跳过" is a
-            // com.sina.weibo TextView (no resourceId) centered at
-            // ~(0.89, 0.11) — class + center-zone + top-right + small area
-            // scope the rule to the observed splash page. minStabilityHits=1
+            // Weibo: "跳过" is a TextView (no resourceId) centered at
+            // ~(0.89, 0.11); 4/4 shadow cold starts. minStabilityHits=1
             // because in the field the ad frame can be present for a single
             // burst frame only (observed 03:43: frame 1 had the skip, frames
             // 2+ NO_CANDIDATE) — the fingerprint guards the rest.
@@ -603,6 +601,20 @@ class BypassAdsAccessibilityService : AccessibilityService() {
                 label = "跳过",
                 minStabilityHits = 1,
                 anchorClassName = "android.widget.TextView",
+                minCenterXRatio = 0.80,
+                maxCenterYRatio = 0.15,
+            ),
+            // Zhihu: "跳过1" TextView clickable=true with stable resourceId
+            // com.zhihu.android:id/btn_skip at ~(0.90, 0.07); 2/2 cold starts
+            // this session + shadow text evidence (M23 zhihu_4). The anchor is
+            // itself the executable click node.
+            FastPathRule(
+                ruleId = "zhihu_splash_skip_v1",
+                packageName = "com.zhihu.android",
+                label = "跳过",
+                minStabilityHits = 1,
+                anchorClassName = "android.widget.TextView",
+                anchorResourceId = "com.zhihu.android:id/btn_skip",
                 minCenterXRatio = 0.80,
                 maxCenterYRatio = 0.15,
             ),

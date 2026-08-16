@@ -52,6 +52,8 @@ data class FastPathRule(
      * observed splash page so an ordinary in-app "跳过" can not fire it.
      */
     val anchorClassName: String? = null,
+    /** Splash fingerprint: stable resourceId the anchor must carry, when observed. */
+    val anchorResourceId: String? = null,
     /** Minimum normalized center X ratio for the anchor (splash fingerprint). */
     val minCenterXRatio: Double = 0.0,
     /** Maximum normalized center Y ratio for the anchor (splash fingerprint; top zone). */
@@ -83,10 +85,12 @@ class RealAppFastPath(
         return features.asSequence()
             .filter { it.label == label }
             .filter { it.stabilityHits >= rule.minStabilityHits }
-            // Splash fingerprint (M2.3 P1-2): class + normalized center zone,
-            // taken from real shadow evidence — ordinary in-app pages with a
-            // top-right "跳过" but a different class/position can not fire.
+            // Splash fingerprint (M2.3 P1-2): class + resourceId + normalized
+            // center zone, taken from real shadow evidence — ordinary in-app
+            // pages with a top-right "跳过" but a different class/position can
+            // not fire.
             .filter { rule.anchorClassName == null || it.className == rule.anchorClassName }
+            .filter { rule.anchorResourceId == null || it.resourceId == rule.anchorResourceId }
             .filter {
                 it.bounds.centerX.toDouble() / width >= rule.minCenterXRatio &&
                     it.bounds.centerY.toDouble() / height <= rule.maxCenterYRatio
