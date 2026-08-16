@@ -89,7 +89,11 @@ class ActuationGate(
             return Block(ActuationBlockReason.GEOMETRY_CHANGED)
         }
 
-        if (!target.clickable || !target.enabled || !target.visibleToUser) {
+        // Fast Path (M2.3): the rule statically approved package + label +
+        // top-right region + stability, so a non-clickable text node inside the
+        // ad container is expected structure, not ambiguity. Every other
+        // fail-closed check (incl. enabled/visibleToUser) still applies.
+        if ((!target.clickable && !proposal.fastPath) || !target.enabled || !target.visibleToUser) {
             return Block(ActuationBlockReason.NOT_CLICKABLE)
         }
 

@@ -21,6 +21,10 @@ data class ApprovedTarget(
     val label: String,
     val resourceId: String?,
     val bounds: IntRect,
+    /** True for M2.3 Real-App Fast Path targets: the rule statically approved
+     *  package+label+region, so a non-clickable node is expected structure and
+     *  the live lookup may match it (gate already relaxed NOT_CLICKABLE). */
+    val fastPath: Boolean = false,
 )
 
 /**
@@ -64,6 +68,7 @@ class AndroidNodeActuator(
             label = approvedLabel(target),
             resourceId = target.resourceId,
             bounds = target.bounds,
+            fastPath = resolution.fastPath,
         )
         val matches = nodeLookup(approved)
         if (matches.size != 1) return dispatchOutcome(matches.size) // 0 -> NO_EFFECT (no click); >1 -> UNCERTAIN (no click); tracker stays null

@@ -21,6 +21,8 @@ import app.bypassads.core.actuation.FreshTargetResolver
 import app.bypassads.core.actuation.TrialGuardDecision
 import app.bypassads.core.decision.DecisionEngine
 import app.bypassads.core.detection.CandidateDetector
+import app.bypassads.core.detection.FastPathRule
+import app.bypassads.core.detection.RealAppFastPath
 import app.bypassads.core.detection.TemporalCandidateTracker
 import app.bypassads.core.model.CandidateFeatures
 import app.bypassads.core.model.DecisionType
@@ -51,6 +53,7 @@ class BypassAdsAccessibilityService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
     private val snapshotBuilder = NodeSnapshotBuilder()
     private val detector = CandidateDetector()
+    private val fastPath = RealAppFastPath(FAST_PATH_RULES)
     private val temporalTracker = TemporalCandidateTracker()
     private val decisionEngine = DecisionEngine()
     private val sessionCounter = AtomicLong(0L)
@@ -217,7 +220,10 @@ class BypassAdsAccessibilityService : AccessibilityService() {
             if (snapshot.packageName == packageName || snapshot.packageName == launcherPackage) return
             val detectionStartedAtMs = SystemClock.elapsedRealtime()
             val features = synchronized(temporalTracker) { temporalTracker.enrich(detector.extract(snapshot)) }
-            val candidates = detector.score(features)
+            // Generic scorer first, then statically approved Real-App Fast Path
+            // rules (M2.3); the merged list rides the normal decision pipeline.
+            val candidates = (detector.score(features) + fastPath.score(snapshot, features))
+                .sortedByDescending { it.score }
             val detectionMs = SystemClock.elapsedRealtime() - detectionStartedAtMs
             val decisionStartedAtMs = SystemClock.elapsedRealtime()
             val decision = decisionEngine.decide(candidates)
@@ -277,7 +283,9 @@ class BypassAdsAccessibilityService : AccessibilityService() {
             val freshSnapshot = freshCaptured.snapshot
             if (freshSnapshot.packageName == packageName || freshSnapshot.packageName == launcherPackage) return
             val freshFeatures = synchronized(temporalTracker) { temporalTracker.enrich(detector.extract(freshSnapshot)) }
-            val freshDecision = decisionEngine.decide(detector.score(freshFeatures))
+            val freshCandidates = (detector.score(freshFeatures) + fastPath.score(freshSnapshot, freshFeatures))
+                .sortedByDescending { it.score }
+            val freshDecision = decisionEngine.decide(freshCandidates)
             val freshCandidate = freshDecision.candidate ?: return
             val fresh = freshTargetResolver.resolve(
                 snapshot = freshSnapshot,
@@ -287,6 +295,7 @@ class BypassAdsAccessibilityService : AccessibilityService() {
                 capturedAtElapsedMs = freshSnapshot.capturedAtElapsedMs,
                 fingerprint = proposal.fingerprint,
                 countdownAnomaly = countdownAnomaly(decision, freshCandidate),
+                fastPath = proposal.fastPath,
             )
             // M2.2 P1-1: the score/risks handed to the gate must belong to the
             // exact node the resolver re-found — never to a different higher-scored
@@ -347,7 +356,7 @@ class BypassAdsAccessibilityService : AccessibilityService() {
             .flatMap { root -> treeNodes(root) }
             .filter { node ->
                 node.getBoundsInScreen(rect)
-                node.isVisibleToUser && node.isClickable &&
+                node.isVisibleToUser && (approved.fastPath || node.isClickable) &&
                     node.packageName?.toString() == approved.packageName &&
                     (approved.resourceId == null || node.viewIdResourceName == approved.resourceId) &&
                     nodeText(node).any { LabelSanitizer.sanitizeLabel(it) == approved.label } &&
@@ -452,7 +461,20 @@ class BypassAdsAccessibilityService : AccessibilityService() {
          * supervising human tester and reported to the planner. WeChat/Alipay/
          * banks/system settings are never Active targets. First-round test
          * app: the internal scene app app.bypassads.testad (see testad/).
+         * M2.3 Real-App Pilot: com.sina.weibo added after shadow evidence
+         * (label "跳过", top-right, stable across 4/4 cold starts).
          */
-        val EXPERIMENTAL_ALLOWLIST: Set<String> = setOf("app.bypassads.testad")
+        val EXPERIMENTAL_ALLOWLIST: Set<String> = setOf("app.bypassads.testad", "com.sina.weibo")
+
+        /**
+         * M2.3 Real-App Pilot Fast Path rules — added only after human-reviewed
+         * real-app shadow evidence (label + region stable across cold starts).
+         * Weibo: "跳过" node is exposed non-clickable (click handled by the ad
+         * container); generic scorer caps at 68 < 80, so a statically approved
+         * rule is required to ever reach actuation on it.
+         */
+        val FAST_PATH_RULES: List<FastPathRule> = listOf(
+            FastPathRule(packageName = "com.sina.weibo", label = "跳过", minStabilityHits = 2),
+        )
     }
 }

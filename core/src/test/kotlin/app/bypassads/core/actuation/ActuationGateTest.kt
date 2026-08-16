@@ -37,6 +37,7 @@ class ActuationGateTest {
         visible: Boolean = true,
         ancestor: IntRect? = null,
         risks: List<WeightedReason> = emptyList(),
+        fastPath: Boolean = false,
     ) = SkipCandidate(
         features = CandidateFeatures(
             nodeIndex = 0,
@@ -55,6 +56,7 @@ class ActuationGateTest {
         score = score,
         evidence = emptyList(),
         risks = risks,
+        fastPath = fastPath,
     )
 
     private fun proposal(
@@ -367,6 +369,41 @@ class ActuationGateTest {
         val cand = candidate("跳过", topRightSmall())
         val prop = proposal(cand)
         val match = node(0, null, null, "跳过", topRightSmall(), clickable = false)
+
+        val verdict = evaluateAllow(prop, fresh(listOf(match)))
+
+        assertEquals(Block(ActuationBlockReason.NOT_CLICKABLE), verdict)
+    }
+
+    // ---- M2.3 Real-App Fast Path: only the clickable flag is relaxed --------
+
+    @Test
+    fun `non-clickable fast-path target is allowed when rule approved`() {
+        val cand = candidate("跳过", topRightSmall(), clickable = false, fastPath = true)
+        val prop = proposal(cand)
+        val match = node(0, null, null, "跳过", topRightSmall(), clickable = false)
+
+        val verdict = evaluateAllow(prop, fresh(listOf(match)))
+
+        assertIs<Allow>(verdict)
+    }
+
+    @Test
+    fun `disabled fast-path target still blocks`() {
+        val cand = candidate("跳过", topRightSmall(), clickable = false, enabled = false, fastPath = true)
+        val prop = proposal(cand)
+        val match = node(0, null, null, "跳过", topRightSmall(), clickable = false, enabled = false)
+
+        val verdict = evaluateAllow(prop, fresh(listOf(match)))
+
+        assertEquals(Block(ActuationBlockReason.NOT_CLICKABLE), verdict)
+    }
+
+    @Test
+    fun `invisible fast-path target still blocks`() {
+        val cand = candidate("跳过", topRightSmall(), clickable = false, visible = false, fastPath = true)
+        val prop = proposal(cand)
+        val match = node(0, null, null, "跳过", topRightSmall(), clickable = false, visible = false)
 
         val verdict = evaluateAllow(prop, fresh(listOf(match)))
 

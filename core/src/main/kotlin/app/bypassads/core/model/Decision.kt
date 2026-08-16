@@ -29,6 +29,13 @@ data class SkipCandidate(
     val score: Int,
     val evidence: List<WeightedReason>,
     val risks: List<WeightedReason>,
+    /**
+     * True when this candidate was produced by a statically approved
+     * Real-App Fast Path rule (package + label + region + stability), not by
+     * the generic scorer. Such candidates are allowed to bypass the generic
+     * clickable-node requirement further down the chain (M2.3 Real-App Pilot).
+     */
+    val fastPath: Boolean = false,
 ) {
     val nodeIndex: Int get() = features.nodeIndex
     val label: String get() = features.label

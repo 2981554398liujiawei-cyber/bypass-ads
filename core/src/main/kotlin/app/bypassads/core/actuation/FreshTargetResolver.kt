@@ -29,6 +29,7 @@ class FreshTargetResolver {
         capturedAtElapsedMs: Long,
         fingerprint: TargetFingerprint,
         countdownAnomaly: Boolean = false,
+        fastPath: Boolean = false,
     ): FreshTargetResolution {
         val targetPackage = snapshot.packageName ?: packageName
         val matches = snapshot.nodes
@@ -50,6 +51,7 @@ class FreshTargetResolver {
             matches = matches,
             ctaSiblingDetected = ctaSiblingDetected,
             countdownAnomaly = countdownAnomaly,
+            fastPath = fastPath,
         )
     }
 
