@@ -333,8 +333,8 @@ class BypassAdsAccessibilityService : AccessibilityService() {
             }
 
             // M2.3: resolve the Fast Path action node *before* the session so a
-            // missing executable target never consumes an attempt or budget —
-            // record the capability chain for diagnosis instead.
+            // missing or ambiguous executable target never consumes an attempt
+            // or budget — record the capability chain for diagnosis instead.
             if (proposal.fastPathRuleId != null) {
                 val approved = ApprovedTarget(
                     packageName = freshSnapshot.packageName,
@@ -343,7 +343,7 @@ class BypassAdsAccessibilityService : AccessibilityService() {
                     bounds = uniqueTarget.bounds,
                     fastPathRuleId = proposal.fastPathRuleId,
                 )
-                if (findApprovedNodes(approved).isEmpty()) {
+                if (findApprovedNodes(approved).size != 1) {
                     blackBox.append(BlackBoxRecord(
                         System.currentTimeMillis(), request.session, request.caseId, request.scanIndex,
                         freshSnapshot.packageName, BlackBoxTrigger.ACTION_ATTEMPT, request.sourceTrigger,
