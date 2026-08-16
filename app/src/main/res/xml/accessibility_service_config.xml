@@ -7,6 +7,6 @@
     android:canRetrieveWindowContent="true"
     android:canTakeScreenshot="false"
     android:description="@string/accessibility_service_description"
-    android:isAccessibilityTool="false"
+    android:isAccessibilityTool="true"
     android:notificationTimeout="40"
     android:settingsActivity="app.bypassads.MainActivity" />
