@@ -310,8 +310,13 @@ class BypassAdsAccessibilityService : AccessibilityService() {
                     trialGuard.recordAction()
                     experimentalSettings.actionBudgetRemaining = trialGuard.actionBudgetRemaining
                     experimentalSettings.lastAction = "ALLOW:${result.outcome.name}"
-                    blackBox.append(BlackBoxRecord(epoch, request.session, request.caseId, request.scanIndex, freshSnapshot.packageName, BlackBoxTrigger.ACTION_ATTEMPT, request.sourceTrigger, actuationVerdict = "ALLOW", actuationOutcome = result.outcome.name, actuationDispatchReported = nodeActuator.lastDispatchReported))
-                    scheduleOutcomeVerification(proposal, fresh, request.caseId, request.session, freshSnapshot.packageName)
+                    val dispatchReported = nodeActuator.dispatchTracker.dispatchReported
+                    blackBox.append(BlackBoxRecord(epoch, request.session, request.caseId, request.scanIndex, freshSnapshot.packageName, BlackBoxTrigger.ACTION_ATTEMPT, request.sourceTrigger, actuationVerdict = "ALLOW", actuationOutcome = result.outcome.name, actuationDispatchReported = dispatchReported))
+                    // Passive verification only when a click really was dispatched this
+                    // attempt (null = 0/>1 matches or performAction never returned);
+                    // false still warrants verification because HyperOS can report
+                    // false while the click takes effect.
+                    if (dispatchReported != null) scheduleOutcomeVerification(proposal, fresh, request.caseId, request.session, freshSnapshot.packageName)
                 }
                 is ActuationResult.Blocked -> {
                     experimentalSettings.lastAction = "BLOCK:${result.reason.name}"

@@ -1,6 +1,7 @@
 package app.bypassads.actuation
 
 import android.view.accessibility.AccessibilityNodeInfo
+import app.bypassads.core.actuation.ActuationDispatchTracker
 import app.bypassads.core.actuation.ActuationOutcome
 import app.bypassads.core.actuation.ActuationVerdict
 import app.bypassads.core.actuation.FreshTargetResolution
@@ -44,13 +45,19 @@ class AndroidNodeActuator(
     private val nodeLookup: (ApprovedTarget) -> List<AccessibilityNodeInfo>,
 ) : NodeActuator {
 
-    /** Raw `performAction` return value of the most recent dispatch; diagnostic only, never used for outcome. */
-    @Volatile var lastDispatchReported: Boolean? = null
+    /**
+     * Per-attempt dispatch state (M2.2 P1): null = no click dispatched this
+     * attempt (0/>1 matches or performAction never returned); true/false =
+     * ACTION_CLICK was actually invoked (raw performAction boolean, kept as
+     * diagnostic only — never used for the outcome).
+     */
+    val dispatchTracker = ActuationDispatchTracker()
 
     override fun actuate(
         verdict: ActuationVerdict.Allow,
         resolution: FreshTargetResolution,
     ): ActuationOutcome {
+        dispatchTracker.beginAttempt()
         val target = resolution.uniqueMatch ?: return ActuationOutcome.NO_EFFECT
         val approved = ApprovedTarget(
             packageName = target.packageName,
@@ -59,9 +66,9 @@ class AndroidNodeActuator(
             bounds = target.bounds,
         )
         val matches = nodeLookup(approved)
-        if (matches.size != 1) return dispatchOutcome(matches.size) // 0 -> NO_EFFECT (no click); >1 -> UNCERTAIN (no click)
+        if (matches.size != 1) return dispatchOutcome(matches.size) // 0 -> NO_EFFECT (no click); >1 -> UNCERTAIN (no click); tracker stays null
 
-        lastDispatchReported = matches[0].performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        dispatchTracker.recordDispatch(matches[0].performAction(AccessibilityNodeInfo.ACTION_CLICK))
         // performAction=true only proves the click was dispatched; the boolean
         // is not reliable on HyperOS, and confirmation (target/window gone)
         // happens via the passive verifier on a later observation. The honest
