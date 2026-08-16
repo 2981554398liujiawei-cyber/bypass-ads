@@ -23,7 +23,7 @@ class RealAppFastPathTest {
             ruleId = "weibo_splash_skip_v1",
             packageName = "com.sina.weibo",
             label = "跳过",
-            minStabilityHits = 2,
+            minStabilityHits = 1,
             anchorClassName = "android.widget.TextView",
             minCenterXRatio = 0.80,
             maxCenterYRatio = 0.15,
@@ -91,10 +91,14 @@ class RealAppFastPathTest {
     }
 
     @Test
-    fun `insufficient stability produces nothing`() {
-        val result = fastPath.score(snapshot("com.sina.weibo"), listOf(feature(stabilityHits = 1)))
+    fun `single-frame skip still fires when rule allows first frame`() {
+        // Field observation: the weibo ad frame can be present for a single
+        // burst frame only, so the rule must fire with stabilityHits=1.
+        val singleFrame = feature(stabilityHits = 1)
+        val result = fastPath.score(snapshot("com.sina.weibo"), listOf(singleFrame))
 
-        assertTrue(result.isEmpty())
+        assertEquals(1, result.size)
+        assertEquals("weibo_splash_skip_v1", result[0].fastPathRuleId)
     }
 
     @Test

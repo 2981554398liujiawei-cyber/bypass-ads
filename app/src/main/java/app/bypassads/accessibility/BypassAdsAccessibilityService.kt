@@ -593,12 +593,15 @@ class BypassAdsAccessibilityService : AccessibilityService() {
             // Splash fingerprint from 4/4 shadow cold starts: "跳过" is a
             // com.sina.weibo TextView (no resourceId) centered at
             // ~(0.89, 0.11) — class + center-zone + top-right + small area
-            // scope the rule to the observed splash page.
+            // scope the rule to the observed splash page. minStabilityHits=1
+            // because in the field the ad frame can be present for a single
+            // burst frame only (observed 03:43: frame 1 had the skip, frames
+            // 2+ NO_CANDIDATE) — the fingerprint guards the rest.
             FastPathRule(
                 ruleId = "weibo_splash_skip_v1",
                 packageName = "com.sina.weibo",
                 label = "跳过",
-                minStabilityHits = 2,
+                minStabilityHits = 1,
                 anchorClassName = "android.widget.TextView",
                 minCenterXRatio = 0.80,
                 maxCenterYRatio = 0.15,
