@@ -332,6 +332,28 @@ class BypassAdsAccessibilityService : AccessibilityService() {
                 return
             }
 
+            // M2.3: resolve the Fast Path action node *before* the session so a
+            // missing executable target never consumes an attempt or budget —
+            // record the capability chain for diagnosis instead.
+            if (proposal.fastPathRuleId != null) {
+                val approved = ApprovedTarget(
+                    packageName = freshSnapshot.packageName,
+                    label = proposal.fingerprint.label,
+                    resourceId = proposal.fingerprint.resourceId,
+                    bounds = uniqueTarget.bounds,
+                    fastPathRuleId = proposal.fastPathRuleId,
+                )
+                if (findApprovedNodes(approved).isEmpty()) {
+                    blackBox.append(BlackBoxRecord(
+                        System.currentTimeMillis(), request.session, request.caseId, request.scanIndex,
+                        freshSnapshot.packageName, BlackBoxTrigger.ACTION_ATTEMPT, request.sourceTrigger,
+                        actuationVerdict = "REVALIDATION:NO_ACTION_TARGET",
+                        actuationDiagnostics = diagnoseFastPathTarget(approved),
+                    ))
+                    return
+                }
+            }
+
             val result = ActuationSession(actuationGate, caseState, nodeActuator).run(
                 proposal = proposal,
                 fresh = fresh,
@@ -499,6 +521,31 @@ class BypassAdsAccessibilityService : AccessibilityService() {
         val live = rect.width().toLong() * rect.height()
         val approved = bounds.area.toLong()
         return live in (approved * 2 / 3)..(approved * 3 / 2)
+    }
+
+    /** M2.3: capability-chain diagnosis for a Fast Path target that resolved no action node. */
+    private fun diagnoseFastPathTarget(approved: ApprovedTarget): String {
+        val rect = android.graphics.Rect()
+        val anchor = windows.orEmpty().asSequence()
+            .mapNotNull { it.root }
+            .flatMap { root -> treeNodes(root) }
+            .firstOrNull { node ->
+                node.getBoundsInScreen(rect)
+                node.packageName?.toString() == approved.packageName &&
+                    nodeText(node).any { LabelSanitizer.sanitizeLabel(it) == approved.label } &&
+                    rect.contains(approved.bounds.centerX, approved.bounds.centerY)
+            }
+        val sb = StringBuilder()
+        fun describe(node: AccessibilityNodeInfo?, role: String) {
+            if (node == null) return
+            node.getBoundsInScreen(rect)
+            val actions = node.actionList.orEmpty().joinToString(",") { it.id.toString() }
+            sb.append("$role{clk=${node.isClickable},act=[$actions],cls=${node.className},pkg=${node.packageName},b=[${rect.left},${rect.top},${rect.right},${rect.bottom}]};")
+        }
+        describe(anchor, "anchor")
+        var n = anchor?.parent
+        while (n != null) { describe(n, "a"); n = n.parent }
+        return sb.toString()
     }
 
     private fun treeNodes(root: AccessibilityNodeInfo): Sequence<AccessibilityNodeInfo> = sequence {

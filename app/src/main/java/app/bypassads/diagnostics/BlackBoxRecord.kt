@@ -68,6 +68,8 @@ data class BlackBoxRecord(
     val actuationOutcome: String? = null,
     /** M2.2 P1: raw performAction boolean of the last dispatched click; diagnostic only, not used for outcome. */
     val actuationDispatchReported: Boolean? = null,
+    /** M2.3: free-form execution diagnostic (e.g. fast-path action-target capability chain). */
+    val actuationDiagnostics: String? = null,
 )
 
 data class DiagnosticReason(
@@ -131,6 +133,7 @@ data class DiagnosticRecord(
     val actuationVerdict: String?,
     val actuationOutcome: String?,
     val actuationDispatchReported: Boolean? = null,
+    val actuationDiagnostics: String? = null,
 )
 
 data class BlackBoxStats(
