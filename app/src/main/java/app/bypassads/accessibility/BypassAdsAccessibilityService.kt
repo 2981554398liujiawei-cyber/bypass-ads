@@ -87,9 +87,12 @@ class BypassAdsAccessibilityService : AccessibilityService() {
     @Volatile private var fastPathWindowOpen = false
     /** M2.3: late-ad probe. The standard burst (6 frames in 1s) can finish
      *  before the splash ad frame appears (observed: skip shows 1-2s after
-     *  launch), so while the splash window is open we keep polling the live
-     *  tree and run Fast Path rules only. */
+     *  launch), so while the splash window is open we keep probing the live
+     *  tree with Fast Path rules only. The probe keeps the case alive (no
+     *  CASE_END) and runs its frames on the same single scanWorker so it can
+     *  never actuate concurrently with a normal SCAN. */
     private var fastPathPollingRunnable: Runnable? = null
+    @Volatile private var fastPathProbeActive = false
     private var fastPathPollCount = 0
 
     override fun onServiceConnected() {
@@ -169,48 +172,75 @@ class BypassAdsAccessibilityService : AccessibilityService() {
     private fun cancelScheduledScans(): Int { val cancelled = scheduledScans.size; scheduledScans.forEach(handler::removeCallbacks); scheduledScans.clear(); return cancelled }
 
     /**
-     * M2.3 late-ad probe: while the splash window is open, poll the live tree
-     * every [FAST_PATH_POLL_INTERVAL_MS] and evaluate Fast Path rules only
+     * M2.3 late-ad probe: while the splash window is open, keep probing the
+     * live tree every [FAST_PATH_POLL_INTERVAL_MS] with Fast Path rules only
      * (never the generic scorer). A hit rides the exact same guarded pipeline
-     * as a burst SCAN hit (trial guard -> fresh revalidation -> gate ->
-     * session -> actuator). Any hit or window expiry stops the probe.
+     * as a burst SCAN hit. Frames run on the single scanWorker behind
+     * scanInFlight, so a probe can never actuate concurrently with a normal
+     * SCAN. The probe keeps the case alive (no CASE_END) and ends on: a hit
+     * (whatever the actuation outcome), window timeout, supersede, Active OFF
+     * or service destruction.
      */
-    private fun startFastPathPolling(session: Long, caseId: String, packageHint: String?, trigger: BlackBoxTrigger, startedAtMs: Long, screenW: Int, screenH: Int) {
-        stopFastPathPolling()
+    private fun startFastPathProbe(session: Long, caseId: String, packageHint: String?, trigger: BlackBoxTrigger, startedAtMs: Long, screenW: Int, screenH: Int) {
+        stopFastPathProbe()
+        if (!fastPathWindowOpen) return
+        fastPathProbeActive = true
         fastPathPollCount = 0
         val runnable = object : Runnable {
             override fun run() {
-                if (!fastPathWindowOpen || fastPathPollingRunnable !== this) return
+                if (!fastPathProbeActive || fastPathPollingRunnable !== this) return
                 fastPathPollCount++
                 if (fastPathPollCount > FAST_PATH_MAX_POLLS || SystemClock.elapsedRealtime() - startedAtMs > FAST_PATH_WINDOW_MS) {
-                    stopFastPathPolling()
+                    stopFastPathProbe()
+                    maybeCompleteCase()
                     return
                 }
-                val case = activeCase?.takeIf { it.sessionId == session } ?: run { stopFastPathPolling(); return }
+                val case = activeCase?.takeIf { it.sessionId == session } ?: run { stopFastPathProbe(); maybeCompleteCase(); return }
+                if (runModeStore.get() == RunMode.OFF) { stopFastPathProbe(); maybeCompleteCase(); return }
+                if (!scanInFlight.compareAndSet(false, true)) { handler.postDelayed(this, FAST_PATH_POLL_INTERVAL_MS); return }
+                val probe = this
                 try {
-                    val request = ScanRequest(session, caseId, case.executedFrames + fastPathPollCount, packageHint, trigger, startedAtMs, screenW, screenH)
-                    val captured = snapshotBuilder.capture(windows.orEmpty(), packageHint, screenW, screenH)
-                    val snap = captured.snapshot
-                    if (request.session != activeSession || runModeStore.get() == RunMode.OFF) { stopFastPathPolling(); return }
-                    val feats = synchronized(temporalTracker) { temporalTracker.enrich(detector.extract(snap)) }
-                    val candidates = fastPath.score(snap, feats).sortedByDescending { it.score }
-                    val decision = decisionEngine.decide(candidates)
-                    blackBox.append(BlackBoxRecord(System.currentTimeMillis(), request.session, request.caseId, request.scanIndex, snap.packageName, BlackBoxTrigger.SCAN, request.sourceTrigger, snap.windowCount, snap.nodes.size, feats, decision))
-                    if (decision.type == DecisionType.WOULD_CLICK && ExperimentalCapability.policy.actuatorAllowed) {
-                        experimentalActuation(request, snap, decision, feats, captured.windowContextToken)
-                        return // a click was attempted; the case terminates on its own
+                    scanWorker.execute {
+                        try {
+                            val request = ScanRequest(session, caseId, case.executedFrames + fastPathPollCount, packageHint, trigger, startedAtMs, screenW, screenH)
+                            val captured = snapshotBuilder.capture(windows.orEmpty(), packageHint, screenW, screenH)
+                            val snap = captured.snapshot
+                            if (request.session != activeSession || runModeStore.get() == RunMode.OFF) {
+                                handler.post { stopFastPathProbe(); maybeCompleteCase() }
+                                return@execute
+                            }
+                            val feats = synchronized(temporalTracker) { temporalTracker.enrich(detector.extract(snap)) }
+                            val candidates = fastPath.score(snap, feats).sortedByDescending { it.score }
+                            val decision = decisionEngine.decide(candidates)
+                            blackBox.append(BlackBoxRecord(System.currentTimeMillis(), request.session, request.caseId, request.scanIndex, snap.packageName, BlackBoxTrigger.SCAN, request.sourceTrigger, snap.windowCount, snap.nodes.size, feats, decision))
+                            val shouldAct = decision.type == DecisionType.WOULD_CLICK && ExperimentalCapability.policy.actuatorAllowed
+                            if (shouldAct) {
+                                // A Fast Path hit ends the probe no matter what
+                                // the actuation outcome (click / NO_ACTION_TARGET
+                                // / gate BLOCK / fresh failure).
+                                experimentalActuation(request, snap, decision, feats, captured.windowContextToken)
+                                handler.post { stopFastPathProbe(); maybeCompleteCase() }
+                            } else {
+                                handler.post { maybeCompleteCase(); handler.postDelayed(probe, FAST_PATH_POLL_INTERVAL_MS) }
+                            }
+                        } catch (_: Exception) {
+                            handler.post { maybeCompleteCase(); handler.postDelayed(probe, FAST_PATH_POLL_INTERVAL_MS) }
+                        } finally {
+                            scanInFlight.set(false)
+                        }
                     }
-                } catch (_: Exception) {
-                    // Probe must never disturb the running case.
+                } catch (_: RuntimeException) {
+                    scanInFlight.set(false)
+                    handler.postDelayed(probe, FAST_PATH_POLL_INTERVAL_MS)
                 }
-                handler.postDelayed(this, FAST_PATH_POLL_INTERVAL_MS)
             }
         }
         fastPathPollingRunnable = runnable
         handler.postDelayed(runnable, FAST_PATH_POLL_INTERVAL_MS)
     }
 
-    private fun stopFastPathPolling() {
+    private fun stopFastPathProbe() {
+        fastPathProbeActive = false
         fastPathPollingRunnable?.let(handler::removeCallbacks)
         fastPathPollingRunnable = null
     }
@@ -224,7 +254,7 @@ class BypassAdsAccessibilityService : AccessibilityService() {
         // Path window; it closes when the case terminates (or via the time
         // bound inside scan()).
         fastPathWindowOpen = trigger == BlackBoxTrigger.PACKAGE_CHANGED
-        if (fastPathWindowOpen) startFastPathPolling(session, caseId, packageHint, trigger, startedAtMs, resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
+        if (fastPathWindowOpen) startFastPathProbe(session, caseId, packageHint, trigger, startedAtMs, resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
         synchronized(temporalTracker) { temporalTracker.reset() }
         schedulePolicy.markBurstStarted(packageHint.toPackageIdentity())
         activeCase = ActiveCase(session, caseId, packageHint, trigger, startedAtMs, BURST_DELAYS_MS.size)
@@ -254,7 +284,7 @@ class BypassAdsAccessibilityService : AccessibilityService() {
 
     private fun maybeCompleteCase() {
         val case = activeCase ?: return
-        if (scheduledScans.isEmpty() && !scanInFlight.get()) {
+        if (scheduledScans.isEmpty() && !scanInFlight.get() && !fastPathProbeActive) {
             val reason = if (case.executedFrames == 0 && case.droppedFrames == case.scheduledFrames) CaseTerminationReason.SCAN_BUSY else CaseTerminationReason.COMPLETED
             terminateActiveCase(reason)
         }
@@ -268,7 +298,7 @@ class BypassAdsAccessibilityService : AccessibilityService() {
         activeCase = null
         schedulePolicy.markBurstFinished()
         fastPathWindowOpen = false
-        stopFastPathPolling()
+        stopFastPathProbe()
         synchronized(temporalTracker) { temporalTracker.reset() }
         blackBox.append(BlackBoxRecord(System.currentTimeMillis(), case.sessionId, case.caseId, -1, case.packageName, BlackBoxTrigger.CASE_END, sourceTrigger = case.initialTrigger, scheduledFrames = case.scheduledFrames, executedFrames = case.executedFrames, cancelledFrames = case.cancelledFrames, droppedFrames = case.droppedFrames, coalescedWindowEvents = case.coalescedWindowEvents, coalescedContentEvents = case.coalescedContentEvents, caseDurationMs = SystemClock.elapsedRealtime() - case.startedAtElapsedMs, terminationReason = reason, workerBusyDrops = workerDroppedRequests, workerMaxQueueDepth = workerMaxQueueDepth))
     }
