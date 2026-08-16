@@ -5,19 +5,22 @@ import app.bypassads.core.model.IntRect
 import app.bypassads.core.model.UiSnapshot
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
  * Real-App Fast Path rule matching (M2.3 Real-App Pilot).
  *
  * A rule fires only when package + sanitized label + top-right region +
- * stability all match, and never on ambiguous/CTA/drifting targets. The
- * produced candidate must carry fastPath=true and a score above the click
- * threshold so it can ride the normal decision pipeline.
+ * stability + area bound all match, and never on ambiguous/CTA/drifting
+ * targets. The produced candidate must carry the exact fastPathRuleId and a
+ * score above the click threshold so it can ride the normal decision pipeline.
  */
 class RealAppFastPathTest {
 
-    private val rules = listOf(FastPathRule(packageName = "com.sina.weibo", label = "跳过", minStabilityHits = 2))
+    private val rules = listOf(
+        FastPathRule(ruleId = "weibo_splash_skip_v1", packageName = "com.sina.weibo", label = "跳过", minStabilityHits = 2),
+    )
     private val fastPath = RealAppFastPath(rules)
 
     private val screenWidth = 1200
@@ -52,12 +55,12 @@ class RealAppFastPathTest {
     private fun snapshot(packageName: String?) = UiSnapshot(packageName, screenWidth, screenHeight, 2_000L, 1, emptyList())
 
     @Test
-    fun `matching weibo skip produces a fast path candidate`() {
+    fun `matching weibo skip produces a fast path candidate with rule id`() {
         val result = fastPath.score(snapshot("com.sina.weibo"), listOf(feature()))
 
         assertEquals(1, result.size)
         val cand = result[0]
-        assertTrue(cand.fastPath)
+        assertEquals("weibo_splash_skip_v1", cand.fastPathRuleId)
         assertTrue(cand.score >= 80, "fast path score must clear the click threshold, was ${cand.score}")
         assertEquals("跳过", cand.label)
     }
@@ -87,6 +90,14 @@ class RealAppFastPathTest {
     fun `non top-right target produces nothing`() {
         val centered = feature(bounds = IntRect(400, 1000, 600, 1100))
         val result = fastPath.score(snapshot("com.sina.weibo"), listOf(centered))
+
+        assertTrue(result.isEmpty())
+    }
+
+    @Test
+    fun `oversized anchor produces nothing (small_target evidence is real)`() {
+        val oversized = feature(bounds = IntRect(500, 100, 1150, 900)) // area ratio ~0.19 > 0.06
+        val result = fastPath.score(snapshot("com.sina.weibo"), listOf(oversized))
 
         assertTrue(result.isEmpty())
     }

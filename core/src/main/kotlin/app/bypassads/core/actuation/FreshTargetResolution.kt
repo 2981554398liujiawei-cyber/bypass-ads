@@ -28,11 +28,11 @@ class FreshTargetResolution internal constructor(
     val ctaSiblingDetected: Boolean = false,
     val countdownAnomaly: Boolean = false,
     /**
-     * Mirrors the proposal's Fast Path flag (M2.3): the actuator uses it to
-     * allow a live lookup on a non-clickable approved node. Set by the
+     * Mirrors the proposal's Fast Path rule id (M2.3): the actuator uses it to
+     * allow a live lookup on a non-clickable approved anchor node. Set by the
      * coordinator from the proposal; the resolver itself never decides it.
      */
-    val fastPath: Boolean = false,
+    val fastPathRuleId: String? = null,
 ) {
     val matchCount: Int get() = matches.size
     val uniqueMatch: UiNodeSnapshot? get() = matches.singleOrNull()
@@ -49,7 +49,7 @@ class FreshTargetResolution internal constructor(
             matches == other.matches &&
             ctaSiblingDetected == other.ctaSiblingDetected &&
             countdownAnomaly == other.countdownAnomaly &&
-            fastPath == other.fastPath
+            fastPathRuleId == other.fastPathRuleId
     }
 
     override fun hashCode(): Int {
@@ -62,7 +62,7 @@ class FreshTargetResolution internal constructor(
         result = 31 * result + matches.hashCode()
         result = 31 * result + ctaSiblingDetected.hashCode()
         result = 31 * result + countdownAnomaly.hashCode()
-        result = 31 * result + fastPath.hashCode()
+        result = 31 * result + (fastPathRuleId?.hashCode() ?: 0)
         return result
     }
 }

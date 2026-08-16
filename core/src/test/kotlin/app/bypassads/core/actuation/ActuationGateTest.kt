@@ -37,7 +37,7 @@ class ActuationGateTest {
         visible: Boolean = true,
         ancestor: IntRect? = null,
         risks: List<WeightedReason> = emptyList(),
-        fastPath: Boolean = false,
+        fastPathRuleId: String? = null,
     ) = SkipCandidate(
         features = CandidateFeatures(
             nodeIndex = 0,
@@ -56,7 +56,7 @@ class ActuationGateTest {
         score = score,
         evidence = emptyList(),
         risks = risks,
-        fastPath = fastPath,
+        fastPathRuleId = fastPathRuleId,
     )
 
     private fun proposal(
@@ -379,7 +379,7 @@ class ActuationGateTest {
 
     @Test
     fun `non-clickable fast-path target is allowed when rule approved`() {
-        val cand = candidate("跳过", topRightSmall(), clickable = false, fastPath = true)
+        val cand = candidate("跳过", topRightSmall(), clickable = false, fastPathRuleId = "weibo_splash_skip_v1")
         val prop = proposal(cand)
         val match = node(0, null, null, "跳过", topRightSmall(), clickable = false)
 
@@ -390,7 +390,7 @@ class ActuationGateTest {
 
     @Test
     fun `disabled fast-path target still blocks`() {
-        val cand = candidate("跳过", topRightSmall(), clickable = false, enabled = false, fastPath = true)
+        val cand = candidate("跳过", topRightSmall(), clickable = false, enabled = false, fastPathRuleId = "weibo_splash_skip_v1")
         val prop = proposal(cand)
         val match = node(0, null, null, "跳过", topRightSmall(), clickable = false, enabled = false)
 
@@ -401,13 +401,37 @@ class ActuationGateTest {
 
     @Test
     fun `invisible fast-path target still blocks`() {
-        val cand = candidate("跳过", topRightSmall(), clickable = false, visible = false, fastPath = true)
+        val cand = candidate("跳过", topRightSmall(), clickable = false, visible = false, fastPathRuleId = "weibo_splash_skip_v1")
         val prop = proposal(cand)
         val match = node(0, null, null, "跳过", topRightSmall(), clickable = false, visible = false)
 
         val verdict = evaluateAllow(prop, fresh(listOf(match)))
 
         assertEquals(Block(ActuationBlockReason.NOT_CLICKABLE), verdict)
+    }
+
+    @Test
+    fun `large clickable ancestor on fast-path target still blocks`() {
+        val bigAncestor = IntRect(0, 0, 1080, 1200) // area ratio ~0.5 >= 0.20
+        val cand = candidate("跳过", topRightSmall(), clickable = false, ancestor = bigAncestor, fastPathRuleId = "weibo_splash_skip_v1")
+        val prop = proposal(cand)
+        val match = node(0, null, null, "跳过", topRightSmall(), clickable = false, ancestor = bigAncestor)
+
+        val verdict = evaluateAllow(prop, fresh(listOf(match)))
+
+        assertEquals(Block(ActuationBlockReason.ANCESTOR_RISK), verdict)
+    }
+
+    @Test
+    fun `oversized fast-path anchor still blocks as large target`() {
+        val big = IntRect(100, 800, 980, 1100) // area ratio ~0.24 > 0.06
+        val cand = candidate("跳过", big, clickable = false, fastPathRuleId = "weibo_splash_skip_v1")
+        val prop = proposal(cand)
+        val match = node(0, null, null, "跳过", big, clickable = false)
+
+        val verdict = evaluateAllow(prop, fresh(listOf(match)))
+
+        assertEquals(Block(ActuationBlockReason.LARGE_TARGET), verdict)
     }
 
     @Test

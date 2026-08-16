@@ -30,12 +30,13 @@ data class SkipCandidate(
     val evidence: List<WeightedReason>,
     val risks: List<WeightedReason>,
     /**
-     * True when this candidate was produced by a statically approved
-     * Real-App Fast Path rule (package + label + region + stability), not by
-     * the generic scorer. Such candidates are allowed to bypass the generic
-     * clickable-node requirement further down the chain (M2.3 Real-App Pilot).
+     * When non-null, this candidate was produced by a statically approved
+     * Real-App Fast Path rule (M2.3): the value is the exact rule id the fresh
+     * revalidation must re-hit, and the gate relaxes only the node-level
+     * `clickable` requirement for such targets (the rule already approved
+     * package + label + splash scope + region + stability).
      */
-    val fastPath: Boolean = false,
+    val fastPathRuleId: String? = null,
 ) {
     val nodeIndex: Int get() = features.nodeIndex
     val label: String get() = features.label

@@ -19,11 +19,13 @@ data class ActionProposal(
     val countdownValue: Int?,
     val fingerprint: TargetFingerprint,
     /**
-     * True when the proposal was promoted by a statically approved Real-App
-     * Fast Path rule (M2.3): the gate relaxes only the node-level `clickable`
-     * requirement for such targets; every other fail-closed check is unchanged.
+     * Exact Fast Path rule id (M2.3) when the proposal was promoted by a
+     * statically approved Real-App rule; null for generic-scorer proposals.
+     * The gate relaxes only the node-level `clickable` requirement for such
+     * targets; every other fail-closed check is unchanged. Fresh revalidation
+     * must re-hit the same rule id (checked by the coordinator).
      */
-    val fastPath: Boolean = false,
+    val fastPathRuleId: String? = null,
 ) {
     val score: Int get() = candidate.score
 
@@ -50,7 +52,7 @@ data class ActionProposal(
                 proposedAtElapsedMs = elapsedMs,
                 countdownValue = countdownValue,
                 fingerprint = buildTargetFingerprint(candidate, packageName),
-                fastPath = candidate.fastPath,
+                fastPathRuleId = candidate.fastPathRuleId,
             )
         }
     }

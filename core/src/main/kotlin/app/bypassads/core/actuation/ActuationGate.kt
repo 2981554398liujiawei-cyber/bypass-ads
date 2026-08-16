@@ -89,11 +89,14 @@ class ActuationGate(
             return Block(ActuationBlockReason.GEOMETRY_CHANGED)
         }
 
-        // Fast Path (M2.3): the rule statically approved package + label +
-        // top-right region + stability, so a non-clickable text node inside the
-        // ad container is expected structure, not ambiguity. Every other
-        // fail-closed check (incl. enabled/visibleToUser) still applies.
-        if ((!target.clickable && !proposal.fastPath) || !target.enabled || !target.visibleToUser) {
+        // Fast Path (M2.3): a statically approved rule (exact rule id) already
+        // approved package + label + splash scope + region + stability, so a
+        // non-clickable text node inside the ad container is expected
+        // structure, not ambiguity. Every other fail-closed check (incl.
+        // enabled/visibleToUser) still applies; the clickable relaxation is
+        // later paired with an anchor -> clickable-ancestor resolution at the
+        // actuator, never a raw click on the anchor node itself.
+        if ((!target.clickable && proposal.fastPathRuleId == null) || !target.enabled || !target.visibleToUser) {
             return Block(ActuationBlockReason.NOT_CLICKABLE)
         }
 

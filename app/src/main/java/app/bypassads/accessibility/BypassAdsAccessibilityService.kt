@@ -17,6 +17,8 @@ import app.bypassads.core.actuation.ActuationOutcomeClassifier
 import app.bypassads.core.actuation.ActuationResult
 import app.bypassads.core.actuation.ActuationSession
 import app.bypassads.core.actuation.ExperimentalTrialGuard
+import app.bypassads.core.actuation.FastPathActionTargetResolver
+import app.bypassads.core.actuation.FastPathAncestorSnapshot
 import app.bypassads.core.actuation.FreshTargetResolver
 import app.bypassads.core.actuation.TrialGuardDecision
 import app.bypassads.core.decision.DecisionEngine
@@ -78,6 +80,11 @@ class BypassAdsAccessibilityService : AccessibilityService() {
     private var activeCase: ActiveCase? = null
     private var workerDroppedRequests = 0L
     private var workerMaxQueueDepth = 0
+    /** M2.3 P1-2: Fast Path is scoped to a cold-launch splash window — opened
+     *  only when a burst starts from a package-change (entering the app from
+     *  another package) and closed when the case ends. Ordinary in-app pages
+     *  can never fire a rule. */
+    @Volatile private var fastPathWindowOpen = false
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -160,6 +167,10 @@ class BypassAdsAccessibilityService : AccessibilityService() {
         val caseId = UUID.randomUUID().toString()
         val startedAtMs = SystemClock.elapsedRealtime()
         activeSession = session
+        // M2.3 P1-2: only a cold-launch (package-change) burst opens the Fast
+        // Path window; it closes when the case terminates (or via the time
+        // bound inside scan()).
+        fastPathWindowOpen = trigger == BlackBoxTrigger.PACKAGE_CHANGED
         synchronized(temporalTracker) { temporalTracker.reset() }
         schedulePolicy.markBurstStarted(packageHint.toPackageIdentity())
         activeCase = ActiveCase(session, caseId, packageHint, trigger, startedAtMs, BURST_DELAYS_MS.size)
@@ -202,6 +213,7 @@ class BypassAdsAccessibilityService : AccessibilityService() {
         case.cancelledFrames += cancelScheduledScans()
         activeCase = null
         schedulePolicy.markBurstFinished()
+        fastPathWindowOpen = false
         synchronized(temporalTracker) { temporalTracker.reset() }
         blackBox.append(BlackBoxRecord(System.currentTimeMillis(), case.sessionId, case.caseId, -1, case.packageName, BlackBoxTrigger.CASE_END, sourceTrigger = case.initialTrigger, scheduledFrames = case.scheduledFrames, executedFrames = case.executedFrames, cancelledFrames = case.cancelledFrames, droppedFrames = case.droppedFrames, coalescedWindowEvents = case.coalescedWindowEvents, coalescedContentEvents = case.coalescedContentEvents, caseDurationMs = SystemClock.elapsedRealtime() - case.startedAtElapsedMs, terminationReason = reason, workerBusyDrops = workerDroppedRequests, workerMaxQueueDepth = workerMaxQueueDepth))
     }
@@ -221,8 +233,12 @@ class BypassAdsAccessibilityService : AccessibilityService() {
             val detectionStartedAtMs = SystemClock.elapsedRealtime()
             val features = synchronized(temporalTracker) { temporalTracker.enrich(detector.extract(snapshot)) }
             // Generic scorer first, then statically approved Real-App Fast Path
-            // rules (M2.3); the merged list rides the normal decision pipeline.
-            val candidates = (detector.score(features) + fastPath.score(snapshot, features))
+            // rules (M2.3), scoped to the cold-launch splash window; the merged
+            // list rides the normal decision pipeline.
+            val fastPathCandidates = if (fastPathWindowOpen &&
+                SystemClock.elapsedRealtime() - request.triggeredAtElapsedMs <= FAST_PATH_WINDOW_MS
+            ) fastPath.score(snapshot, features) else emptyList()
+            val candidates = (detector.score(features) + fastPathCandidates)
                 .sortedByDescending { it.score }
             val detectionMs = SystemClock.elapsedRealtime() - detectionStartedAtMs
             val decisionStartedAtMs = SystemClock.elapsedRealtime()
@@ -283,10 +299,20 @@ class BypassAdsAccessibilityService : AccessibilityService() {
             val freshSnapshot = freshCaptured.snapshot
             if (freshSnapshot.packageName == packageName || freshSnapshot.packageName == launcherPackage) return
             val freshFeatures = synchronized(temporalTracker) { temporalTracker.enrich(detector.extract(freshSnapshot)) }
-            val freshCandidates = (detector.score(freshFeatures) + fastPath.score(freshSnapshot, freshFeatures))
+            val freshFastPathCandidates = if (fastPathWindowOpen &&
+                SystemClock.elapsedRealtime() - request.triggeredAtElapsedMs <= FAST_PATH_WINDOW_MS
+            ) fastPath.score(freshSnapshot, freshFeatures) else emptyList()
+            val freshCandidates = (detector.score(freshFeatures) + freshFastPathCandidates)
                 .sortedByDescending { it.score }
             val freshDecision = decisionEngine.decide(freshCandidates)
             val freshCandidate = freshDecision.candidate ?: return
+            // M2.3 P1-3: a Fast Path proposal must be re-validated against the
+            // exact same rule id on the fresh tree — a stale Boolean must not
+            // keep enjoying the clickable relaxation.
+            if (proposal.fastPathRuleId != null && freshCandidate.fastPathRuleId != proposal.fastPathRuleId) {
+                blackBox.append(BlackBoxRecord(System.currentTimeMillis(), request.session, request.caseId, request.scanIndex, freshSnapshot.packageName, BlackBoxTrigger.ACTION_ATTEMPT, request.sourceTrigger, actuationVerdict = "REVALIDATION:FAST_PATH_CHANGED"))
+                return
+            }
             val fresh = freshTargetResolver.resolve(
                 snapshot = freshSnapshot,
                 packageName = freshSnapshot.packageName,
@@ -295,7 +321,7 @@ class BypassAdsAccessibilityService : AccessibilityService() {
                 capturedAtElapsedMs = freshSnapshot.capturedAtElapsedMs,
                 fingerprint = proposal.fingerprint,
                 countdownAnomaly = countdownAnomaly(decision, freshCandidate),
-                fastPath = proposal.fastPath,
+                fastPathRuleId = proposal.fastPathRuleId,
             )
             // M2.2 P1-1: the score/risks handed to the gate must belong to the
             // exact node the resolver re-found — never to a different higher-scored
@@ -347,16 +373,19 @@ class BypassAdsAccessibilityService : AccessibilityService() {
     /**
      * Re-look-up the approved target in the live tree. Must match package,
      * sanitized explicit label, resourceId (when present) and geometry, and be
-     * unique — otherwise no click (M2.2 P1-5).
+     * unique — otherwise no click (M2.2 P1-5). For M2.3 Fast Path targets the
+     * label anchor may be non-clickable; the actual click node is the unique
+     * verified clickable ancestor resolved by [FastPathActionTargetResolver]
+     * — never the non-clickable anchor itself.
      */
     private fun findApprovedNodes(approved: ApprovedTarget): List<AccessibilityNodeInfo> {
         val rect = android.graphics.Rect()
-        return windows.orEmpty().asSequence()
+        val anchors = windows.orEmpty().asSequence()
             .mapNotNull { it.root }
             .flatMap { root -> treeNodes(root) }
             .filter { node ->
                 node.getBoundsInScreen(rect)
-                node.isVisibleToUser && (approved.fastPath || node.isClickable) &&
+                node.isVisibleToUser && (approved.fastPathRuleId != null || node.isClickable) &&
                     node.packageName?.toString() == approved.packageName &&
                     (approved.resourceId == null || node.viewIdResourceName == approved.resourceId) &&
                     nodeText(node).any { LabelSanitizer.sanitizeLabel(it) == approved.label } &&
@@ -364,6 +393,46 @@ class BypassAdsAccessibilityService : AccessibilityService() {
                     areaWithin(rect, approved.bounds)
             }
             .toList()
+        if (anchors.isEmpty()) return emptyList()
+        // Generic targets are already the action nodes.
+        if (approved.fastPathRuleId == null) return anchors
+        return anchors.mapNotNull { anchor -> resolveFastPathActionNode(anchor) }
+    }
+
+    /** M2.3 P1-1: map the anchor to its unique verified clickable action node, or null (BLOCK). */
+    private fun resolveFastPathActionNode(anchor: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val anchorRect = android.graphics.Rect()
+        anchor.getBoundsInScreen(anchorRect)
+        val anchorSnap = FastPathAncestorSnapshot(
+            packageName = anchor.packageName?.toString(),
+            clickable = anchor.isClickable,
+            enabled = anchor.isEnabled,
+            visibleToUser = anchor.isVisibleToUser,
+            bounds = IntRect(anchorRect.left, anchorRect.top, anchorRect.right, anchorRect.bottom),
+        )
+        if (FastPathActionTargetResolver.anchorIsActionable(anchorSnap)) return anchor
+
+        val chain = mutableListOf<Pair<AccessibilityNodeInfo, FastPathAncestorSnapshot>>()
+        val ancestorRect = android.graphics.Rect()
+        var node = anchor.parent
+        while (node != null) {
+            node.getBoundsInScreen(ancestorRect)
+            chain += node to FastPathAncestorSnapshot(
+                packageName = node.packageName?.toString(),
+                clickable = node.isClickable,
+                enabled = node.isEnabled,
+                visibleToUser = node.isVisibleToUser,
+                bounds = IntRect(ancestorRect.left, ancestorRect.top, ancestorRect.right, ancestorRect.bottom),
+            )
+            node = node.parent
+        }
+        val index = FastPathActionTargetResolver.resolveClickableAncestorIndex(
+            anchor = anchorSnap,
+            ancestors = chain.map { it.second },
+            screenWidth = resources.displayMetrics.widthPixels,
+            screenHeight = resources.displayMetrics.heightPixels,
+        ) ?: return null
+        return chain[index].first
     }
 
     private fun nodeText(node: AccessibilityNodeInfo): List<String> =
@@ -474,7 +543,9 @@ class BypassAdsAccessibilityService : AccessibilityService() {
          * rule is required to ever reach actuation on it.
          */
         val FAST_PATH_RULES: List<FastPathRule> = listOf(
-            FastPathRule(packageName = "com.sina.weibo", label = "跳过", minStabilityHits = 2),
+            FastPathRule(ruleId = "weibo_splash_skip_v1", packageName = "com.sina.weibo", label = "跳过", minStabilityHits = 2),
         )
+        /** M2.3 P1-2: Fast Path only fires inside a cold-launch splash window. */
+        const val FAST_PATH_WINDOW_MS = 6_000L
     }
 }
