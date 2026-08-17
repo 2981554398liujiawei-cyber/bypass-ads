@@ -95,6 +95,8 @@ class BypassAdsAccessibilityService : AccessibilityService() {
     private var fastPathPollingRunnable: Runnable? = null
     @Volatile private var fastPathProbeActive = false
     private var fastPathPollCount = 0
+    private var ingressWindowProbeRunnable: Runnable? = null
+    private var ingressWindowProbeSamplesRemaining = 0
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -112,6 +114,7 @@ class BypassAdsAccessibilityService : AccessibilityService() {
         runModeStore.markServiceConnected()
         blackBox.append(BlackBoxRecord(System.currentTimeMillis(), activeSession, scanIndex = -1, packageName = null, trigger = BlackBoxTrigger.SERVICE_CONNECTED))
         AccessibilityRuntimeStateStore.markConnected()
+        startIngressWindowProbe()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -254,6 +257,45 @@ class BypassAdsAccessibilityService : AccessibilityService() {
         fastPathProbeActive = false
         fastPathPollingRunnable?.let(handler::removeCallbacks)
         fastPathPollingRunnable = null
+    }
+
+    /** Temporary M2.3 ingress diagnostic. It only reports what the bound service can read. */
+    private fun startIngressWindowProbe() {
+        ingressWindowProbeRunnable?.let(handler::removeCallbacks)
+        val info = serviceInfo
+        Log.i(
+            "BypassAdsIngressDiag",
+            "serviceInfo eventTypes=${info.eventTypes}" +
+                " flags=${info.flags}" +
+                " capabilities=${info.capabilities}" +
+                " packageNames=${info.packageNames?.joinToString(",") ?: "null"}",
+        )
+        ingressWindowProbeSamplesRemaining = INGRESS_WINDOW_PROBE_SAMPLE_COUNT
+        val probe = object : Runnable {
+            override fun run() {
+                if (ingressWindowProbeRunnable !== this || ingressWindowProbeSamplesRemaining <= 0) return
+                ingressWindowProbeSamplesRemaining--
+                val visibleWindows = windows.orEmpty()
+                val windowsSummary = visibleWindows.joinToString(separator = ";") { window ->
+                    val root = window.root
+                    "id=${window.id},type=${window.type},active=${window.isActive},focused=${window.isFocused}," +
+                        "rootPkg=${root?.packageName},rootCls=${root?.className}"
+                }
+                val activeRoot = rootInActiveWindow
+                Log.i(
+                    "BypassAdsIngressDiag",
+                    "sample=${INGRESS_WINDOW_PROBE_SAMPLE_COUNT - ingressWindowProbeSamplesRemaining}/" +
+                        "$INGRESS_WINDOW_PROBE_SAMPLE_COUNT windows=${visibleWindows.size}" +
+                        " entries=[$windowsSummary]" +
+                        " activeRootPkg=${activeRoot?.packageName}" +
+                        " activeRootCls=${activeRoot?.className}",
+                )
+                if (ingressWindowProbeSamplesRemaining > 0) handler.postDelayed(this, INGRESS_WINDOW_PROBE_INTERVAL_MS)
+                else ingressWindowProbeRunnable = null
+            }
+        }
+        ingressWindowProbeRunnable = probe
+        handler.postDelayed(probe, INGRESS_WINDOW_PROBE_INTERVAL_MS)
     }
 
     private fun startBurst(packageHint: String?, trigger: BlackBoxTrigger) {
@@ -720,5 +762,7 @@ class BypassAdsAccessibilityService : AccessibilityService() {
         /** M2.3: late-ad probe cadence and cap inside the splash window. */
         const val FAST_PATH_POLL_INTERVAL_MS = 800L
         const val FAST_PATH_MAX_POLLS = 8
+        const val INGRESS_WINDOW_PROBE_INTERVAL_MS = 1_000L
+        const val INGRESS_WINDOW_PROBE_SAMPLE_COUNT = 30
     }
 }
