@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import app.bypassads.actuation.AndroidNodeActuator
@@ -117,6 +118,16 @@ class BypassAdsAccessibilityService : AccessibilityService() {
         if (!::runModeStore.isInitialized) return
         val current = event ?: return
         val packageHint = current.packageName?.toString()
+        Log.i(
+            "BypassAdsRawEvent",
+            "type=${current.eventType}" +
+                "(${AccessibilityEvent.eventTypeToString(current.eventType)})" +
+                " pkg=$packageHint" +
+                " cls=${current.className}" +
+                " win=${current.windowId}" +
+                " content=${current.contentChangeTypes}" +
+                " time=${current.eventTime}"
+        )
         val trigger = current.toScanTrigger(packageHint) ?: return
         // Excluded foregrounds still participate in transition tracking (A -> Home -> A).
         if (packageHint == packageName || packageHint == launcherPackage) {
