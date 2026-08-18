@@ -72,7 +72,13 @@ class BypassAdsAccessibilityService : AccessibilityService() {
     private val trialGuard = ExperimentalTrialGuard(allowlist = EXPERIMENTAL_ALLOWLIST)
     private val actuationGate = ActuationGate()
     private val freshTargetResolver = FreshTargetResolver()
-    private val nodeActuator = AndroidNodeActuator { approved -> findApprovedNodes(approved) }
+    private val nodeActuator = AndroidNodeActuator(
+        nodeLookup = { approved -> findApprovedNodes(approved) },
+        // M2.3 WebView compatibility: dispatch a tap gesture at the freshly
+        // resolved live node bounds center (never fixed coordinates). Used for
+        // Fast Path targets whose composite WebView node ignores ACTION_CLICK.
+        gestureClick = { bounds -> dispatchGestureAt(bounds) },
+    )
     @Volatile private var activeSession = 0L
     private var pendingContentCallback: Runnable? = null
     private var lastObservedPackage: String? = null
@@ -557,6 +563,56 @@ class BypassAdsAccessibilityService : AccessibilityService() {
         return anchors.mapNotNull { anchor -> resolveFastPathActionNode(anchor) }
     }
 
+    /**
+     * M2.3 WebView compatibility backend: dispatch a short tap gesture at the
+     * live node's bounds center via AccessibilityService.dispatchGesture.
+     * Coordinates are always derived from the freshly resolved node bounds
+     * (never fixed), and those bounds already passed the full gate pipeline
+     * (region/area/geometry), so this is the same authorized target — only the
+     * delivery mechanism differs (coordinate gesture vs node ACTION_CLICK,
+     * which WebView composite nodes ignore). Returns true when the gesture
+     * completes, false when cancelled, null on timeout/unsupported.
+     */
+    private fun dispatchGestureAt(bounds: IntRect): Boolean? {
+        val path = android.graphics.Path().apply {
+            moveTo(bounds.centerX.toFloat(), bounds.centerY.toFloat())
+        }
+        val gesture = android.accessibilityservice.GestureDescription.Builder()
+            .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(path, 0L, 60L))
+            .build()
+        val result = java.util.concurrent.atomic.AtomicReference<Boolean?>()
+        val latch = java.util.concurrent.CountDownLatch(1)
+        // dispatchGesture must run on the main thread; the scan worker waits on
+        // the latch (bounded, 1 s) while the gesture result arrives on the
+        // main-thread handler.
+        handler.post {
+            try {
+                dispatchGesture(gesture, object : android.accessibilityservice.AccessibilityService.GestureResultCallback() {
+                    override fun onCompleted(gestureDescription: android.accessibilityservice.GestureDescription?) {
+                        Log.i("BypassAdsAct", "gesture completed at ${bounds.centerX},${bounds.centerY}")
+                        result.set(true)
+                        latch.countDown()
+                    }
+                    override fun onCancelled(gestureDescription: android.accessibilityservice.GestureDescription?) {
+                        Log.i("BypassAdsAct", "gesture CANCELLED at ${bounds.centerX},${bounds.centerY}")
+                        result.set(false)
+                        latch.countDown()
+                    }
+                }, handler)
+            } catch (e: Exception) {
+                Log.e("BypassAdsAct", "gesture dispatch failed: ${e.message}")
+                result.set(null)
+                latch.countDown()
+            }
+        }
+        return try {
+            latch.await(1, java.util.concurrent.TimeUnit.SECONDS)
+            result.get()
+        } catch (_: InterruptedException) {
+            null
+        }
+    }
+
     /** M2.3 P1-1: map the anchor to its unique verified clickable action node, or null (BLOCK). */
     private fun resolveFastPathActionNode(anchor: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         val anchorRect = android.graphics.Rect()
@@ -769,6 +825,19 @@ class BypassAdsAccessibilityService : AccessibilityService() {
                 anchorClassName = "android.widget.TextView",
                 minCenterXRatio = 0.80,
                 maxCenterYRatio = 0.15,
+            ),
+            // TestAd S1 (self-made test harness, allowlisted): "跳过" TextView
+            // clickable=true at ~(0.815, 0.20) top-right. Lets us exercise the
+            // Fast Path + gesture pipeline without depending on real ad
+            // delivery; never ships to users.
+            FastPathRule(
+                ruleId = "testad_s1_skip_v1",
+                packageName = "app.bypassads.testad",
+                label = "跳过",
+                minStabilityHits = 1,
+                anchorClassName = "android.widget.TextView",
+                minCenterXRatio = 0.75,
+                maxCenterYRatio = 0.25,
             ),
         )
         /** M2.3 P1-2: Fast Path only fires inside a cold-launch splash window. */
