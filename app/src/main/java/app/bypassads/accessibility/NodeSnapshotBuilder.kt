@@ -60,6 +60,32 @@ class NodeSnapshotBuilder(private val elapsedMs: () -> Long = SystemClock::elaps
         )
     }
 
+    /**
+     * M2.3 late-ad probe: capture a single live root (e.g. the active window
+     * root). The service's `windows` cache is refreshed by WINDOWS_CHANGED
+     * events and can lag a splash ad window that appears without such an
+     * event (observed on QQ Music: probe frames saw 3 windows, none with the
+     * skip node, while uiautomator saw it). Reading the live active root
+     * closes that gap. Returns null when the root is unavailable.
+     */
+    fun captureRoot(
+        root: AccessibilityNodeInfo,
+        packageHint: String?,
+        screenWidth: Int,
+        screenHeight: Int,
+    ): CaptureResult {
+        val startedAtMs = elapsedMs()
+        val state = CaptureState(startedAtMs)
+        val nodes = mutableListOf<UiNodeSnapshot>()
+        val firstPackage = root.packageName?.toString()
+        traverse(root, null, 0, null, nodes, state)
+        return CaptureResult(
+            UiSnapshot(packageHint ?: firstPackage, screenWidth, screenHeight, elapsedMs(), 1, nodes),
+            WindowToken.of(emptyList()),
+            CaptureMetrics(state.windowsTraversed, nodes.size, state.maxDepth, state.rootAcquireMaxMs, state.childQueryMaxMs, state.budgetReason != null, state.budgetReason),
+        )
+    }
+
     private fun traverse(node: AccessibilityNodeInfo, parentIndex: Int?, depth: Int, clickableAncestor: IntRect?, output: MutableList<UiNodeSnapshot>, state: CaptureState) {
         if (!state.canQuery()) return
         if (output.size >= MAX_NODES) { state.hit("NODE_LIMIT"); return }

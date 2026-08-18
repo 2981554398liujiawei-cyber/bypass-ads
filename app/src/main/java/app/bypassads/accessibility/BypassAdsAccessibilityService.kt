@@ -218,7 +218,13 @@ class BypassAdsAccessibilityService : AccessibilityService() {
                     scanWorker.execute {
                         try {
                             val request = ScanRequest(session, caseId, case.executedFrames + fastPathPollCount, packageHint, trigger, startedAtMs, screenW, screenH)
-                            val captured = snapshotBuilder.capture(windows.orEmpty(), packageHint, screenW, screenH)
+                            // M2.3: the `windows` cache is refreshed only by
+                            // WINDOWS_CHANGED events and can lag a splash ad
+                            // window that appears without one (observed on QQ
+                            // Music). Read the live active root first; fall
+                            // back to the window cache when unavailable.
+                            val captured = rootInActiveWindow?.let { snapshotBuilder.captureRoot(it, packageHint, screenW, screenH) }
+                                ?: snapshotBuilder.capture(windows.orEmpty(), packageHint, screenW, screenH)
                             val snap = captured.snapshot
                             if (request.session != activeSession || runModeStore.get() == RunMode.OFF) {
                                 handler.post { stopFastPathProbe(); maybeCompleteCase() }
@@ -227,13 +233,16 @@ class BypassAdsAccessibilityService : AccessibilityService() {
                             val feats = synchronized(temporalTracker) { temporalTracker.enrich(detector.extract(snap)) }
                             val candidates = fastPath.score(snap, feats).sortedByDescending { it.score }
                             val decision = decisionEngine.decide(candidates)
+                            val vis = snap.nodes.count { it.visibleToUser && it.enabled && it.packageName == snap.packageName }
+                            val skipText = snap.nodes.count { listOfNotNull(it.text, it.contentDescription).any { t -> LabelSanitizer.sanitizeLabel(t) == "跳过" } }
+                            Log.i("BypassAdsProbe", "frame=$fastPathPollCount pkg=${snap.packageName} nodes=${snap.nodes.size} wins=${snap.windowCount} vis=$vis skipText=$skipText feats=${feats.size} cands=${candidates.size} top=${candidates.firstOrNull()?.score} type=${decision.type} windowOpen=$fastPathWindowOpen elapsed=${SystemClock.elapsedRealtime() - startedAtMs}")
                             blackBox.append(BlackBoxRecord(System.currentTimeMillis(), request.session, request.caseId, request.scanIndex, snap.packageName, BlackBoxTrigger.SCAN, request.sourceTrigger, snap.windowCount, snap.nodes.size, feats, decision))
                             val shouldAct = decision.type == DecisionType.WOULD_CLICK && ExperimentalCapability.policy.actuatorAllowed
                             if (shouldAct) {
                                 // A Fast Path hit ends the probe no matter what
                                 // the actuation outcome (click / NO_ACTION_TARGET
                                 // / gate BLOCK / fresh failure).
-                                experimentalActuation(request, snap, decision, feats, captured.windowContextToken)
+                                experimentalActuation(request, snap, decision, feats, captured.windowContextToken, probeUsedRootCapture = rootInActiveWindow != null)
                                 handler.post { stopFastPathProbe(); maybeCompleteCase() }
                             } else {
                                 handler.post { maybeCompleteCase(); handler.postDelayed(probe, FAST_PATH_POLL_INTERVAL_MS) }
@@ -349,7 +358,9 @@ class BypassAdsAccessibilityService : AccessibilityService() {
             if (request.session != activeSession || runModeStore.get() == RunMode.OFF) return
             blackBox.append(BlackBoxRecord(System.currentTimeMillis(), request.session, request.caseId, request.scanIndex, snapshot.packageName, BlackBoxTrigger.SCAN, request.sourceTrigger, snapshot.windowCount, snapshot.nodes.size, features, decision, SystemClock.elapsedRealtime() - request.triggeredAtElapsedMs, SystemClock.elapsedRealtime() - scanStartedAtMs, windowAcquireMs = acquireMs, snapshotMs = snapshotMs, detectionMs = detectionMs, decisionMs = decisionMs, windowsTraversed = captured.metrics.windowsTraversed, nodesVisited = captured.metrics.nodesVisited, maxDepth = captured.metrics.maxDepth, rootAcquireMaxMs = captured.metrics.rootAcquireMaxMs, childQueryMaxMs = captured.metrics.childQueryMaxMs, captureBudgetHit = captured.metrics.budgetHit, captureBudgetReason = captured.metrics.budgetReason, workerBusyDrops = workerDroppedRequests, workerMaxQueueDepth = workerMaxQueueDepth))
             if (decision.type == DecisionType.WOULD_CLICK && ExperimentalCapability.policy.actuatorAllowed) {
-                experimentalActuation(request, snapshot, decision, features, captured.windowContextToken)
+                // Burst frames always capture from the window cache, so the
+                // fresh re-capture must use the same source for token parity.
+                experimentalActuation(request, snapshot, decision, features, captured.windowContextToken, probeUsedRootCapture = false)
             }
         } catch (_: Exception) {
             handler.post { activeCase?.takeIf { it.sessionId == request.session }?.let { terminateActiveCase(CaseTerminationReason.INTERNAL_ERROR) } }
@@ -376,12 +387,14 @@ class BypassAdsAccessibilityService : AccessibilityService() {
      * ActuationSession -> NodeActuator. Any bypass is impossible by
      * construction (ADR-0002, M2.1, M2.2 task cards).
      */
-    private fun experimentalActuation(request: ScanRequest, snapshot: UiSnapshot, decision: SkipDecision, features: List<CandidateFeatures>, originalWindowToken: Long) {
+    private fun experimentalActuation(request: ScanRequest, snapshot: UiSnapshot, decision: SkipDecision, features: List<CandidateFeatures>, originalWindowToken: Long, probeUsedRootCapture: Boolean) {
         try {
             ExperimentalCapability.policy.requireActuatorAllowed()
-            val case = activeCase?.takeIf { it.sessionId == request.session } ?: return
+            val case = activeCase?.takeIf { it.sessionId == request.session }
+            if (case == null) { Log.i("BypassAdsAct", "drop: no active case session=${request.session}"); return }
             val guardResult = trialGuard.evaluate(snapshot.packageName)
             if (guardResult != TrialGuardDecision.ALLOW) {
+                Log.i("BypassAdsAct", "drop: guard=${guardResult.name}")
                 blackBox.append(BlackBoxRecord(System.currentTimeMillis(), request.session, request.caseId, request.scanIndex, snapshot.packageName, BlackBoxTrigger.ACTION_ATTEMPT, request.sourceTrigger, actuationVerdict = "GUARD:${guardResult.name}"))
                 return
             }
@@ -394,12 +407,22 @@ class BypassAdsAccessibilityService : AccessibilityService() {
                 originalWindowToken,
                 SystemClock.elapsedRealtime(),
                 countdownValue = decision.candidate?.features?.countdownValue,
-            ) ?: return
+            )
+            if (proposal == null) { Log.i("BypassAdsAct", "drop: proposal null ruleId=${decision.candidate?.fastPathRuleId}"); return }
 
             // Fresh re-capture and full revalidation against the latest window tree.
-            val freshCaptured = snapshotBuilder.capture(windows.orEmpty(), request.packageHint, request.screenWidth, request.screenHeight)
+            // M2.3: prefer the live active root — the `windows` cache can lag a
+            // splash ad window (same reason as the probe). Use the *same* source
+            // the probe used so the proposal/fresh window tokens match and the
+            // gate's WINDOW_CHANGED check compares like with like.
+            val freshCaptured = if (probeUsedRootCapture) {
+                rootInActiveWindow?.let { snapshotBuilder.captureRoot(it, request.packageHint, request.screenWidth, request.screenHeight) }
+                    ?: snapshotBuilder.capture(windows.orEmpty(), request.packageHint, request.screenWidth, request.screenHeight)
+            } else {
+                snapshotBuilder.capture(windows.orEmpty(), request.packageHint, request.screenWidth, request.screenHeight)
+            }
             val freshSnapshot = freshCaptured.snapshot
-            if (freshSnapshot.packageName == packageName || freshSnapshot.packageName == launcherPackage) return
+            if (freshSnapshot.packageName == packageName || freshSnapshot.packageName == launcherPackage) { Log.i("BypassAdsAct", "drop: fresh pkg=${freshSnapshot.packageName}"); return }
             val freshFeatures = synchronized(temporalTracker) { temporalTracker.enrich(detector.extract(freshSnapshot)) }
             val freshFastPathCandidates = if (fastPathWindowOpen &&
                 SystemClock.elapsedRealtime() - request.triggeredAtElapsedMs <= FAST_PATH_WINDOW_MS
@@ -407,11 +430,13 @@ class BypassAdsAccessibilityService : AccessibilityService() {
             val freshCandidates = (detector.score(freshFeatures) + freshFastPathCandidates)
                 .sortedByDescending { it.score }
             val freshDecision = decisionEngine.decide(freshCandidates)
-            val freshCandidate = freshDecision.candidate ?: return
+            val freshCandidate = freshDecision.candidate
+            if (freshCandidate == null) { Log.i("BypassAdsAct", "drop: fresh no candidate feats=${freshFeatures.size} fp=${freshFastPathCandidates.size} nodes=${freshSnapshot.nodes.size}"); return }
             // M2.3 P1-3: a Fast Path proposal must be re-validated against the
             // exact same rule id on the fresh tree — a stale Boolean must not
             // keep enjoying the clickable relaxation.
             if (proposal.fastPathRuleId != null && freshCandidate.fastPathRuleId != proposal.fastPathRuleId) {
+                Log.i("BypassAdsAct", "drop: fastPathChanged rule=${proposal.fastPathRuleId} fresh=${freshCandidate.fastPathRuleId}")
                 blackBox.append(BlackBoxRecord(System.currentTimeMillis(), request.session, request.caseId, request.scanIndex, freshSnapshot.packageName, BlackBoxTrigger.ACTION_ATTEMPT, request.sourceTrigger, actuationVerdict = "REVALIDATION:FAST_PATH_CHANGED"))
                 return
             }
@@ -430,6 +455,7 @@ class BypassAdsAccessibilityService : AccessibilityService() {
             // candidate in the fresh tree.
             val uniqueTarget = fresh.uniqueMatch
             if (freshDecision.type != DecisionType.WOULD_CLICK || uniqueTarget == null || freshCandidate.nodeIndex != uniqueTarget.index) {
+                Log.i("BypassAdsAct", "drop: targetChanged type=${freshDecision.type} unique=${uniqueTarget != null} idx=${freshCandidate.nodeIndex}/${uniqueTarget?.index}")
                 blackBox.append(BlackBoxRecord(System.currentTimeMillis(), request.session, request.caseId, request.scanIndex, freshSnapshot.packageName, BlackBoxTrigger.ACTION_ATTEMPT, request.sourceTrigger, actuationVerdict = "REVALIDATION:TARGET_CHANGED"))
                 return
             }
@@ -445,7 +471,9 @@ class BypassAdsAccessibilityService : AccessibilityService() {
                     bounds = uniqueTarget.bounds,
                     fastPathRuleId = proposal.fastPathRuleId,
                 )
-                if (findApprovedNodes(approved).size != 1) {
+                val approvedNodes = findApprovedNodes(approved)
+                if (approvedNodes.size != 1) {
+                    Log.i("BypassAdsAct", "drop: noActionTarget size=${approvedNodes.size} diag=${diagnoseFastPathTarget(approved)}")
                     blackBox.append(BlackBoxRecord(
                         System.currentTimeMillis(), request.session, request.caseId, request.scanIndex,
                         freshSnapshot.packageName, BlackBoxTrigger.ACTION_ATTEMPT, request.sourceTrigger,
@@ -455,6 +483,8 @@ class BypassAdsAccessibilityService : AccessibilityService() {
                     return
                 }
             }
+
+            Log.i("BypassAdsAct", "session.run ruleId=${proposal.fastPathRuleId} node=${uniqueTarget.index}")
 
             val result = ActuationSession(actuationGate, caseState, nodeActuator).run(
                 proposal = proposal,
@@ -482,8 +512,9 @@ class BypassAdsAccessibilityService : AccessibilityService() {
                     blackBox.append(BlackBoxRecord(epoch, request.session, request.caseId, request.scanIndex, freshSnapshot.packageName, BlackBoxTrigger.ACTION_ATTEMPT, request.sourceTrigger, actuationVerdict = "BLOCK:${result.reason.name}"))
                 }
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             // Experimental path must never interrupt the Shadow observation pipeline.
+            Log.e("BypassAdsAct", "EXCEPTION ${e.javaClass.simpleName}: ${e.message}", e)
         }
     }
 
@@ -504,8 +535,11 @@ class BypassAdsAccessibilityService : AccessibilityService() {
      */
     private fun findApprovedNodes(approved: ApprovedTarget): List<AccessibilityNodeInfo> {
         val rect = android.graphics.Rect()
-        val anchors = windows.orEmpty().asSequence()
-            .mapNotNull { it.root }
+        // M2.3: prefer the live active root (same reason as the probe/fresh) —
+        // the `windows` cache can lag a splash ad window. Fall back to the
+        // window cache only when the active root is unavailable.
+        val anchors = (rootInActiveWindow?.let { listOf(it) } ?: windows.orEmpty().mapNotNull { it.root })
+            .asSequence()
             .flatMap { root -> treeNodes(root) }
             .filter { node ->
                 node.getBoundsInScreen(rect)
@@ -596,14 +630,18 @@ class BypassAdsAccessibilityService : AccessibilityService() {
      * present? A light read of the current window list — no click, no capture.
      */
     private fun verifyOutcome(label: String, bounds: IntRect, targetPackage: String?): OutcomeVerification {
-        val windowsNow = windows.orEmpty()
-        if (windowsNow.isEmpty()) return OutcomeVerification(targetGone = false, windowPresent = false, windowCount = 0, nodeCount = 0)
+        // M2.3: prefer the live active root — the `windows` cache can lag a
+        // splash ad window (same reason as the probe/fresh).
+        val roots = buildList {
+            rootInActiveWindow?.let { add(it) }
+            if (isEmpty()) windows.orEmpty().forEach { it.root?.let(::add) }
+        }
+        if (roots.isEmpty()) return OutcomeVerification(targetGone = false, windowPresent = false, windowCount = 0, nodeCount = 0)
         val rect = android.graphics.Rect()
         var windowPresent = false
         var matched = 0
         var nodes = 0
-        for (w in windowsNow) {
-            val root = w.root ?: continue
+        for (root in roots) {
             for (node in treeNodes(root)) {
                 nodes++
                 if (node.packageName?.toString() == targetPackage) windowPresent = true
@@ -616,7 +654,7 @@ class BypassAdsAccessibilityService : AccessibilityService() {
                 }
             }
         }
-        return OutcomeVerification(targetGone = matched == 0, windowPresent = windowPresent, windowCount = windowsNow.size, nodeCount = nodes)
+        return OutcomeVerification(targetGone = matched == 0, windowPresent = windowPresent, windowCount = roots.size, nodeCount = nodes)
     }
 
     private fun areaWithin(rect: android.graphics.Rect, bounds: IntRect): Boolean {
