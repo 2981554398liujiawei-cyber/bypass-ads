@@ -78,6 +78,8 @@ class BypassAdsAccessibilityService : AccessibilityService() {
         // resolved live node bounds center (never fixed coordinates). Used for
         // Fast Path targets whose composite WebView node ignores ACTION_CLICK.
         gestureClick = { bounds -> dispatchGestureAt(bounds) },
+        // Planner-narrowed: gesture backend is QQ Music WebView-only.
+        gestureRuleId = "qqmusic_splash_skip_v1",
     )
     @Volatile private var activeSession = 0L
     private var pendingContentCallback: Runnable? = null

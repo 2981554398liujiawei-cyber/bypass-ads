@@ -61,6 +61,12 @@ class AndroidNodeActuator(
      * true = gesture completed, false = cancelled, null = unsupported/timeout.
      */
     private val gestureClick: ((IntRect) -> Boolean?)? = null,
+    /**
+     * M2.3 (planner-narrowed): only this Fast Path rule id may use the gesture
+     * backend — QQ Music's WebView splash ads do not respond to node
+     * ACTION_CLICK. All other Fast Path targets keep performAction.
+     */
+    private val gestureRuleId: String? = null,
 ) : NodeActuator {
 
     /**
@@ -87,8 +93,8 @@ class AndroidNodeActuator(
         val matches = nodeLookup(approved)
         if (matches.size != 1) return dispatchOutcome(matches.size) // 0 -> NO_EFFECT (no click); >1 -> UNCERTAIN (no click); tracker stays null
 
-        val dispatched = if (resolution.fastPathRuleId != null && gestureClick != null) {
-            // M2.3: WebView splash ads do not respond to node ACTION_CLICK.
+        val dispatched = if (resolution.fastPathRuleId == gestureRuleId && gestureClick != null) {
+            // M2.3: QQ Music's WebView composite node ignores ACTION_CLICK.
             // Gesture at the freshly resolved live bounds center instead.
             gestureClick(target.bounds)
         } else {
