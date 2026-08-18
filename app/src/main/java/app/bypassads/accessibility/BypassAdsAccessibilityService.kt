@@ -14,6 +14,7 @@ import app.bypassads.actuation.ExperimentalCapability
 import app.bypassads.core.actuation.ActionProposal
 import app.bypassads.core.actuation.ActuationCaseState
 import app.bypassads.core.actuation.ActuationGate
+import app.bypassads.core.actuation.ActuationOutcome
 import app.bypassads.core.actuation.ActuationOutcomeClassifier
 import app.bypassads.core.actuation.ActuationResult
 import app.bypassads.core.actuation.ActuationSession
@@ -668,16 +669,34 @@ class BypassAdsAccessibilityService : AccessibilityService() {
         val label = proposal.fingerprint.label
         val bounds = fresh.uniqueMatch?.bounds ?: proposal.fingerprint.bounds
         handler.postDelayed({
-            val v = verifyOutcome(label, bounds, targetPackage)
-            val outcome = ActuationOutcomeClassifier.classify(
-                targetDisappeared = v.targetGone,
-                splashWindowGone = false,
-                nonAdStateVisible = false,
-                targetStillPresent = !v.targetGone,
-                windowStillPresent = v.windowPresent,
-            )
-            experimentalSettings.lastAction = "ALLOW:${outcome.name}"
-            blackBox.append(BlackBoxRecord(System.currentTimeMillis(), session, caseId, scanIndex = -1, packageName = targetPackage, trigger = BlackBoxTrigger.OUTCOME_VERIFIED, actuationOutcome = outcome.name, windowCount = v.windowCount, nodeCount = v.nodeCount))
+            try {
+                val v = verifyOutcome(label, bounds, targetPackage)
+                val outcome = ActuationOutcomeClassifier.classify(
+                    targetDisappeared = v.targetGone,
+                    splashWindowGone = false,
+                    nonAdStateVisible = false,
+                    targetStillPresent = !v.targetGone,
+                    windowStillPresent = v.windowPresent,
+                )
+                experimentalSettings.lastAction = "ALLOW:${outcome.name}"
+                blackBox.append(BlackBoxRecord(System.currentTimeMillis(), session, caseId, scanIndex = -1, packageName = targetPackage, trigger = BlackBoxTrigger.OUTCOME_VERIFIED, actuationOutcome = outcome.name, windowCount = v.windowCount, nodeCount = v.nodeCount))
+                // M2.3 user feedback card: a verified skip is announced with a
+                // Toast. Single product change, nothing else added.
+                if (outcome == ActuationOutcome.SUCCESS) {
+                    try {
+                        android.widget.Toast.makeText(this, "✨广告已跳过✨", android.widget.Toast.LENGTH_SHORT).show()
+                    } catch (_: Exception) {
+                        // Toast display must never affect the verified outcome.
+                    }
+                }
+            } catch (e: Exception) {
+                // Defensive: the passive verification must never be lost to an
+                // unexpected live-tree read error — record it as UNCERTAIN so
+                // the blackbox stays truthful about the outcome.
+                Log.e("BypassAdsAct", "outcome verification failed", e)
+                experimentalSettings.lastAction = "ALLOW:UNCERTAIN"
+                blackBox.append(BlackBoxRecord(System.currentTimeMillis(), session, caseId, scanIndex = -1, packageName = targetPackage, trigger = BlackBoxTrigger.OUTCOME_VERIFIED, actuationOutcome = ActuationOutcome.UNCERTAIN.name))
+            }
         }, OUTCOME_VERIFICATION_DELAY_MS)
     }
 
