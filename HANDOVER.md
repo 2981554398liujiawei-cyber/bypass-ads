@@ -99,9 +99,13 @@ GPT 二十节规格要点 → 实现与验证：
 6. **微信/支付宝小程序开屏规则**：bundle 内含 `com.tencent.mm`（开屏广告-微信小程序，2 规则）、`com.eg.android.AlipayGphone`（开屏广告-小程序开屏广告，2 规则）✅。
 7. **仓库清理**：README 重写（Bypass Ads 说明 + GKD attribution + GPL-3.0）；删 .github/FUNDING.yml + workflows（GKD CI/赞助）；保留 GPL-3.0 LICENSE 与 GKD 作者 attribution（未重新声明 license）。
 8. **构建**：clean 全量 `assembleGkdDebug` BUILD SUCCESSFUL（APK 28MB）。⚠️ 本机坑：**KSP 与 Kotlin 编译并发时 transform 报 "系统找不到指定的路径"**（class 输出到 built_in_kotlinc 而 transform 从 tmp/kotlin-classes 读）→ 解决：先单独跑 `:app:kspGkdDebugKotlin`（UP-TO-DATE）再 assemble，或确保 ksp 完成后构建；失败时杀残留 java 进程再重试（"stop command received"= 残留 gradle client 干扰）。
-9. **fresh install 真机验证 ✅**（app.bypassads.debug，HyperOS）：首次启动 → 使用声明（Bypass Ads 品牌）→ 订阅页自动出现 **"Bypass Ads 开屏规则 170应用/171规则 v567"** 且 **开关 checked=true**（无需手动）；首页总开关默认开启；无障碍服务启用（label "Bypass Ads-debug"）后 **QQ音乐开屏广告自动跳过**（GKD 日志 `id:100000001 gName:开屏广告 → AttrInfo(text=跳过, clickable=true) → ActionResult(clickCenter, result=true)`）。
-10. **安装坑（新）**：`pm install` 报 INSTALL_FAILED_USER_RESTRICTED → 用 **`adb install --user 0 -r -d -t <apk>`** 成功（-t 允许 testOnly）。
-11. 遗留：首页"无障碍发生故障"显示问题（服务实际绑定运行，UI 状态流滞后）；未做微信/支付宝小程序开屏真机触发（规则已内置）。
+9. **fresh install 真机验证 ✅**（app.bypassads.debug，HyperOS）：首次启动 → 使用声明（Bypass Ads 品牌）→ 订阅页自动出现 **"Bypass Ads 开屏规则 170应用/171规则 v567"** 且 **开关 checked=true**（无需手动）；首页总开关默认开启；无障碍服务启用（label "Bypass Ads-debug"）后开屏广告自动跳过。
+10. **真机开屏跳过（≥2 个普通 App，截图+日志双证据）✅**：
+    - **QQ音乐**（com.tencent.qqmusic）：GKD 日志 `id:100000001 gName:开屏广告 → AttrInfo(text=跳过, clickable=true) → ActionResult(clickCenter, result=true, position=(1081.5,213.5))`（另见 G1 卡 5/5 验证）。
+    - **B站**（tv.danmaku.bili）：冷启动 2 秒截图确认**开屏广告页**（"財神 窦占龍"广告 + 右下角圆形"跳过"按钮）→ 日志 `AttrInfo(id=count_down, text=跳过 3, clickable=true) → ActionResult(clickNode, result=true)` → 自动进 MainActivityV2 主界面。
+    - 注：拼多多（com.xunmeng.pinduoduo）的"跳过 3"按钮**不是开屏广告**（用户确认拼多多无开屏），已从证据剔除；京东两次冷启动均未出开屏广告（规则匹配 status:ok）。
+11. **安装坑（新）**：`pm install` 报 INSTALL_FAILED_USER_RESTRICTED → 用 **`adb install --user 0 -r -d -t <apk>`** 成功（-t 允许 testOnly）。
+12. 遗留：首页"无障碍发生故障"显示问题（服务实际绑定运行，UI 状态流滞后）；未做微信/支付宝小程序开屏真机触发（规则已内置）。
 
 ### 3.5 本卡剩余动作（下一会话）
 1. 向 GPT 汇报（模板见 §6），等 GPT 审计 `codex/gkd-migration` 分支。
