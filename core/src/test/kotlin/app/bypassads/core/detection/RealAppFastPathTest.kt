@@ -38,6 +38,15 @@ class RealAppFastPathTest {
             minCenterXRatio = 0.80,
             maxCenterYRatio = 0.15,
         ),
+        FastPathRule(
+            ruleId = "qqmusic_splash_skip_v1",
+            packageName = "com.tencent.qqmusic",
+            label = "跳过",
+            minStabilityHits = 1,
+            anchorClassName = "android.widget.TextView",
+            minCenterXRatio = 0.80,
+            maxCenterYRatio = 0.15,
+        ),
     )
     private val fastPath = RealAppFastPath(rules)
 
@@ -177,6 +186,19 @@ class RealAppFastPathTest {
         val result = fastPath.score(snapshot("com.zhihu.android"), listOf(zhihu))
 
         assertTrue(result.isEmpty())
+    }
+
+    @Test
+    fun `qq music skip with clickable anchor fires its own rule`() {
+        val qq = feature(
+            bounds = IntRect(1005, 174, 1155, 249),
+            clickable = true,
+            stabilityHits = 1,
+        )
+        val result = fastPath.score(snapshot("com.tencent.qqmusic"), listOf(qq))
+
+        assertEquals(1, result.size)
+        assertEquals("qqmusic_splash_skip_v1", result[0].fastPathRuleId)
     }
 
     @Test

@@ -676,7 +676,7 @@ class BypassAdsAccessibilityService : AccessibilityService() {
          * M2.3 Real-App Pilot: com.sina.weibo added after shadow evidence
          * (label "跳过", top-right, stable across 4/4 cold starts).
          */
-        val EXPERIMENTAL_ALLOWLIST: Set<String> = setOf("app.bypassads.testad", "com.sina.weibo", "com.zhihu.android")
+        val EXPERIMENTAL_ALLOWLIST: Set<String> = setOf("app.bypassads.testad", "com.sina.weibo", "com.zhihu.android", "com.tencent.qqmusic")
 
         /**
          * M2.3 Real-App Pilot Fast Path rules — added only after human-reviewed
@@ -711,6 +711,18 @@ class BypassAdsAccessibilityService : AccessibilityService() {
                 minStabilityHits = 1,
                 anchorClassName = "android.widget.TextView",
                 anchorResourceId = "com.zhihu.android:id/btn_skip",
+                minCenterXRatio = 0.80,
+                maxCenterYRatio = 0.15,
+            ),
+            // QQ Music: "跳过" TextView clickable=true (no resourceId) at
+            // ~(0.90, 0.09) top-right; observed on a real cold start this
+            // session. The anchor is itself the executable click node.
+            FastPathRule(
+                ruleId = "qqmusic_splash_skip_v1",
+                packageName = "com.tencent.qqmusic",
+                label = "跳过",
+                minStabilityHits = 1,
+                anchorClassName = "android.widget.TextView",
                 minCenterXRatio = 0.80,
                 maxCenterYRatio = 0.15,
             ),
