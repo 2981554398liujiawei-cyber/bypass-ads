@@ -81,11 +81,15 @@ class BypassAdsAccessibilityService : AccessibilityService() {
     private var activeCase: ActiveCase? = null
     private var workerDroppedRequests = 0L
     private var workerMaxQueueDepth = 0
-    /** M2.3 P1-2: Fast Path is scoped to a cold-launch splash window — opened
-     *  only when a burst starts from a package-change (entering the app from
-     *  another package) and closed when the case ends. Ordinary in-app pages
-     *  can never fire a rule. */
-    @Volatile private var fastPathWindowOpen = false
+        // M2.3 P1-2: Fast Path is scoped to a cold-launch splash window. The
+        // window opens whenever a case starts in an allowlisted package (not
+        // only on PACKAGE_CHANGED — real launches like QQ Music's
+        // AppStarterActivity -> SplashActivity chain surface as CONTENT_CHANGED
+        // or WINDOW_STATE_CHANGED because the package never changes). Safety is
+        // carried by the rule fingerprint (label + class + position + ruleId),
+        // the 6s window bound, and the fresh same-ruleId revalidation — opening
+        // the window is inert by itself.
+        @Volatile private var fastPathWindowOpen = false
     /** M2.3: late-ad probe. The standard burst (6 frames in 1s) can finish
      *  before the splash ad frame appears (observed: skip shows 1-2s after
      *  launch), so while the splash window is open we keep probing the live
@@ -261,10 +265,12 @@ class BypassAdsAccessibilityService : AccessibilityService() {
         val caseId = UUID.randomUUID().toString()
         val startedAtMs = SystemClock.elapsedRealtime()
         activeSession = session
-        // M2.3 P1-2: only a cold-launch (package-change) burst opens the Fast
-        // Path window; it closes when the case terminates (or via the time
-        // bound inside scan()).
-        fastPathWindowOpen = trigger == BlackBoxTrigger.PACKAGE_CHANGED
+        // M2.3 P1-2: Fast Path only fires inside a cold-launch splash window;
+        // the window opens on any case in an allowlisted package (see the
+        // field comment for why package-change alone is insufficient) and
+        // closes when the case terminates (or via the time bound inside
+        // scan()).
+        fastPathWindowOpen = packageHint in EXPERIMENTAL_ALLOWLIST
         if (fastPathWindowOpen) startFastPathProbe(session, caseId, packageHint, trigger, startedAtMs, resources.displayMetrics.widthPixels, resources.displayMetrics.heightPixels)
         synchronized(temporalTracker) { temporalTracker.reset() }
         schedulePolicy.markBurstStarted(packageHint.toPackageIdentity())
