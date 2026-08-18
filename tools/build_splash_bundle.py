@@ -112,10 +112,14 @@ WEIXIN_MP_EXTRA_RULE = {
 }
 
 
-def apply_weixin_mp_extra(app: dict) -> None:
-    """Append the desc-based rule to WeChat's 开屏广告-微信小程序 group (in place)."""
+def apply_weixin_mp_extra(app: dict) -> bool:
+    """Append the desc-based rule to WeChat's 开屏广告-微信小程序 group (in place).
+
+    Returns True only when a rule was actually appended, so callers can count
+    statistics truthfully (a +1 per app regardless of whether the group exists
+    would inflate the kept-rules report)."""
     if app.get("id") != "com.tencent.mm":
-        return
+        return False
     for group in app.get("groups", []):
         if group.get("name") != "开屏广告-微信小程序":
             continue
@@ -124,6 +128,8 @@ def apply_weixin_mp_extra(app: dict) -> None:
         extra = dict(WEIXIN_MP_EXTRA_RULE)
         extra["key"] = max(used_keys, default=-1) + 1
         rules.append(extra)
+        return True
+    return False
 
 
 def load_subscription(raw: str):
@@ -165,8 +171,8 @@ def main() -> int:
         kept_groups += len(splash)
         kept_rules += sum(len(g.get("rules", [])) for g in splash)
         kept = {**app, "groups": splash}
-        apply_weixin_mp_extra(kept)
-        kept_rules += 1  # the appended WeChat miniprogram desc rule
+        if apply_weixin_mp_extra(kept):
+            kept_rules += 1  # only count when a desc rule was actually appended
         kept_apps.append(kept)
 
     bundle = {
