@@ -1,150 +1,302 @@
-import java.util.Properties
+import com.android.build.api.variant.impl.VariantOutputImpl
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import kotlin.reflect.full.declaredMemberProperties
+
+fun String.runCommand(): String {
+    val process = ProcessBuilder(split(" "))
+        .redirectErrorStream(true)
+        .start()
+    val output = process.inputStream.bufferedReader().readText().trim()
+    val exitCode = process.waitFor()
+    if (exitCode != 0) {
+        error("Command failed with exit code $exitCode: $output")
+    }
+    return output
+}
+
+data class GitInfo(
+    val commitId: String,
+    val commitTime: String,
+    val tagName: String?,
+) {
+    val versionNameSuffix get() = if (tagName == null) ("-" + commitId.take(7)) else null
+}
+
+val gitInfo = GitInfo(
+    commitId = "git rev-parse HEAD".runCommand(),
+    commitTime = "git log -1 --format=%ct".runCommand() + "000",
+    tagName = runCatching { "git describe --tags --exact-match".runCommand() }.getOrNull(),
+)
+
+val debugSuffixPairList by lazy {
+    javax.xml.parsers.DocumentBuilderFactory
+        .newInstance()
+        .newDocumentBuilder()
+        .parse(file("$projectDir/src/main/res/values/strings.xml"))
+        .documentElement.getElementsByTagName("string").run {
+            (0 until length).mapNotNull { i ->
+                val node = item(i)
+                if (node.attributes.getNamedItem("debug_suffix") != null) {
+                    val key = node.attributes.getNamedItem("name").nodeValue
+                    val value = node.textContent
+                    key to value
+                } else {
+                    null
+                }
+            }
+        }
+}
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.compose.compiler)
+    alias(libs.plugins.androidx.room)
+    alias(libs.plugins.kotlin.parcelize)
+    alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlinx.atomicfu)
+    alias(libs.plugins.google.ksp)
+    alias(libs.plugins.remap)
+    alias(libs.plugins.loc)
 }
-
-val releasePropertiesPath = System.getenv("BYPASS_ADS_SIGNING_PROPERTIES")
-    ?.takeIf { it.isNotBlank() }
-    ?.let(::file)
-val releaseProperties = Properties().apply {
-    if (releasePropertiesPath?.isFile == true) {
-        releasePropertiesPath.inputStream().use(::load)
-    }
-}
-val releaseSigningKeys = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
-val releaseStoreFile = releaseProperties.getProperty("storeFile")
-    ?.takeIf { it.isNotBlank() }
-    ?.let(rootProject::file)
-    ?.canonicalFile
-val releaseSigningReady = releaseSigningKeys.all { key -> !releaseProperties.getProperty(key).isNullOrBlank() } &&
-    releaseStoreFile?.isFile == true &&
-    !releaseStoreFile.toPath().startsWith(rootProject.projectDir.canonicalFile.toPath())
-val releaseTaskRequested = gradle.startParameter.taskNames.any { taskName ->
-    taskName == "assembleRelease" ||
-        taskName == "bundleRelease" ||
-        taskName == ":app:assembleRelease" ||
-        taskName == ":app:bundleRelease"
-}
-
-if (releaseTaskRequested) {
-    check(releaseSigningReady) {
-        "Release signing is required. Set BYPASS_ADS_SIGNING_PROPERTIES to an external properties file described in docs/release-candidate.md."
-    }
-}
-
-// M2.2 signer A/B diagnostics: the experimental build can be signed with an
-// independent test keystore (never the RC key) by pointing
-// BYPASS_ADS_EXPERIMENTAL_SIGNING_PROPERTIES at an external properties file
-// (storeFile/storePassword/keyAlias/keyPassword). Without that variable the
-// build falls back to the debug signer as before. The keystore/passwords
-// themselves never live in this repository.
-val experimentalSigningPropertiesPath = System.getenv("BYPASS_ADS_EXPERIMENTAL_SIGNING_PROPERTIES")
-    ?.takeIf { it.isNotBlank() }
-    ?.let(::file)
-val experimentalSigningProperties = Properties().apply {
-    if (experimentalSigningPropertiesPath?.isFile == true) {
-        experimentalSigningPropertiesPath.inputStream().use(::load)
-    }
-}
-val experimentalSigningKeys = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
-val experimentalStoreFile = experimentalSigningProperties.getProperty("storeFile")
-    ?.takeIf { it.isNotBlank() }
-    ?.let(rootProject::file)
-    ?.canonicalFile
-val experimentalSigningReady = experimentalSigningKeys.all { key -> !experimentalSigningProperties.getProperty(key).isNullOrBlank() } &&
-    experimentalStoreFile?.isFile == true &&
-    !experimentalStoreFile.toPath().startsWith(rootProject.projectDir.canonicalFile.toPath())
 
 android {
-    namespace = "app.bypassads"
-    compileSdk = 37
+    namespace = rootProject.ext["android.namespace"].toString()
+    compileSdk = rootProject.ext["android.compileSdk"] as Int
+    buildToolsVersion = rootProject.ext["android.buildToolsVersion"].toString()
 
     defaultConfig {
-        applicationId = "app.bypassads"
-        minSdk = 35
-        // HyperOS/API36 trial: 33 is the highest targetSdk that keeps
-        // third-party AccessibilityEvent delivery working. Pinned per-task:
-        // *Experimental tasks -> 33 (compat baseline for the experimental APK)
-        // everything else (RC/debug) -> 37. AGP 9 exposes no clean per-variant
-        // targetSdk override (buildType/flavor/VariantBuilder all unsupported).
-        targetSdk = if (gradle.startParameter.taskNames.any { it.contains("Experimental", true) }) 33 else 37
-        versionCode = 1_000_001
-        versionName = "1.0.0-rc1"
+        minSdk = rootProject.ext["android.minSdk"] as Int
+        targetSdk = rootProject.ext["android.targetSdk"] as Int
+
+        applicationId = "li.songe.gkd"
+        versionCode = 92
+        versionName = "1.12.1"
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        vectorDrawables {
+            useSupportLibrary = true
+        }
+        androidResources {
+            localeFilters += listOf("zh", "en")
+        }
+        ndk {
+            // noinspection ChromeOsAbiSupport
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
+
+        GitInfo::class.declaredMemberProperties.onEach {
+            manifestPlaceholders[it.name] = it.get(gitInfo) ?: ""
+        }
     }
 
     buildFeatures {
         compose = true
-        buildConfig = true
+        aidl = true
+        resValues = true
+    }
+
+    val gkdSigningConfig = if (project.hasProperty("GKD_STORE_FILE")) {
+        signingConfigs.create("gkd") {
+            storeFile = file(project.properties["GKD_STORE_FILE"] as String)
+            storePassword = project.findProperty("GKD_STORE_PASSWORD")?.toString()
+            keyAlias = project.findProperty("GKD_KEY_ALIAS")?.toString()
+            keyPassword = project.findProperty("GKD_KEY_PASSWORD")?.toString()
+        }
+    } else {
+        signingConfigs.getByName("debug")
+    }
+
+    val playSigningConfig = if (project.hasProperty("PLAY_STORE_FILE")) {
+        signingConfigs.create("play") {
+            storeFile = file(project.properties["PLAY_STORE_FILE"].toString())
+            storePassword = project.properties["PLAY_STORE_PASSWORD"].toString()
+            keyAlias = project.properties["PLAY_KEY_ALIAS"].toString()
+            keyPassword = project.properties["PLAY_KEY_PASSWORD"].toString()
+        }
+    } else {
+        gkdSigningConfig
     }
 
     buildTypes {
-        debug {
-            applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
-            buildConfigField("boolean", "ACTIVE_EXPERIMENTAL", "false")
+        all {
+            versionNameSuffix = gitInfo.versionNameSuffix
         }
         release {
-            if (releaseSigningReady) {
-                signingConfig = signingConfigs.create("release") {
-                    storeFile = requireNotNull(releaseStoreFile)
-                    storePassword = requireNotNull(releaseProperties.getProperty("storePassword"))
-                    keyAlias = requireNotNull(releaseProperties.getProperty("keyAlias"))
-                    keyPassword = requireNotNull(releaseProperties.getProperty("keyPassword"))
-                }
-            }
             isMinifyEnabled = true
             isShrinkResources = true
+            isDebuggable = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            buildConfigField("boolean", "ACTIVE_EXPERIMENTAL", "false")
         }
-        create("experimental") {
-            // M2.2: isolated experimental build. Separate applicationId, never
-            // minified, debug-signed so it can be installed side by side with
-            // RC. ACTIVE_EXPERIMENTAL gates the real actuation capability;
-            // release/debug builds always compile with it false.
-            applicationIdSuffix = ".experimental"
-            versionNameSuffix = "-experimental"
-            buildConfigField("boolean", "ACTIVE_EXPERIMENTAL", "true")
-            if (experimentalSigningReady) {
-                signingConfig = signingConfigs.create("experimentalTest") {
-                    storeFile = requireNotNull(experimentalStoreFile)
-                    storePassword = requireNotNull(experimentalSigningProperties.getProperty("storePassword"))
-                    keyAlias = requireNotNull(experimentalSigningProperties.getProperty("keyAlias"))
-                    keyPassword = requireNotNull(experimentalSigningProperties.getProperty("keyPassword"))
-                }
-            } else {
-                signingConfig = signingConfigs.getByName("debug")
+        debug {
+            signingConfig = gkdSigningConfig
+            applicationIdSuffix = ".debug"
+            resValue("color", "better_black", "#FF5D92")
+            debugSuffixPairList.onEach { (key, value) ->
+                resValue("string", key, "$value-debug")
             }
-            isDebuggable = true
-            isMinifyEnabled = false
-            isShrinkResources = false
         }
     }
+    productFlavors {
+        flavorDimensions += "channel"
+        create("gkd") {
+            isDefault = true
+            signingConfig = gkdSigningConfig
+            resValue("bool", "is_accessibility_tool", "true")
+        }
+        create("play") {
+            signingConfig = playSigningConfig
+            resValue("bool", "is_accessibility_tool", "false")
+        }
+        all {
+            dimension = flavorDimensions.first()
+            manifestPlaceholders["channel"] = name
+        }
+    }
+    compileOptions {
+        sourceCompatibility = rootProject.ext["android.javaVersion"] as JavaVersion
+        targetCompatibility = rootProject.ext["android.javaVersion"] as JavaVersion
+    }
+    dependenciesInfo.includeInApk = false
+    packaging.resources.excludes += setOf(
+        // https://github.com/Kotlin/kotlinx.coroutines/issues/2023
+        "META-INF/**", "**/attach_hotspot_windows.dll",
 
-    packaging {
-        resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        "**.properties", "**.bin", "**/*.proto",
+        "**/kotlin-tooling-metadata.json",
+
+        // ktor
+        "**/custom.config.conf",
+        "**/custom.config.yaml",
+    )
+}
+
+if (project.hasProperty("GKD_RENAME_APK_FLAG")) {
+    androidComponents.onVariants { variant ->
+        variant.outputs.onEach { output ->
+            output as VariantOutputImpl
+            output.outputFileName = "gkd-v${output.versionName.get()}.apk"
+        }
     }
 }
 
+kotlin {
+    compilerOptions {
+        jvmTarget.set(rootProject.ext["kotlin.jvmTarget"] as JvmTarget)
+        freeCompilerArgs.addAll(
+            "-opt-in=kotlin.RequiresOptIn",
+            "-opt-in=kotlin.contracts.ExperimentalContracts",
+            "-opt-in=kotlinx.coroutines.FlowPreview",
+            "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi",
+            "-opt-in=kotlinx.serialization.ExperimentalSerializationApi",
+            "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
+            "-opt-in=androidx.compose.foundation.ExperimentalFoundationApi",
+            "-opt-in=androidx.compose.animation.graphics.ExperimentalAnimationGraphicsApi",
+            "-opt-in=androidx.compose.ui.ExperimentalComposeUiApi",
+            "-opt-in=androidx.compose.foundation.layout.ExperimentalLayoutApi",
+            "-Xcontext-parameters",
+            "-Xexplicit-backing-fields",
+            "-XXLanguage:+MultiDollarInterpolation",
+        )
+    }
+}
+
+// https://developer.android.com/jetpack/androidx/releases/room?hl=zh-cn#compiler-options
+room {
+    schemaDirectory("$projectDir/schemas")
+}
+
+composeCompiler {
+    reportsDestination = layout.buildDirectory.dir("compose_compiler")
+    stabilityConfigurationFiles.addAll(
+        rootProject.layout.projectDirectory.file("stability_config.conf"),
+    )
+}
+
+loc {
+    template = "{packageName}.{methodName}({fileName}:{lineNumber})"
+}
+
 dependencies {
-    implementation(project(":core"))
+    implementation(libs.kotlin.stdlib)
+
+    implementation(project(":selector"))
+
+    implementation(libs.androidx.appcompat)
     implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.service)
 
-    implementation(platform(libs.androidx.compose.bom))
-    implementation(libs.androidx.compose.ui)
-    implementation(libs.androidx.compose.foundation)
-    implementation(libs.androidx.compose.material3)
-    implementation(libs.androidx.compose.ui.tooling.preview)
+    implementation(libs.compose.ui)
+    implementation(libs.compose.ui.graphics)
+    implementation(libs.compose.animation)
+    implementation(libs.compose.animation.graphics)
+    implementation(libs.compose.icons)
+    implementation(libs.compose.preview)
+    debugImplementation(libs.compose.tooling)
+    androidTestImplementation(libs.compose.junit4)
 
-    debugImplementation(libs.androidx.compose.ui.tooling)
+    implementation(libs.compose.activity)
+    implementation(libs.compose.material3)
 
-    testImplementation(kotlin("test"))
-    testImplementation("junit:junit:4.13.2")
-    testImplementation("org.json:json:20250517")
+    implementation(libs.androidx.navigation3.ui)
+    implementation(libs.androidx.navigation3.runtime)
+    implementation(libs.androidx.lifecycle.viewmodel.navigation3)
+
+    testImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.espresso)
+
+    compileOnly(project(":hidden_api"))
+    implementation(libs.rikka.shizuku.api)
+    implementation(libs.rikka.shizuku.provider)
+    implementation(libs.lsposed.hiddenapibypass)
+
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    implementation(libs.androidx.room.paging)
+    ksp(libs.androidx.room.compiler)
+
+    implementation(libs.androidx.paging.runtime)
+    implementation(libs.androidx.paging.compose)
+
+    implementation(libs.ktor.server.core)
+    implementation(libs.ktor.server.cio)
+    implementation(libs.ktor.server.content.negotiation)
+
+    implementation(libs.ktor.client.core)
+    implementation(libs.ktor.client.okhttp)
+    implementation(libs.ktor.client.content.negotiation)
+    implementation(libs.ktor.serialization.kotlinx.json)
+
+    implementation(libs.google.accompanist.drawablepainter)
+
+    implementation(libs.kotlinx.serialization.core)
+    implementation(libs.kotlinx.serialization.json)
+    // https://github.com/Kotlin/kotlinx-atomicfu/issues/145
+    implementation(libs.kotlinx.atomicfu)
+
+    implementation(libs.activityResultLauncher)
+
+    implementation(libs.reorderable)
+
+    implementation(libs.androidx.splashscreen)
+
+    implementation(libs.coil.compose)
+    implementation(libs.coil.network)
+    implementation(libs.coil.gif)
+    implementation(libs.telephoto.zoomable)
+
+    implementation(libs.exp4j)
+
+    implementation(libs.toaster)
+    implementation(libs.permissions)
+    implementation(libs.device)
+
+    implementation(libs.json5)
+    compileOnly(libs.loc.annotation)
+
+    implementation(libs.kevinnzouWebview)
 }

@@ -1,37 +1,12 @@
-# Changelog
+# 更新内容
 
-## 1.0.0-rc1 - Release Candidate
+- 优化快照结果提示文案
+- 修复某些场景无障碍服务状态判断错误
+- 修复某些设备新安装应用后对应规则不启用
 
-> **M1.6 formal RC gate: PASS.** P1-1 post-idle launch availability PASS (5/5:
-> after leaving the app and waiting past the OEM idle window, launching other
-> apps still produced new Shadow scans), P1-2 OFF/Shadow lifecycle PASS. The
-> Xiaomi/HyperOS SmartPower transient unbind is recorded as a documented
-> compatibility risk, not a release blocker. Shadow-only — does not skip ads
-> automatically. See `docs/release-candidate.md` for the full record.
+## 更新方式
 
-### Added
+- GKD - 设置 - 关于 - 检测更新
+- 下列方式之一
 
-- Shadow-only release-candidate documentation, local signing procedure, and
-  release artifact provenance requirements.
-- Explicit release build guard: an unsigned `assembleRelease` is rejected.
-- M1.4 real-device Shadow evidence accepted with privacy-minimized aggregate
-  results only.
-- M1.5 RC closure record: debug-artifact regression on an API 36 physical
-  device (Shadow scan, OFF pause, restore, binding, no crash/ANR, complete
-  scan metrics) with debug APK SHA-256 in `docs/release-candidate.md`.
-- M1.6 signed RC closure: signed release APK (external keystore, signature
-  verification, SHA-256), signed-release smoke on an API 36 physical device,
-  API 35 emulator compatibility smoke, and the home-status truthfulness
-  verdict, all recorded in `docs/release-candidate.md`.
-
-### Changed
-
-- Version metadata is now `1.0.0-rc1` (`versionCode` 1000001).
-- The application About screen and README define the product consistently as
-  an Android 15+ offline OFF/Shadow observation and diagnostics tool.
-
-### Safety boundary
-
-- This release candidate does not automatically skip ads. It contains no node
-  click, gesture, global action, OCR, screenshot capture, networking,
-  analytics, or telemetry capability.
+<a href="https://gkd.li/guide/"><img src="https://e.gkd.li/f23b704d-d781-494b-9719-393f95683b89" alt="Download from GKD.LI" width="32%" /></a><a href="https://play.google.com/store/apps/details?id=li.songe.gkd"><img src="https://e.gkd.li/f63fabeb-0342-4961-a46d-cac61b0f8856" alt="Download from Google Play" width="32%" /></a><a href="https://github.com/gkd-kit/gkd/releases"><img src="https://e.gkd.li/c1ef2bb9-7472-46d5-9806-81b4c37e5b4d" alt="Download from GitHub releases" width="32%" /></a>

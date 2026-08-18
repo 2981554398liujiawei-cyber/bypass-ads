@@ -1,1 +1,3 @@
-# v0.1: keep rules intentionally minimal. Add only when a concrete shrinker issue appears.
+# http://developer.android.com/guide/developing/tools/proguard.html
+
+-dontwarn **

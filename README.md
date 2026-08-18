@@ -1,63 +1,78 @@
-# Bypass Ads.
+# gkd
 
-A clean-room, fully offline Android 15+ tool for observing and diagnosing safer splash-ad skip decisions.
+<p align="center">
+<a href="https://gkd.li/"><img src="https://e.gkd.li/2a0a7787-f2dd-4529-a885-93f3b8c857c3" alt="GKD.LI" width="40%" /></a>
+</p>
 
-> Status: **Shadow-only 1.0.0-rc1 Release Candidate — formal RC gate PASS**. This is an OFF/Shadow-only observation and diagnostics tool, not an automatic ad skipper. Known Xiaomi/HyperOS compatibility note: the OEM power engine may transiently unbind the accessibility service while the app idles in background; post-idle app launches are still observed (verified 5/5), and the service rebinds on return to foreground.
+基于 [高级选择器](https://gkd.li/guide/selector) + [订阅规则](https://gkd.li/guide/subscription) + [快照审查](https://github.com/gkd-kit/inspect) 的自定义屏幕点击 Android 应用
 
-## V1.0 RC scope (release candidate)
+通过自定义规则，在指定界面，满足指定条件(如屏幕上存在特定文字)时，点击特定的节点或位置或执行其他操作
 
-Bypass Ads. supports Android 15+ devices and runs entirely on-device. In
-`Shadow`, it observes accessibility windows, evaluates candidates, and records
-privacy-minimized local diagnostics. In `Off`, it does not scan. It never
-clicks nodes, invokes gestures, opens global actions, or claims to skip ads.
+- **快捷操作**
 
-See [release candidate](docs/release-candidate.md) for signing, verification,
-known limitations, and artifact provenance.
+  帮助你简化一些重复的流程, 如某些软件自动确认电脑登录
 
-## Product constraints
+- **跳过流程**
 
-- Runtime is fully offline. The manifest intentionally does **not** request `android.permission.INTERNET`.
-- Android 15+ only (`minSdk 35`); compilation and target SDK use API 37.
-- Release application ID: `app.bypassads`; debug builds use `app.bypassads.debug`, so either can coexist with legacy LiTiaoTiao (`hello.litiaotiao.app`).
-- False positives are more costly than missed ads.
-- Black-box diagnostics are local, bounded, structured, and privacy-minimized.
-- Source is organized for an eventual open-source release under MIT.
+  某些软件可能在启动时存在一些烦人的流程, 这个软件可以帮助你点击跳过这个流程
 
-## Included behavior
+## 免责声明
 
-1. Accessibility window/node capture with a 0 / 60 / 140 / 300 / 600 / 1000 ms burst after package/window transitions. Content-change bursts are coalesced per package for 250 ms.
-2. Conservative candidate detector, temporal tracker, scorer, and pure-Kotlin decision engine.
-3. Shadow decisions (`WOULD_CLICK`, `TOO_RISKY`, `NO_CANDIDATE`) only — never an action.
-4. Local JSONL black box with single-worker asynchronous I/O, 7-day / 20-MB retention, details, stats, and manual clearing.
-5. Minimal Compose Home, Diagnostics, and Settings screens.
-6. Pure-JVM safety regression tests in `:core`.
+**本项目遵循 [GPL-3.0](/LICENSE) 开源，项目仅供学习交流，禁止用于商业或非法用途**
 
-## Known limitations
+## 安装
 
-- OCR, screenshots, cloud rules, runtime networking, analytics, crash-reporting SaaS, advertising SDKs.
-- Active clicking, gestures, an Active-mode switch, foreground-service persistence hacks, `TYPE_VIEW_TEXT_CHANGED`, or Android 14-and-below compatibility.
-- Advertising outcome verification and claims of automatic ad skipping. Shadow decisions are diagnostics, not actions.
-- Compatibility claims beyond the release smoke matrix. In particular, mini-program behavior is not a general support promise.
+<a href="https://gkd.li/guide/"><img src="https://e.gkd.li/f23b704d-d781-494b-9719-393f95683b89" alt="Download from GKD.LI" width="32%" /></a><a href="https://play.google.com/store/apps/details?id=li.songe.gkd"><img src="https://e.gkd.li/f63fabeb-0342-4961-a46d-cac61b0f8856" alt="Download from Google Play" width="32%" /></a><a href="https://github.com/gkd-kit/gkd/releases"><img src="https://e.gkd.li/c1ef2bb9-7472-46d5-9806-81b4c37e5b4d" alt="Download from GitHub releases" width="32%" /></a>
 
-## Build
+如遇问题请先查看 [疑难解答](https://gkd.li/guide/faq)
 
-Requires JDK 17+ and Android SDK Platform 37.
+## 截图
 
-```bash
-./gradlew :evidence:test :core:test :app:testDebugUnitTest :app:assembleDebug
-```
+|                                                               |                                                               |                                                               |                                                               |
+| ------------------------------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------- |
+| ![img](https://e.gkd.li/1e8934c1-2303-4182-9ef2-ad4c46882570) | ![img](https://e.gkd.li/01f230d7-9b89-4314-b573-38bd233d22f9) | ![img](https://e.gkd.li/dfa0a782-b21e-473a-96e4-eef27773b71b) | ![img](https://e.gkd.li/641decd1-2e60-4e95-b78c-df38d1d98a4d) |
+| ![img](https://e.gkd.li/b216b703-d3de-4798-81ba-29e0ae63264f) | ![img](https://e.gkd.li/76c25ac9-4189-47cd-b40b-b9e72c79b584) | ![img](https://e.gkd.li/7288502e-808b-4d9a-88b5-1085abaa0d46) | ![img](https://e.gkd.li/aa974940-7773-409a-ae84-3c02fee9c770) |
 
-The debug APK is emitted at `app/build/outputs/apk/debug/app-debug.apk`.
-For a signed release candidate, follow the local-only signing procedure in
-[release candidate](docs/release-candidate.md); never commit a keystore or its
-properties file.
+## 订阅
 
-## Verification checklist
+GKD **默认不提供规则**，需自行添加本地规则，或者通过订阅链接的方式获取远程规则
 
-1. Confirm `app.bypassads` from the release manifest and no `android.permission.INTERNET` using `apkanalyzer` or `aapt`.
-2. Install the signed release (`app.bypassads`) or debug build (`app.bypassads.debug`) on Android 15+ beside `hello.litiaotiao.app`.
-3. Enable **Bypass Ads. · 开屏观察** in Accessibility settings.
-4. Open ordinary apps and confirm `PACKAGE_CHANGED`, `WINDOW_STATE_CHANGED`, `WINDOWS_CHANGED`, `CONTENT_CHANGED`, and `SCAN` records appear in Diagnostics.
-5. Confirm decisions and score/risk breakdowns are recorded, while the device never receives an automated click.
+也可通过 [subscription-template](https://github.com/gkd-kit/subscription-template) 快速构建自己的远程订阅
 
-See [architecture](docs/architecture.md), [diagnostics](docs/diagnostics.md), and [privacy](docs/privacy.md).
+第三方订阅列表可在 <https://github.com/topics/gkd-subscription> 查看
+
+要加入此列表, 需点击仓库主页右上角设置图标后在 Topics 中添加 `gkd-subscription`
+
+<details>
+<summary>示例图片 - 添加至 Topics (点击展开)</summary>
+
+![image](https://e.gkd.li/9e340459-254f-4ca0-8a44-cc823069e5a7)
+
+</details>
+
+## 选择器
+
+一个类似 CSS 选择器的选择器, 能联系节点上下文信息, 更容易也更精确找到目标节点
+
+<https://gkd.li/guide/selector>
+
+[@[vid=\"menu\"] < [vid=\"menu_container\"] - [vid=\"dot_text_layout\"] > [text^=\"广告\"]](https://i.gkd.li/i/14881985?gkd=QFt2aWQ9Im1lbnUiXSA8IFt2aWQ9Im1lbnVfY29udGFpbmVyIl0gLSBbdmlkPSJkb3RfdGV4dF9sYXlvdXQiXSA-IFt0ZXh0Xj0i5bm_5ZGKIl0)
+
+<details>
+<summary>示例图片 - 选择器路径视图 (点击展开)</summary>
+
+[![image](https://e.gkd.li/a2ae667b-b8c5-4556-a816-37743347b972)](https://i.gkd.li/i/14881985?gkd=QFt2aWQ9Im1lbnUiXSA8IFt2aWQ9Im1lbnVfY29udGFpbmVyIl0gLSBbdmlkPSJkb3RfdGV4dF9sYXlvdXQiXSA-IFt0ZXh0Xj0i5bm_5ZGKIl0)
+
+</details>
+
+## 捐赠
+
+如果 GKD 对你有用, 可以通过以下链接支持该项目
+
+<https://github.com/lisonge/sponsor>
+
+或前往 [Google Play](https://play.google.com/store/apps/details?id=li.songe.gkd) 给个好评
+
+## Star History
+
+[![Stargazers over time](https://starchart.cc/gkd-kit/gkd.svg?variant=adaptive)](https://starchart.cc/gkd-kit/gkd)

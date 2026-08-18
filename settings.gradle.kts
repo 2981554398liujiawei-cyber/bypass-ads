@@ -1,18 +1,37 @@
+rootProject.name = "gkd"
+include(
+    ":app",
+    ":hidden_api",
+    ":selector",
+)
+
 pluginManagement {
     repositories {
-        google()
+        mavenLocal()
         mavenCentral()
+        google {
+            content {
+                includeGroupByRegex("com\\.android.*")
+                includeGroupByRegex("com\\.google.*")
+                includeGroupByRegex("androidx.*")
+            }
+        }
+        maven("https://jitpack.io")
         gradlePluginPortal()
     }
 }
 
 dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        google()
+        mavenLocal()
         mavenCentral()
+        google {
+            content {
+                includeGroupByRegex("com\\.android.*")
+                includeGroupByRegex("com\\.google.*")
+                includeGroupByRegex("androidx.*")
+            }
+        }
+        maven("https://jitpack.io")
     }
 }
-
-rootProject.name = "BypassAds"
-include(":app", ":core", ":evidence", ":testad")
