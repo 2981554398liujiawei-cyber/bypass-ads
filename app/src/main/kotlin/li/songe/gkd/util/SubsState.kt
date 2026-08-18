@@ -456,10 +456,14 @@ suspend fun initBundledSub(bundled: RawSubscription) {
         val items = DbSet.subsItemDao.queryAll()
         val existing = items.find { it.id == subsId }
         val file = subsFolder.resolve("$subsId.json")
+        // Read the real persisted version from disk. A file that fails to parse,
+        // or whose parsed id does not match, is treated as corrupt.
         val persistedVersion = if (file.exists()) {
             runCatching {
-                RawSubscription.parse(file.readText(), json5 = false).version
+                RawSubscription.parse(file.readText(), json5 = false)
             }.getOrNull()
+                ?.takeIf { it.id == subsId }
+                ?.version
         } else {
             null
         }
@@ -477,6 +481,7 @@ suspend fun initBundledSub(bundled: RawSubscription) {
                     updateUrl = null,
                 )
             )
+            subsLoadErrorsFlow.update { it.toMutableMap().apply { remove(subsId) } }
             LogUtils.d("内置开屏规则已初始化", "id=$subsId, version=${bundled.version}")
         } else if (persistedVersion == null || bundled.version > persistedVersion) {
             // upgrade rules (or repair a missing/corrupt file); keep enable/order
@@ -485,6 +490,7 @@ suspend fun initBundledSub(bundled: RawSubscription) {
                 cleanupSubsConfig(subsId, bundled)
                 file.writeText(json.encodeToString(bundled))
             }
+            subsLoadErrorsFlow.update { it.toMutableMap().apply { remove(subsId) } }
             LogUtils.d("内置开屏规则已升级", "from=$persistedVersion to=${bundled.version}")
         } else {
             // equal or lower: never rewrite, never downgrade

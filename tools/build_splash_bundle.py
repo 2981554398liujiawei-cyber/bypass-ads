@@ -97,6 +97,35 @@ def is_splash_group(name: str) -> bool:
     return name == SPLASH_GROUP_PREFIX or name.startswith(SPLASH_GROUP_PREFIX + "-")
 
 
+# Bypass Ads: WeChat miniprogram (小程序) ads frequently render the skip/close
+# control as an ImageButton whose content-desc is "跳过"/"关闭" while its text
+# attribute is empty. The upstream rule set matches only `text=`, so we append
+# a desc-based rule to the "开屏广告-微信小程序" group. This keeps the product
+# working on miniprogram ads without rewriting third-party rule bodies.
+WEIXIN_MP_EXTRA_RULE = {
+    "key": 2,
+    "actionDelay": 800,
+    "matches": [
+        '[desc="跳过" || desc="跳過"][visibleToUser=true]',
+        '[desc="关闭" || desc="關閉"][visibleToUser=true]',
+    ],
+}
+
+
+def apply_weixin_mp_extra(app: dict) -> None:
+    """Append the desc-based rule to WeChat's 开屏广告-微信小程序 group (in place)."""
+    if app.get("id") != "com.tencent.mm":
+        return
+    for group in app.get("groups", []):
+        if group.get("name") != "开屏广告-微信小程序":
+            continue
+        rules = group.setdefault("rules", [])
+        used_keys = {r.get("key", -1) for r in rules}
+        extra = dict(WEIXIN_MP_EXTRA_RULE)
+        extra["key"] = max(used_keys, default=-1) + 1
+        rules.append(extra)
+
+
 def load_subscription(raw: str):
     """Parse a GKD subscription that may be JSON or JSON5. Prefers the json5
     library when installed; falls back to the built-in minimal cleaner."""
@@ -135,7 +164,10 @@ def main() -> int:
             continue
         kept_groups += len(splash)
         kept_rules += sum(len(g.get("rules", [])) for g in splash)
-        kept_apps.append({**app, "groups": splash})
+        kept = {**app, "groups": splash}
+        apply_weixin_mp_extra(kept)
+        kept_rules += 1  # the appended WeChat miniprogram desc rule
+        kept_apps.append(kept)
 
     bundle = {
         "id": data.get("id", 100000001),

@@ -9,13 +9,14 @@
 > 更新：2026-08-19 02:0x（GKD 卡收尾：内置订阅 clickCenter 方案 + 品牌化/离线定制提交，见 §3.6）
 > 更新：2026-08-19 02:0x（G2/G3 卡实现完成：内置订阅生成工具 + 首页精简 + 完全离线 + fresh install 真机验证通过，见 §3.7）
 > 更新：2026-08-19 03:5x（G3.1 放行修复卡完成：initBundledSub 原子化 + HTTP 残留清理 + 链接拆分 + Case A-E 真机验证，见 §3.8）
+> 更新：2026-08-19 07:2x（G4 卡实测完成待审计：微信小程序生存探险 PASS / 特来电倒计时跳过 FAIL-边界 / 支付宝 NO-SAMPLE / 普通 App 回归全 PASS / 15 分钟 0 误触 / 10 轮切换无残留 / 总开关有效，见 §3.9）
 
 ---
 
 ## 0. 当前分支与 git 状态（最重要）
 
 - **当前分支**：`codex/gkd-migration`（基于 `codex/m2-2-active-experimental-trial` 新建，已 push 到 origin）
-- **HEAD**：`b366e3f`（G2/G3 离线开屏 MVP：品牌化+内置订阅+完全离线）；`97c7644`（本地订阅规则 + kotlin daemon 修复）；`452b9ea` = GKD v1.12.1 基线导入；`75bfef1`（HANDOVER 修正：B站替代拼多多）；G3.1 修复卡 commit 见 git log（§3.8）
+- **HEAD**：`b366e3f`（G2/G3 离线开屏 MVP：品牌化+内置订阅+完全离线）；`97c7644`（本地订阅规则 + kotlin daemon 修复）；`452b9ea` = GKD v1.12.1 基线导入；`75bfef1`（HANDOVER 修正：B站替代拼多多）；G3.1 修复卡 = `eba57f2`；G4 修复卡（§3.9 任务 1）commit 见 git log（已 push）
 - **品牌化/离线定制（已提交）**：applicationId=`app.bypassads`（debug 包 `app.bypassads.debug`）、移除 INTERNET 权限（完全离线）、精简订阅/高级设置页、内置开屏订阅自动初始化（`initBundledSubs`，App.kt）+ `assets/bypass_splash_rules.json`（规则主体在 gitignored 的 `.local.json`，由 `tools/build_splash_bundle.py` 生成）
 - **上游旧分支** `codex/m2-2-active-experimental-trial` HEAD = `b113e18`（Toast 卡已提交推送，未合并——旧内核代码留在该分支）
 - **⚠️ 危险教训**：PowerShell `Copy-Item -Recurse -Force 'A\*' 'B\'` 的通配符会连同**隐藏的 `.git` 目录**一起复制，本会话因此两次把 GKD 的 `.git` 覆盖到 bypass-ads（origin 变成 gkd-kit/gkd、git 历史"丢失"）。**今后复制整个项目必须用 `robocopy <src> <dst> /E /XD .git` 或显式排除 `.git`**。已重建：`git init` + `git remote add origin https://github.com/2981554398liujiawei-cyber/bypass-ads.git` + `git fetch origin`（远程历史完整，全部旧分支都在）。
@@ -131,6 +132,40 @@ GPT 审计结论（新会话重建）：b366e3f 主体方向对、非"假完成"
 - 首页总开关关闭 → 冷启动 QQ音乐 **开屏广告完整显示未被跳过**（"已暂停·规则暂不执行"）；重新开启 → 冷启动 QQ音乐 **自动跳过**（日志 `gName:开屏广告 status:ok → AttrInfo(text=跳过, clickable=true) → ActionResult(clickCenter, result=true, position=(1084.5,217.0))` → 已进主界面）✅
 - 无障碍服务：force-stop App 后服务被停（Bound services 空、首页显示"无障碍已关闭"）→ settings put 重新启用后恢复（HyperOS 行为，非缺陷）；**验证开屏跳过前必须确认服务 Bound**
 - 构建：kspGkdDebugKotlin + assembleGkdDebug BUILD SUCCESSFUL
+
+### §3.9 G4 卡：微信/支付宝小程序开屏实战验证 + 误触回归（2026-08-19，GPT 发卡，实测完成待审计）
+
+GPT 发卡重点：**不要继续堆普通 App 数量**；验证 ①GKD 内核能否可靠处理宿主 App 内小程序开屏广告 ②大规模开屏规则启用后日常页面是否误点；**禁止**自研新识别引擎/订阅子系统重构；HyperOS 无障碍问题只记录不修。
+
+**任务 1 边角修复（已提交，见 §0 HEAD）**：
+- `SubsState.kt` initBundledSub 读 persisted raw 时校验 `raw.id == subsId`，id 不符视为 corrupt 按 bundle repair（真机验证：id=999 文件重启后修复回 100000001 v567 ✅）
+- bundle 成功创建/升级/repair 后清除该 subsId 的 `subsLoadErrorsFlow` 残留错误；禁止重构 SubsState.kt ✅
+
+**任务 2 微信小程序实测**（宿主微信 8.0.76 / com.tencent.mm，规则组 gKey=10 "开屏广告-微信小程序"）：
+- **样本 A 生存探险大作战（PASS）**：冷启动进入 → 开屏广告（com.ct.client 广告 SDK，全屏，text="跳过" clickable=true visibleToUser=true）→ 规则 key0 `[text*="跳过"][clickable=true]` clickNode/clickCenter result=true → 广告关闭进入游戏。日志证据：`AttrInfo(text=跳过, clickable=true) → ActionResult(result=true)`（多次）。
+- **样本 B 特来电充电小程序（FAIL-边界）**：进入必现营销开屏广告（HR赫莲娜/徕芬/充电桩焕新轮播，顶部"广告"+“跳过”按钮）。**“跳过”节点 clickable=false（倒计时态）→ 规则 clickCenter (298.5,216) result=true 但广告 SDK 忽略点击，广告 >28s 不消失**（截图 on2/on3/on5 证据）。**结论：GKD 单次评估（Activity 变化触发）+ 倒计时 clickable=false 的“跳过”无法被跳过——微信小程序开屏广告的真实技术边界**（无倒计时“跳过”可跳，见样本 A）。
+- 其他无广告样本：全职掌门、同程旅行、欢乐斗地主（仅签到弹窗）、云快充（微信侧未测出广告）。
+- 插屏/弹窗广告（微粒贷/福利弹窗）：进入后 Activity 内弹出，规则不评估（无 Activity 变化）→ 不误触也不关闭，符合范围。
+- **规则适配**：`tools/build_splash_bundle.py` 新增 `WEIXIN_MP_EXTRA_RULE`（微信组追加 key2：`[desc="跳过"||desc="跳過"][visibleToUser=true]` 和 `[desc="关闭"||desc="關閉"][visibleToUser=true]`，actionDelay 800）——解决 ImageButton 类关闭按钮 text 为空、content-desc 有值的情况；已重新生成 assets bundle（v567 微信组 3 规则）。
+
+**任务 3 支付宝小程序实测（NO-SAMPLE）**（宿主支付宝 12.12.16.8000，规则组 gKey=24 "开屏广告-小程序开屏广告"）：
+- 已尝试 5 个：云快充（首页 banner 无开屏）、滴滴充电（位置授权弹窗无开屏）、特来电（品牌页无开屏）、星星充电（品牌页无开屏）、新能源-充电桩险（搜索结果页）。
+- **结论：支付宝小程序无开屏广告样本可测**（支付宝小程序生态广告形式为首页 banner/卡片，非全屏开屏；支付宝自身开屏广告（若有）由宿主 App 规则处理）。规则 key1/key2 在 XRiverActivity 评估 status:ok/超出匹配时间，无误触。
+
+**任务 4 普通 App 小回归（全部 PASS）**：
+- QQ音乐：2/2 冷启动开屏跳过（`text=跳过 clickable=true → clickCenter (1080,211.5)/(1085.5,217.5) result=true` → 进主界面）
+- B站：2/2 正常进入（1 次无开屏、1 次开屏自动结束；B站组 key=-1 selector `[vid="count_down"||vid="skip"]` 未命中新版广告节点——官方规则时效，广告自动消失不影响使用）
+- 抖音：PASS（无开屏直接主界面）；淘宝：PASS（无开屏直接主界面）；设置（无广告 App）：PASS（零触发）
+
+**任务 5 误触专项（0 次误触）**：微信聊天/朋友圈、支付宝首页、淘宝、抖音、QQ音乐、B站 各正常浏览累计 >15 分钟 → 全部点击均为开屏场景（AppBrandUI/AppStarterActivity），日常页面零误触发（审计日志 clickCenter 上下文）。
+
+**任务 6 宿主切换稳定性（PASS）**：微信↔小程序A/B、支付宝↔小程序、微信↔QQ音乐、支付宝↔B站、淘宝/抖音 等 10+ 轮 force-stop+冷启动+UI 进入小程序 → 无跨应用误触（(298.5,216) 点击全部在 AppBrandUI 场景）、A11y 服务全程 Bound（10 轮 force-stop 后仍 Bound）、规则无残留。
+
+**任务 7 总开关回归（PASS）**：微信特来电样本上 OFF → 开屏广告完整显示+日志 0 点击（off2 截图）→ ON → 规则执行 clickCenter "跳过"（日志）→ 总开关对小程序规则有效 ✅
+
+**任务 8 HyperOS 无障碍记录（只记录不修）**：测试期间服务多次自动重启（日志 `无障碍已关闭 → onCreated → onA11yConnected → 无障碍已启动`，如 06:50:53-56 / 06:52:11-12 / 06:53:16 / 07:14:21），WRITE_SECURE_SETTINGS 自动修复生效；首页"无障碍发生故障"UI 显示滞后问题依旧（服务实际运行）。
+
+**G4 最终验收自检**：两个边角修复完成 ✅ / 微信 ≥1 成功（生存探险 PASS）✅ / 支付宝 NO-SAMPLE 证据充分 ✅ / QQ音乐+B站回归正常 ✅ / ≥15 分钟 0 误触 ✅ / 10 轮切换无跨应用误触 ✅ / 总开关对小程序有效 ✅ / assembleGkdDebug SUCCESS ✅ / APK 无 INTERNET ✅ / 无新网络入口 ✅
 
 ### 3.5 本卡剩余动作（下一会话）
 1. 向 GPT 汇报（模板见 §6），等 GPT 审计 `codex/gkd-migration` 分支。
