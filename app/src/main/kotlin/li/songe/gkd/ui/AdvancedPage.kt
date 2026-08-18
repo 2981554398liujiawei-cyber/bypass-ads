@@ -62,7 +62,6 @@ import li.songe.gkd.permission.shizukuGrantedState
 import li.songe.gkd.service.ActivityService
 import li.songe.gkd.service.ButtonService
 import li.songe.gkd.service.EventService
-import li.songe.gkd.service.HttpService
 import li.songe.gkd.service.ScreenshotService
 import li.songe.gkd.shizuku.shizukuContextFlow
 import li.songe.gkd.shizuku.updateBinderMutex
@@ -366,8 +365,9 @@ fun AdvancedPage() {
             )
 
             // Bypass Ads: offline product — HTTP server surface removed.
-            // (HttpService code stays for potential future local debugging,
-            // but there is no user-facing entry point and no INTERNET permission.)
+            // (HttpService code stays as unreachable code for potential future
+            // local debugging, but it is no longer registered in the Manifest,
+            // has no user-facing entry point and no INTERNET permission.)
 
             Text(
                 text = "快照",

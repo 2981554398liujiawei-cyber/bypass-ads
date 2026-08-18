@@ -3,6 +3,10 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Bypass Ads: fully offline product, no INTERNET permission -->
+    <!-- Remove INTERNET merged in from library manifests (ktor/okhttp/etc). -->
+    <uses-permission
+        android:name="android.permission.INTERNET"
+        tools:node="remove" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission
         android:name="android.permission.FOREGROUND_SERVICE"
@@ -144,14 +148,6 @@
                 android:value="Display the running state of the application" />
         </service>
         <service
-            android:name=".service.HttpService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Enable the HTTP server to provide external browser connections and debugging" />
-        </service>
-        <service
             android:name=".service.ButtonService"
             android:exported="false"
             android:foregroundServiceType="specialUse">
@@ -220,23 +216,6 @@
             <meta-data
                 android:name="QS_TILE_URI"
                 android:value="gkd://page/2" />
-            <intent-filter>
-                <action android:name="android.service.quicksettings.action.QS_TILE" />
-            </intent-filter>
-        </service>
-        <service
-            android:name=".service.HttpTileService"
-            android:exported="true"
-            android:icon="@drawable/ic_http"
-            android:label="@string/http_server"
-            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
-            <meta-data
-                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
-                android:value="true" />
-            <meta-data
-                android:name="QS_TILE_URI"
-                android:value="gkd://page/1" />
-
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>

@@ -28,6 +28,9 @@ gradle :app:assembleGkdDebug
 - 仓库跟踪的基线夹具：`app/src/main/assets/bypass_splash_rules.json`（自写 QQ 音乐开屏规则，用于构建与测试）。
 - 本地大规模规则生成：`tools/build_splash_bundle.py <第三方订阅.json5>`，只过滤"开屏广告*"规则组，
   输出到 `app/src/main/assets/bypass_splash_rules.local.json`（已 gitignore，**第三方规则正文不提交到公开仓库**）。
+- ⚠️ 第三方规则来源（如 Lin-arm/GKD_subscription，GitHub 元数据 `license:null`）**仅作为本地研发与真机验证输入**；
+  “未提交到公开仓库”不等于获得再分发授权。公开 APK 携带大规模第三方规则正文的长期许可方案另行处理，
+  当前本仓库只随构建附带自写基线夹具。
 
 ## 免责声明
 

@@ -435,6 +435,64 @@ fun initSubsState() {
     }
 }
 
+/**
+ * Bypass Ads: atomically create/upgrade the bundled splash-ad subscription.
+ *
+ * Runs inside [updateSubsMutex] so it never races with [initSubsState]'s async
+ * load. The persisted version is read from disk (never the in-memory flow,
+ * which may not be loaded yet at startup). The user's enable/order state is
+ * never touched.
+ *
+ * Semantics:
+ *  - no SubsItem row                     -> create (enable=true, order=max+1), write file, update flow
+ *  - file missing or unparsable          -> restore from bundle, keep enable/order
+ *  - bundled.version >  persisted version-> upgrade rules, keep enable/order
+ *  - bundled.version == persisted version-> no-op (never rewrite)
+ *  - bundled.version <  persisted version-> no-op (never downgrade)
+ */
+suspend fun initBundledSub(bundled: RawSubscription) {
+    val subsId = bundled.id
+    updateSubsMutex.withStateLock {
+        val items = DbSet.subsItemDao.queryAll()
+        val existing = items.find { it.id == subsId }
+        val file = subsFolder.resolve("$subsId.json")
+        val persistedVersion = if (file.exists()) {
+            runCatching {
+                RawSubscription.parse(file.readText(), json5 = false).version
+            }.getOrNull()
+        } else {
+            null
+        }
+        if (existing == null) {
+            // fresh install: create the subscription and enable it by default
+            subsMapFlow.value = subsMapFlow.value.toMutableMap().apply { put(subsId, bundled) }
+            withContext(Dispatchers.IO) {
+                file.writeText(json.encodeToString(bundled))
+            }
+            DbSet.subsItemDao.insert(
+                SubsItem(
+                    id = subsId,
+                    order = (items.maxByOrNull { it.order }?.order ?: 0) + 1,
+                    enable = true,
+                    updateUrl = null,
+                )
+            )
+            LogUtils.d("内置开屏规则已初始化", "id=$subsId, version=${bundled.version}")
+        } else if (persistedVersion == null || bundled.version > persistedVersion) {
+            // upgrade rules (or repair a missing/corrupt file); keep enable/order
+            subsMapFlow.value = subsMapFlow.value.toMutableMap().apply { put(subsId, bundled) }
+            withContext(Dispatchers.IO) {
+                cleanupSubsConfig(subsId, bundled)
+                file.writeText(json.encodeToString(bundled))
+            }
+            LogUtils.d("内置开屏规则已升级", "from=$persistedVersion to=${bundled.version}")
+        } else {
+            // equal or lower: never rewrite, never downgrade
+            LogUtils.d("内置开屏规则版本无需变更", "persisted=$persistedVersion, bundled=${bundled.version}")
+        }
+    }
+}
+
 private suspend fun cleanupSubsConfig(subsId: Long, subsRaw: RawSubscription): Int {
     val globalGroupKeys = subsRaw.globalGroups.map { it.key }.toHashSet()
     val appIdToGroupKeys = subsRaw.apps.associate { a ->

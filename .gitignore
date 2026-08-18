@@ -29,3 +29,9 @@ local.properties
 /.kotlin
 
 /gradle/libs.versions.updates.toml
+
+# session scratch files (screenshots, UI dumps, gpt-web scripts, case fixtures)
+/tmp_*
+/gkd_*
+/gkd_subscriptions/
+/compare_*

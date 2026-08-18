@@ -6,8 +6,11 @@ const val IMPORT_SHORT_URL = "https://i.gkd.li/i/"
 const val SERVER_SCRIPT_URL =
     "https://registry.npmmirror.com/@gkd-kit/config/latest/files/dist/server.js"
 
-const val REPOSITORY_URL = "https://github.com/gkd-kit/gkd"
-const val ISSUES_URL = "${REPOSITORY_URL}/issues"
+// Bypass Ads product links (own repository)
+const val BYPASS_REPOSITORY_URL = "https://github.com/2981554398liujiawei-cyber/bypass-ads"
+const val BYPASS_ISSUES_URL = "${BYPASS_REPOSITORY_URL}/issues"
+// Upstream GKD project (attribution only)
+const val GKD_UPSTREAM_URL = "https://github.com/gkd-kit/gkd"
 
 const val HOME_PAGE_URL = "https://gkd.li"
 

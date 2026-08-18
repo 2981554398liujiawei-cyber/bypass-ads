@@ -8,13 +8,14 @@
 > 更新：2026-08-19 01:35（GKD migration 卡已完成真机验证，见 §3）
 > 更新：2026-08-19 02:0x（GKD 卡收尾：内置订阅 clickCenter 方案 + 品牌化/离线定制提交，见 §3.6）
 > 更新：2026-08-19 02:0x（G2/G3 卡实现完成：内置订阅生成工具 + 首页精简 + 完全离线 + fresh install 真机验证通过，见 §3.7）
+> 更新：2026-08-19 03:5x（G3.1 放行修复卡完成：initBundledSub 原子化 + HTTP 残留清理 + 链接拆分 + Case A-E 真机验证，见 §3.8）
 
 ---
 
 ## 0. 当前分支与 git 状态（最重要）
 
 - **当前分支**：`codex/gkd-migration`（基于 `codex/m2-2-active-experimental-trial` 新建，已 push 到 origin）
-- **HEAD**：`b366e3f`（G2/G3 离线开屏 MVP：品牌化+内置订阅+完全离线）；`97c7644`（本地订阅规则 + kotlin daemon 修复）；`452b9ea` = GKD v1.12.1 基线导入
+- **HEAD**：`b366e3f`（G2/G3 离线开屏 MVP：品牌化+内置订阅+完全离线）；`97c7644`（本地订阅规则 + kotlin daemon 修复）；`452b9ea` = GKD v1.12.1 基线导入；`75bfef1`（HANDOVER 修正：B站替代拼多多）；G3.1 修复卡 commit 见 git log（§3.8）
 - **品牌化/离线定制（已提交）**：applicationId=`app.bypassads`（debug 包 `app.bypassads.debug`）、移除 INTERNET 权限（完全离线）、精简订阅/高级设置页、内置开屏订阅自动初始化（`initBundledSubs`，App.kt）+ `assets/bypass_splash_rules.json`（规则主体在 gitignored 的 `.local.json`，由 `tools/build_splash_bundle.py` 生成）
 - **上游旧分支** `codex/m2-2-active-experimental-trial` HEAD = `b113e18`（Toast 卡已提交推送，未合并——旧内核代码留在该分支）
 - **⚠️ 危险教训**：PowerShell `Copy-Item -Recurse -Force 'A\*' 'B\'` 的通配符会连同**隐藏的 `.git` 目录**一起复制，本会话因此两次把 GKD 的 `.git` 覆盖到 bypass-ads（origin 变成 gkd-kit/gkd、git 历史"丢失"）。**今后复制整个项目必须用 `robocopy <src> <dst> /E /XD .git` 或显式排除 `.git`**。已重建：`git init` + `git remote add origin https://github.com/2981554398liujiawei-cyber/bypass-ads.git` + `git fetch origin`（远程历史完整，全部旧分支都在）。
@@ -107,6 +108,30 @@ GPT 二十节规格要点 → 实现与验证：
 11. **安装坑（新）**：`pm install` 报 INSTALL_FAILED_USER_RESTRICTED → 用 **`adb install --user 0 -r -d -t <apk>`** 成功（-t 允许 testOnly）。
 12. 遗留：首页"无障碍发生故障"显示问题（服务实际绑定运行，UI 状态流滞后）；未做微信/支付宝小程序开屏真机触发（规则已内置）。
 
+---
+
+### §3.8 G3.1 放行修复卡（GPT 审计：不 PASS → 小修后放行）
+
+GPT 审计结论（新会话重建）：b366e3f 主体方向对、非"假完成"；阻断项 3 个，均已修复（commit 见 §0）：
+
+1. **initBundledSubs 升级竞态 → 原子化**：`SubsState.kt` 新增 suspend helper `initBundledSub(bundled)`，在 `updateSubsMutex` 锁内执行（与 initSubsState 串行）；**版本比较读磁盘持久化文件真实 version**（不再依赖启动瞬间未加载的 subsMapFlow）。语义：无 SubsItem → 创建（enable=true）；文件丢失/损坏 → 用 bundle 修复（保留 enable）；`bundle.version > persisted` → 升级；`==` → 不重写；`<` → 不降级。`App.kt` 的 `initBundledSubs()` 只负责解析 assets 后调用 helper。
+2. **HTTP 残留清理**：AndroidManifest **移除 `.service.HttpService` 与 `.service.HttpTileService` 注册**；删除 `HttpTileService.kt`（无其他引用）；`HttpService.kt` 保留为不可达代码（无 Manifest/UI/Tile 入口、App 不自动启动），`httpNotif` 通知项与 `clearHttpSubs()` 保留（App.onCreate 仍调用清理内存订阅）。Quick Settings 可添加 Tile 列表已无 HTTP Server Tile（dumpsys 验证：仅 Gkd/Snapshot/Button/Match/Activity/Event Tile）。
+3. **链接拆分**：`Constants.kt` 新增 `BYPASS_REPOSITORY_URL`（bypass-ads 仓库）/`BYPASS_ISSUES_URL`/`GKD_UPSTREAM_URL`（gkd-kit/gkd），删除旧 REPOSITORY_URL/ISSUES_URL。AboutPage："开源代码"→Bypass Ads 仓库、"问题反馈"→Bypass Ads issues、"基于 GKD·GPL-3.0"→gkd-kit/gkd；CrashReportPage 反馈也指向 Bypass Ads issues；`AppMeta.commitUrl` 指向 Bypass Ads 仓库。
+4. **INTERNET 彻底移除**：合并 manifest 中库（ktor 等）注入的 INTERNET 用 `tools:node="remove"` 强制移除 → **aapt 最终验证无 INTERNET** ✅（applicationId=app.bypassads.debug）。
+5. **措辞修正**：README/HANDOVER 不再把"第三方规则未提交"表述为 license-clean/可再分发——Lin-arm bundle 仅作为本地研发/真机验证输入，公开 APK 规则许可方案后续单独处理。
+
+**Case A-E 真机验证（可重复本地验证，HyperOS）**：
+- Case A fresh install：卸载重装 → 订阅自动创建 v567、UI 开关蓝色（enable=true）✅
+- Case B 用户关闭+升级：UI 关开关（enable=false）→ 文件 version 降为 566 → 重启 → 文件回 567（升级）且开关仍灰（enable 保留）✅
+- Case C 同版本：文件 v567 → 重启 → mtime/md5 完全不变（不重写）✅
+- Case D 防降级：文件改 568 → 重启 → 仍 568（不降级）✅
+- Case E 文件丢失：删 100000001.json → 重启 → 文件自动恢复 v567/170apps，开关仍灰（enable 保留）✅
+
+**真机补充验收**：
+- 首页总开关关闭 → 冷启动 QQ音乐 **开屏广告完整显示未被跳过**（"已暂停·规则暂不执行"）；重新开启 → 冷启动 QQ音乐 **自动跳过**（日志 `gName:开屏广告 status:ok → AttrInfo(text=跳过, clickable=true) → ActionResult(clickCenter, result=true, position=(1084.5,217.0))` → 已进主界面）✅
+- 无障碍服务：force-stop App 后服务被停（Bound services 空、首页显示"无障碍已关闭"）→ settings put 重新启用后恢复（HyperOS 行为，非缺陷）；**验证开屏跳过前必须确认服务 Bound**
+- 构建：kspGkdDebugKotlin + assembleGkdDebug BUILD SUCCESSFUL
+
 ### 3.5 本卡剩余动作（下一会话）
 1. 向 GPT 汇报（模板见 §6），等 GPT 审计 `codex/gkd-migration` 分支。
 2. 下张卡方向（GPT 预告）：GKD 精简 + Bypass Ads 品牌化 + 大规模开屏规则内置/预配置。
@@ -136,9 +161,9 @@ GPT 二十节规格要点 → 实现与验证：
 - [ ] 风险：GKD 规则走本地订阅（`files/subscription/-2.json`），完全离线可行；远程订阅需网络，设备离线时需本地兜底
 - [ ] 风险：`adb install` 被 HyperOS 限制（INSTALL_FAILED_USER_RESTRICTED），后续装新 APK 用 `adb install --user 0 -r -d -t` 方式
 - [x] G2/G3 卡：品牌化 + 完全离线（无 INTERNET）+ 内置订阅自动启用 + 首页精简 + 微信/支付宝小程序规则 + fresh install 真机验证（commit b366e3f）
-- [ ] **待办：向 GPT 汇报 G2/G3（按二十节格式），等 GPT 审计后放行下一卡**
+- [x] G3.1 卡（GPT 审计放行修复卡）：initBundledSub 原子化（磁盘 version + 互斥锁）+ Manifest 移除 HttpService/HttpTileService 注册（删除 HttpTileService.kt，HttpService.kt 保留不可达代码）+ AboutPage 链接拆分（BYPASS_REPOSITORY_URL/BYPASS_ISSUES_URL/GKD_UPSTREAM_URL）+ commitUrl 指向 Bypass Ads 仓库 + Case A-E 验证（见 §3.7 补记）
 - [ ] 风险：KSP/transform 并发构建失败（先跑 ksp 再 assemble 可绕过）；"无障碍发生故障"UI 显示与实际绑定不符（服务可用）
-- [ ] 风险：内置订阅规则来自第三方（Lin-arm，license:null），仅本地生成不提交；如 GPT 要求可换自写规则
+- [ ] 风险：内置订阅规则来自第三方（Lin-arm，license:null），**仅作为本地研发/真机验证输入，不构成公开再分发授权**；公开 APK 规则许可方案后续单独处理（可换自写规则或获得授权的规则源）
 
 ---
 

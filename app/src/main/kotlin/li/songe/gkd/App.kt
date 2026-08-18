@@ -31,25 +31,23 @@ import kotlinx.serialization.Serializable
 import li.songe.gkd.a11y.initA11yFeat
 import li.songe.gkd.data.CrashData
 import li.songe.gkd.data.RawSubscription
-import li.songe.gkd.data.SubsItem
 import li.songe.gkd.data.selfAppInfo
-import li.songe.gkd.db.DbSet
 import li.songe.gkd.notif.initChannel
 import li.songe.gkd.service.clearHttpSubs
 import li.songe.gkd.service.initA11yWhiteAppList
 import li.songe.gkd.shizuku.initShizuku
 import li.songe.gkd.store.initStore
 import li.songe.gkd.util.AndroidTarget
+import li.songe.gkd.util.BYPASS_REPOSITORY_URL
 import li.songe.gkd.util.LogUtils
 import li.songe.gkd.util.PKG_FLAGS
 import li.songe.gkd.util.deviceInfoDesc
 import li.songe.gkd.util.initAppState
+import li.songe.gkd.util.initBundledSub
 import li.songe.gkd.util.initSubsState
 import li.songe.gkd.util.initToast
 import li.songe.gkd.util.launchTry
-import li.songe.gkd.util.subsMapFlow
 import li.songe.gkd.util.toast
-import li.songe.gkd.util.updateSubscription
 import org.lsposed.hiddenapibypass.HiddenApiBypass
 import kotlin.system.exitProcess
 
@@ -69,6 +67,9 @@ const val BYPASS_SPLASH_ASSETS_LOCAL_NAME = "bypass_splash_rules.local.json"
 // Bypass Ads: initialize the bundled splash-ad subscription on first install,
 // and upgrade its rules when an updated APK ships a newer bundle version.
 // Never touches the user's enable state or per-group config.
+// Version comparison is done atomically inside updateSubsMutex against the
+// real persisted file version (see initBundledSub), so it cannot race with
+// initSubsState's async load.
 fun initBundledSubs() {
     appScope.launchTry(Dispatchers.IO) {
         val text = runCatching {
@@ -79,27 +80,7 @@ fun initBundledSubs() {
         val bundled = runCatching {
             RawSubscription.parse(text, json5 = false).copy(id = BYPASS_SPLASH_SUBS_ID)
         }.getOrNull() ?: return@launchTry
-        val items = DbSet.subsItemDao.queryAll()
-        val existing = items.find { it.id == BYPASS_SPLASH_SUBS_ID }
-        val currentRaw = subsMapFlow.value[BYPASS_SPLASH_SUBS_ID]
-        if (existing == null) {
-            // first install: create the subscription and enable it by default
-            updateSubscription(bundled)
-            DbSet.subsItemDao.insert(
-                SubsItem(
-                    id = BYPASS_SPLASH_SUBS_ID,
-                    order = (items.maxByOrNull { it.order }?.order ?: 0) + 1,
-                    enable = true,
-                    updateUrl = null,
-                )
-            )
-            LogUtils.d("内置开屏规则已初始化", "id=$BYPASS_SPLASH_SUBS_ID, version=${bundled.version}")
-        } else if (currentRaw == null || bundled.version > currentRaw.version) {
-            // app update carries a newer bundled rule version: upgrade rules,
-            // keep the user's enable state untouched
-            updateSubscription(bundled)
-            LogUtils.d("内置开屏规则已升级", "version=${bundled.version}")
-        }
+        initBundledSub(bundled)
     }
 }
 
@@ -133,8 +114,8 @@ data class AppMeta(
     val appId: String = app.packageName!!,
     val appName: String = app.getString(R.string.app_name)
 ) {
-    val commitUrl = "https://github.com/gkd-kit/gkd/".run {
-        plus(if (tagName != null) "tree/$tagName" else "commit/$commitId")
+    val commitUrl = BYPASS_REPOSITORY_URL.run {
+        plus(if (tagName != null) "/tree/$tagName" else "/commit/$commitId")
     }
     val isGkdChannel get() = channel == "gkd"
     // Bypass Ads: fully offline product — never check for app updates

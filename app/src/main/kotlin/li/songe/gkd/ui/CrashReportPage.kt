@@ -32,7 +32,7 @@ import li.songe.gkd.ui.share.noRippleClickable
 import li.songe.gkd.ui.style.EmptyHeight
 import li.songe.gkd.ui.style.itemHorizontalPadding
 import li.songe.gkd.ui.style.itemVerticalPadding
-import li.songe.gkd.util.ISSUES_URL
+import li.songe.gkd.util.BYPASS_ISSUES_URL
 import li.songe.gkd.util.throttle
 
 
@@ -69,7 +69,7 @@ fun CrashReportPage() {
                 BottomAppBar {
                     Spacer(modifier = Modifier.weight(1f))
                     TextButton(
-                        onClick = throttle { mainVm.openUrl(ISSUES_URL) },
+                        onClick = throttle { mainVm.openUrl(BYPASS_ISSUES_URL) },
                     ) {
                         Text(text = "问题反馈")
                     }

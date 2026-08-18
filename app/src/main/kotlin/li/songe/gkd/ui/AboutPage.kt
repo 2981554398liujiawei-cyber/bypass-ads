@@ -72,9 +72,10 @@ import li.songe.gkd.ui.share.asMutableState
 import li.songe.gkd.ui.style.EmptyHeight
 import li.songe.gkd.ui.style.itemPadding
 import li.songe.gkd.ui.style.titleItemPadding
-import li.songe.gkd.util.ISSUES_URL
+import li.songe.gkd.util.BYPASS_ISSUES_URL
+import li.songe.gkd.util.BYPASS_REPOSITORY_URL
+import li.songe.gkd.util.GKD_UPSTREAM_URL
 import li.songe.gkd.util.PLAY_STORE_URL
-import li.songe.gkd.util.REPOSITORY_URL
 import li.songe.gkd.util.ShortUrlSet
 import li.songe.gkd.util.UpdateChannelOption
 import li.songe.gkd.util.findOption
@@ -210,7 +211,7 @@ fun AboutPage() {
                 imageVector = null,
                 title = "开源代码",
                 onClick = {
-                    mainVm.openUrl(REPOSITORY_URL)
+                    mainVm.openUrl(BYPASS_REPOSITORY_URL)
                 },
             )
             SettingItem(
@@ -218,7 +219,7 @@ fun AboutPage() {
                 title = "基于 GKD · GPL-3.0",
                 subtitle = "上游项目 github.com/gkd-kit/gkd",
                 onClick = {
-                    mainVm.openUrl(REPOSITORY_URL)
+                    mainVm.openUrl(GKD_UPSTREAM_URL)
                 },
             )
             if (META.isGkdChannel) {
@@ -270,7 +271,7 @@ fun AboutPage() {
                             confirmText = "继续",
                             dismissRequest = true,
                         )
-                        mainVm.openUrl(ISSUES_URL)
+                        mainVm.openUrl(BYPASS_ISSUES_URL)
                     }))
                     .fillMaxWidth()
                     .itemPadding()
