@@ -574,6 +574,7 @@ class BypassAdsAccessibilityService : AccessibilityService() {
      * completes, false when cancelled, null on timeout/unsupported.
      */
     private fun dispatchGestureAt(bounds: IntRect): Boolean? {
+        Log.i("BypassAdsAct", "gesture dispatch begin at ${bounds.centerX},${bounds.centerY} bounds=$bounds")
         val path = android.graphics.Path().apply {
             moveTo(bounds.centerX.toFloat(), bounds.centerY.toFloat())
         }
