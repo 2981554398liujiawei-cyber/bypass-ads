@@ -1,0 +1,28 @@
+{
+  "id": 100000001,
+  "name": "Bypass Ads 开屏规则",
+  "version": 2,
+  "author": "bypass-ads",
+  "apps": [
+    {
+      "id": "com.tencent.qqmusic",
+      "name": "QQ音乐",
+      "groups": [
+        {
+          "key": 1,
+          "name": "开屏广告",
+          "rules": [
+            {
+              "matches": "[text^=\"跳过\"][clickable=true]",
+              "action": "clickCenter"
+            },
+            {
+              "matches": "[text=\"立即跳过\"][clickable=true]",
+              "action": "clickCenter"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

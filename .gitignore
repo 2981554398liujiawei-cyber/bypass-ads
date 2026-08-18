@@ -20,6 +20,11 @@ local.properties
 *.jks
 *.keystore
 
+# Bypass Ads: generated splash rule bundle (third-party rule bodies never committed)
+/app/src/main/assets/bypass_splash_rules.local.json
+# local third-party subscription cache for tools/build_splash_bundle.py
+/tools/.cache/
+
 /.cache
 /.kotlin
 

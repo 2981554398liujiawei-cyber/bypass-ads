@@ -1,6 +1,5 @@
 package li.songe.gkd.ui.home
 
-import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -38,7 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
-import li.songe.gkd.MainActivity
+import kotlinx.coroutines.flow.update
 import li.songe.gkd.R
 import li.songe.gkd.data.SubsConfig
 import li.songe.gkd.permission.appOpsRestrictedFlow
@@ -53,6 +52,7 @@ import li.songe.gkd.shizuku.shizukuContextFlow
 import li.songe.gkd.shizuku.uiAutomationFlow
 import li.songe.gkd.store.actualA11yScopeAppList
 import li.songe.gkd.store.storeFlow
+import li.songe.gkd.ui.AboutRoute
 import li.songe.gkd.ui.ActionLogRoute
 import li.songe.gkd.ui.ActivityLogRoute
 import li.songe.gkd.ui.AppConfigRoute
@@ -79,7 +79,6 @@ import li.songe.gkd.util.throttle
 
 @Composable
 fun useControlPage(): ScaffoldExt {
-    val context = LocalActivity.current as MainActivity
     val mainVm = LocalMainViewModel.current
     val vm = viewModel<HomeVm>()
     val scrollKey = rememberSaveable { mutableIntStateOf(0) }
@@ -113,7 +112,6 @@ fun useControlPage(): ScaffoldExt {
         val store by storeFlow.collectAsState()
 
         val a11yRunning by A11yService.isRunning.collectAsState()
-        val manageRunning by StatusService.isRunning.collectAsState()
         val writeSecureSettings by writeSecureSettingsState.stateFlow.collectAsState()
 
         Column(
@@ -133,7 +131,7 @@ fun useControlPage(): ScaffoldExt {
                     shape = MaterialTheme.shapes.large,
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
                     onClick = throttle {
-                        mainVm.navigateWebPage(ShortUrlSet.URL2)
+                        mainVm.navigatePage(AuthA11yRoute)
                     },
                 ) {
                     Row(
@@ -205,23 +203,18 @@ fun useControlPage(): ScaffoldExt {
             }
 
             PageSwitchItemCard(
-                imageVector = PerfIcon.Notifications,
-                title = "常驻通知",
-                subtitle = "显示运行状态及统计数据",
-                checked = manageRunning && store.enableStatusService,
+                imageVector = PerfIcon.Block,
+                title = "自动跳过开屏广告",
+                subtitle = if (store.enableMatch) {
+                    "已开启 · 冷启动自动跳过开屏广告"
+                } else {
+                    "已暂停 · 规则暂不执行"
+                },
+                checked = store.enableMatch,
                 onCheckedChange = vm.viewModelScope.launchAsFn<Boolean> {
-                    if (it) {
-                        StatusService.requestStart(context)
-                    } else {
-                        StatusService.stop()
-                        storeFlow.value = store.copy(
-                            enableStatusService = false
-                        )
-                    }
+                    storeFlow.update { it.copy(enableMatch = !it.enableMatch) }
                 },
             )
-
-            ServerStatusCard()
 
             PageItemCard(
                 title = "触发记录",
@@ -232,24 +225,13 @@ fun useControlPage(): ScaffoldExt {
                     mainVm.navigatePage(ActionLogRoute())
                 })
 
-            if (ActivityService.isRunning.collectAsState().value) {
-                PageItemCard(
-                    title = "界面日志",
-                    subtitle = "记录打开的应用及界面",
-                    imageVector = PerfIcon.Layers,
-                    onClickLabel = "打开界面日志页面",
-                    onClick = {
-                        mainVm.navigatePage(ActivityLogRoute)
-                    })
-            }
-
             PageItemCard(
-                title = "了解 GKD",
-                subtitle = "查阅规则文档和常见问题",
+                title = "关于 Bypass Ads",
+                subtitle = "版本、开源与版权信息",
                 imageVector = PerfIcon.HelpOutline,
-                onClickLabel = "打开 GKD 文档页面",
+                onClickLabel = "打开关于页面",
                 onClick = {
-                    mainVm.navigatePage(WebViewRoute(initUrl = HOME_PAGE_URL))
+                    mainVm.navigatePage(AboutRoute)
                 })
             Spacer(modifier = Modifier.height(EmptyHeight))
         }

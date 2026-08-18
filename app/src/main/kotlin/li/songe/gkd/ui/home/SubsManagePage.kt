@@ -126,12 +126,8 @@ fun useSubsManagePage(): ScaffoldExt {
             title = "订阅设置",
             content = {
                 val store by storeFlow.collectAsState()
-                TextMenu(
-                    title = "更新订阅",
-                    option = UpdateTimeOption.objects.findOption(store.updateSubsInterval)
-                ) {
-                    storeFlow.update { s -> s.copy(updateSubsInterval = it.value) }
-                }
+                // Bypass Ads: offline product — remote subscription update interval
+                // is irrelevant (bundled splash rules only), surface removed.
                 TextSwitch(
                     title = "耗电警告",
                     subtitle = "启用多条订阅时弹窗确认",
@@ -331,17 +327,21 @@ fun useSubsManagePage(): ScaffoldExt {
         },
         floatingActionButton = {
             AnimationFloatingActionButton(
-                contentDescription = "添加订阅",
-                onClickLabel = "打开添加订阅弹窗",
+                contentDescription = "添加应用规则",
+                onClickLabel = "打开添加应用规则页面",
                 visible = !isSelectedMode,
                 onClick = {
                     if (updateSubsMutex.mutex.isLocked) {
                         toast("正在刷新订阅,请稍后操作")
                     } else {
-                        mainVm.viewModelScope.launchTry {
-                            val url = mainVm.inputSubsLinkOption.getResult() ?: return@launchTry
-                            mainVm.addOrModifySubs(url)
-                        }
+                        mainVm.navigatePage(
+                            UpsertRuleGroupRoute(
+                                subsId = LOCAL_SUBS_ID,
+                                groupKey = null,
+                                appId = "",
+                                forward = true,
+                            )
+                        )
                     }
                 },
                 imageVector = PerfIcon.Add,

@@ -68,7 +68,7 @@ android {
         minSdk = rootProject.ext["android.minSdk"] as Int
         targetSdk = rootProject.ext["android.targetSdk"] as Int
 
-        applicationId = "li.songe.gkd"
+        applicationId = "app.bypassads"
         versionCode = 92
         versionName = "1.12.1"
 
@@ -152,7 +152,10 @@ android {
         }
         all {
             dimension = flavorDimensions.first()
-            manifestPlaceholders["channel"] = name
+            // Bypass Ads: keep flavor name "gkd" for build/task compatibility,
+            // but brand the channel as bypassads so GKD channel-gated surfaces
+            // (donation, update channel picker) stay hidden.
+            manifestPlaceholders["channel"] = "bypassads"
         }
     }
     compileOptions {

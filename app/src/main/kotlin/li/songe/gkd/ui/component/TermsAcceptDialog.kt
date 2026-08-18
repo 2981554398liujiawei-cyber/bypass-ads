@@ -33,41 +33,22 @@ fun TermsAcceptDialog() {
     val stepDataList = remember {
         arrayOf(
             "使用声明" to @Composable {
-                val linkStyles = TextLinkStyles(
-                    style = SpanStyle(
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                )
                 Text(
                     modifier = modifier,
                     text = buildAnnotatedString {
-                        append("感谢使用 GKD！您需要阅读并同意「")
-                        withLink(
-                            LinkAnnotation.Url(
-                                ShortUrlSet.URL12,
-                                linkStyles
-                            )
-                        ) {
-                            append("用户协议")
-                        }
+                        append("感谢使用 Bypass Ads！您需要阅读并同意「")
+                        append("用户协议")
                         append("」和「")
-                        withLink(
-                            LinkAnnotation.Url(
-                                ShortUrlSet.URL11,
-                                linkStyles
-                            )
-                        ) {
-                            append("隐私政策")
-                        }
-                        append("」才能继续使用, 请仔细阅读相关内容")
+                        append("隐私政策")
+                        append("」（均为 GPL-3.0 开源协议下的使用声明，详见项目 LICENSE）")
+                        append("才能继续使用, 请仔细阅读相关内容")
                     },
                 )
             },
             "关于无障碍" to @Composable {
                 Text(
                     modifier = modifier,
-                    text = "GKD 请求使用系统「无障碍 API」获取屏幕信息, 以此基于用户自定义订阅规则执行自动化操作",
+                    text = "Bypass Ads 请求使用系统「无障碍 API」获取屏幕信息, 以此基于内置开屏广告规则执行自动化操作",
                 )
             }
         )

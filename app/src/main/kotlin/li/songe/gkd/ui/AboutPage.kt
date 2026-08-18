@@ -213,6 +213,14 @@ fun AboutPage() {
                     mainVm.openUrl(REPOSITORY_URL)
                 },
             )
+            SettingItem(
+                imageVector = null,
+                title = "基于 GKD · GPL-3.0",
+                subtitle = "上游项目 github.com/gkd-kit/gkd",
+                onClick = {
+                    mainVm.openUrl(REPOSITORY_URL)
+                },
+            )
             if (META.isGkdChannel) {
                 SettingItem(
                     imageVector = null,
@@ -222,19 +230,12 @@ fun AboutPage() {
                     },
                 )
             }
+            // Bypass Ads: offline product — web-hosted terms/privacy pages removed.
             SettingItem(
                 imageVector = null,
                 title = "使用协议",
-                onClick = {
-                    mainVm.navigateWebPage(ShortUrlSet.URL12)
-                },
-            )
-            SettingItem(
-                imageVector = null,
-                title = "隐私政策",
-                onClick = {
-                    mainVm.navigateWebPage(ShortUrlSet.URL11)
-                },
+                subtitle = "GPL-3.0 · 见仓库 LICENSE",
+                onClick = null,
             )
 
             Text(
@@ -256,12 +257,12 @@ fun AboutPage() {
                                     )
                                     append("感谢您愿意花时间反馈，")
                                     withStyle(style = highlightStyle) {
-                                        append("GKD 默认不携带任何规则，只接受应用本体功能相关的反馈")
+                                        append("Bypass Ads 内置开屏广告规则，仅接受应用本体功能相关的反馈")
                                     }
                                     append("\n\n")
-                                    append("请先判断是不是第三方规则订阅的问题，如果是，您应该向规则提供者反馈，而不是在此处反馈。")
+                                    append("请先判断是不是内置规则的问题，如果是，您可以在「关于」页查看规则来源。")
                                     withStyle(style = highlightStyle) {
-                                        append("如果您已经确信是 GKD 应用本体的问题")
+                                        append("如果您已经确信是 Bypass Ads 应用本体的问题")
                                     }
                                     append("，可点击下方继续反馈")
                                 })
