@@ -284,7 +284,7 @@ private fun BypassApp() {
                             onOpenRules = { tab = TAB_RULES },
                         )
 
-                        TAB_RULES -> BypassRulesPage(engine)
+                        TAB_RULES -> BypassRulesPage(engine, onOpenApps = { tab = TAB_APPS })
                     }
                 }
             }

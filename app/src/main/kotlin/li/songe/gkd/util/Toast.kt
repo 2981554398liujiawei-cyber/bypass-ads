@@ -125,10 +125,9 @@ fun showActionToast(rule: ResolvedRule) {
         val t = System.currentTimeMillis()
         if (t - triggerTime > triggerInterval + 100) { // 100ms 保证二次显示的时候上一次已经完全消失
             triggerTime = t
-            val text = storeFlow.value.actionToast
-                .replace($$"${1}", rule.rule.name.toString())
-                .replace($$"${2}", rule.g.group.name)
-                .replace($$"${3}", actionCountFlow.value.toString())
+            // Product-facing success feedback deliberately avoids upstream
+            // rule terminology and uses the Bypass Ads brand everywhere.
+            val text = "✨Bypass Ads✨"
             if (storeFlow.value.useSystemToast) {
                 showSystemToast(text)
             } else {

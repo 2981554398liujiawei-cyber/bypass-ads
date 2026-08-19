@@ -108,6 +108,10 @@ object GkdBypassEngine : BypassEngine {
         recentActions.map { it.firstOrNull() }
             .stateIn(appScope, SharingStarted.Eagerly, null)
 
+    override val skipCount: StateFlow<Int> =
+        DbSet.actionLogDao.query().map { actions -> actions.count { it.subsId == BYPASS_SPLASH_SUBS_ID } }
+            .stateIn(appScope, SharingStarted.Eagerly, 0)
+
     override val genericFallbackEnabled: StateFlow<Boolean> =
         storeFlow.mapState(appScope) { it.enableGenericFallback }
 

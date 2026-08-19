@@ -27,6 +27,9 @@ interface BypassEngine {
     /** Recent skip actions (newest first). */
     val recentActions: StateFlow<List<BypassActionRecord>>
 
+    /** Number of successful actions kept in the Bypass Ads local history. */
+    val skipCount: StateFlow<Int>
+
     /** Conservative generic splash fallback switch (default on). */
     val genericFallbackEnabled: StateFlow<Boolean>
 

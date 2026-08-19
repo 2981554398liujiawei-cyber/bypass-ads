@@ -30,7 +30,7 @@ fun formatBypassTime(epochMs: Long) = SimpleDateFormat("MM-dd HH:mm", Locale.get
 @Composable
 fun BypassHomePage(engine: BypassEngine) {
     val context = LocalContext.current; val state by engine.serviceState.collectAsState()
-    val master by engine.masterEnabled.collectAsState(); val stats by engine.stats.collectAsState(); val fallback by engine.genericFallbackEnabled.collectAsState()
+    val master by engine.masterEnabled.collectAsState(); val stats by engine.stats.collectAsState(); val fallback by engine.genericFallbackEnabled.collectAsState(); val skipped by engine.skipCount.collectAsState()
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         BypassStatusCard(state.label, state.description, state.status == BypassServiceStatus.NORMAL, if (state.status == BypassServiceStatus.NORMAL) null else "开启无障碍") {
             engine.requestServiceRecovery(); context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
@@ -38,9 +38,9 @@ fun BypassHomePage(engine: BypassEngine) {
         Spacer(Modifier.height(14.dp))
         BypassSectionCard("自动跳过开屏广告") { BypassSwitchRow("开屏保护", if (master) "已开启" else "已暂停", master, engine::setMasterEnabled) }
         Spacer(Modifier.height(14.dp))
-        BypassSectionCard("保护范围") { Row { BypassMetric("有专用规则的应用", "${stats.appCount} 个应用", Modifier.weight(1f)); Spacer(Modifier.size(10.dp)); BypassMetric("专用规则组", "${stats.groupCount}", Modifier.weight(1f)) } }
+        BypassSectionCard("保护范围") { Row { BypassMetric("有专用规则的应用", "${stats.appCount} 个应用", Modifier.weight(1f)); Spacer(Modifier.size(10.dp)); BypassMetric("专用规则组", "${stats.groupCount}", Modifier.weight(1f)) }; Spacer(Modifier.height(10.dp)); BypassMutedText("规则总数：${stats.ruleCount} · 通用保护：${if (fallback) "已开启" else "已关闭"}", 13) }
         Spacer(Modifier.height(14.dp))
-        BypassSectionCard("通用开屏保护") { BypassSwitchRow("通用开屏保护", if (fallback) "已开启：尝试跳过标准的「跳过」按钮" else "已关闭：仅使用专用规则", fallback, engine::setGenericFallbackEnabled) }
+        BypassSectionCard("跳过统计") { BypassMetric("本次安装以来", "$skipped 次") }
     }
 }
 
@@ -87,11 +87,11 @@ fun BypassSettingsPage(engine: BypassEngine, onOpenLicenses: () -> Unit, onOpenR
 }
 
 @Composable
-fun BypassRulesPage(engine: BypassEngine) {
+fun BypassRulesPage(engine: BypassEngine, onOpenApps: () -> Unit) {
     val context = LocalContext.current; val scope = rememberCoroutineScope(); val stats by engine.stats.collectAsState(); val fallback by engine.genericFallbackEnabled.collectAsState(); var result by remember { mutableStateOf<String?>(null) }
     val choose = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) scope.launch { val text = runCatching { context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } }.getOrNull(); result = if (text == null) "无法读取所选文件" else engine.importLocalRules(text).message } }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        BypassSectionCard("内置开屏规则") { BypassMutedText("已启用 · ${stats.appCount} 个应用 · ${stats.groupCount} 个专用规则组 · ${stats.ruleCount} 条规则", 13) }
+        BypassSectionCard("当前规则包") { BypassMutedText("名称：Bypass Ads 开屏规则\n来源：内置 / 本地导入\n版本：本机当前版本\n${stats.appCount} 个应用 · ${stats.groupCount} 个专用规则组 · ${stats.ruleCount} 条规则", 13, 20); Spacer(Modifier.height(10.dp)); BypassModeButton("查看已保护应用", false, onOpenApps) }
         Spacer(Modifier.height(14.dp)); BypassSectionCard("通用开屏保护") { BypassSwitchRow("通用开屏保护", if (fallback) "已开启" else "已关闭", fallback, engine::setGenericFallbackEnabled) }
         Spacer(Modifier.height(14.dp)); BypassSectionCard("本地规则包") { BypassMutedText("只接受 JSON / JSON5 中的开屏广告规则；其它规则会被忽略。", 12); Spacer(Modifier.height(10.dp)); BypassModeButton("导入本地规则", false, onClick = { choose.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }); Spacer(Modifier.height(8.dp)); BypassModeButton("恢复内置规则", false, onClick = { scope.launch { result = engine.restoreBundledRules().message } }); result?.let { Text(it, Modifier.padding(top = 10.dp), fontSize = 12.sp, color = BypassPalette.Muted) } }
     }
