@@ -15,6 +15,7 @@ data class SettingsStore(
     val automatorMode: Int = AutomatorModeOption.A11yMode.value,
     val enableShizuku: Boolean = false,
     val enableMatch: Boolean = true,
+    val enableGenericFallback: Boolean = true,
     val enableStatusService: Boolean = false,
     val excludeFromRecents: Boolean = false,
     val captureScreenshot: Boolean = false,

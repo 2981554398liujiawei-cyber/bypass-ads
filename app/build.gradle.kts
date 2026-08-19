@@ -69,8 +69,10 @@ android {
         targetSdk = rootProject.ext["android.targetSdk"] as Int
 
         applicationId = "app.bypassads"
-        versionCode = 92
-        versionName = "1.12.1"
+        // Bypass Ads self-use version; the bundled GKD engine stays at 1.12.1
+        // (kept as an internal constant, not advertised in the product UI).
+        versionCode = 1
+        versionName = "0.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -180,7 +182,7 @@ if (project.hasProperty("GKD_RENAME_APK_FLAG")) {
     androidComponents.onVariants { variant ->
         variant.outputs.onEach { output ->
             output as VariantOutputImpl
-            output.outputFileName = "gkd-v${output.versionName.get()}.apk"
+            output.outputFileName = "bypass-ads-v${output.versionName.get()}.apk"
         }
     }
 }

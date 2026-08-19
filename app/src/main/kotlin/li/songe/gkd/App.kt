@@ -54,6 +54,9 @@ import kotlin.system.exitProcess
 
 val appScope by lazy { MainScope() }
 
+// GKD 原有"受限设置"提示状态（GkdTileService 引用）；Bypass Ads 保留定义以便编译。
+val accessRestrictedSettingsShowFlow = kotlinx.coroutines.flow.MutableStateFlow(false)
+
 // Bypass Ads: stable id of the bundled splash-ad subscription.
 // A large positive id far above typical user subscription ids, so it never
 // collides with user-added remote subscriptions (which use small positive ids).

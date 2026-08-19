@@ -1,0 +1,22 @@
+{
+  "apps": [
+    {
+      "id": "com.tencent.mm",
+      "name": "微信",
+      "groups": [
+        {
+          "name": "开屏广告-微信小程序",
+          "rules": [
+            {
+              "key": 200,
+              "actionDelay": 800,
+              "matches": [
+                "[desc=\"跳过\" || desc=\"跳過\"][visibleToUser=true]"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -8,50 +8,29 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
-import androidx.navigation3.runtime.entryProvider
-import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
-import androidx.navigation3.ui.NavDisplay
 import com.dylanc.activityresult.launcher.PickContentLauncher
 import com.dylanc.activityresult.launcher.StartActivityLauncher
 import com.dylanc.activityresult.launcher.launchForResult
@@ -64,107 +43,54 @@ import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.concurrent.Volatile
+import kotlin.reflect.jvm.jvmName
 import li.songe.gkd.a11y.topActivityFlow
 import li.songe.gkd.a11y.updateSystemDefaultAppId
 import li.songe.gkd.a11y.updateTopActivity
-import li.songe.gkd.permission.AuthDialog
+import li.songe.gkd.bypass.BypassAppsPage
+import li.songe.gkd.bypass.BypassHomePage
+import li.songe.gkd.bypass.BypassLicensesPage
+import li.songe.gkd.bypass.BypassPalette
+import li.songe.gkd.bypass.BypassRecentPage
+import li.songe.gkd.bypass.BypassSettingsPage
+import li.songe.gkd.bypass.BypassTabBar
+import li.songe.gkd.bypass.BypassTitleBar
+import li.songe.gkd.bypass.GkdBypassEngine
 import li.songe.gkd.permission.updatePermissionState
-import li.songe.gkd.service.A11yService
 import li.songe.gkd.service.StatusService
 import li.songe.gkd.service.fixRestartAutomatorService
-import li.songe.gkd.service.updateTopTaskAppId
-import li.songe.gkd.shizuku.automationRegisteredExceptionFlow
 import li.songe.gkd.shizuku.shizukuContextFlow
-import li.songe.gkd.store.storeFlow
-import li.songe.gkd.ui.A11YScopeAppListRoute
-import li.songe.gkd.ui.A11yEventLogPage
-import li.songe.gkd.ui.A11yEventLogRoute
-import li.songe.gkd.ui.A11yScopeAppListPage
-import li.songe.gkd.ui.AboutPage
-import li.songe.gkd.ui.AboutRoute
-import li.songe.gkd.ui.ActionLogPage
-import li.songe.gkd.ui.ActionLogRoute
-import li.songe.gkd.ui.ActivityLogPage
-import li.songe.gkd.ui.ActivityLogRoute
-import li.songe.gkd.ui.AdvancedPage
-import li.songe.gkd.ui.AdvancedPageRoute
-import li.songe.gkd.ui.AppConfigPage
-import li.songe.gkd.ui.AppConfigRoute
-import li.songe.gkd.ui.AppOpsAllowPage
-import li.songe.gkd.ui.AppOpsAllowRoute
-import li.songe.gkd.ui.AuthA11yPage
-import li.songe.gkd.ui.AuthA11yRoute
-import li.songe.gkd.ui.BlockA11yAppListPage
-import li.songe.gkd.ui.BlockA11yAppListRoute
-import li.songe.gkd.ui.CrashReportPage
-import li.songe.gkd.ui.CrashReportRoute
-import li.songe.gkd.ui.EditBlockAppListPage
-import li.songe.gkd.ui.EditBlockAppListRoute
-import li.songe.gkd.ui.ImagePreviewPage
-import li.songe.gkd.ui.ImagePreviewRoute
-import li.songe.gkd.ui.SlowGroupPage
-import li.songe.gkd.ui.SlowGroupRoute
-import li.songe.gkd.ui.SnapshotPage
-import li.songe.gkd.ui.SnapshotPageRoute
-import li.songe.gkd.ui.SubsAppGroupListPage
-import li.songe.gkd.ui.SubsAppGroupListRoute
-import li.songe.gkd.ui.SubsAppListPage
-import li.songe.gkd.ui.SubsAppListRoute
-import li.songe.gkd.ui.SubsCategoryGroupPage
-import li.songe.gkd.ui.SubsCategoryGroupRoute
-import li.songe.gkd.ui.SubsCategoryPage
-import li.songe.gkd.ui.SubsCategoryRoute
-import li.songe.gkd.ui.SubsGlobalGroupExcludePage
-import li.songe.gkd.ui.SubsGlobalGroupExcludeRoute
-import li.songe.gkd.ui.SubsGlobalGroupListPage
-import li.songe.gkd.ui.SubsGlobalGroupListRoute
-import li.songe.gkd.ui.UpsertRuleGroupPage
-import li.songe.gkd.ui.UpsertRuleGroupRoute
-import li.songe.gkd.ui.WebViewPage
-import li.songe.gkd.ui.WebViewRoute
-import li.songe.gkd.ui.component.BuildDialog
-import li.songe.gkd.ui.component.PerfIcon
-import li.songe.gkd.ui.component.ShareLogDlg
-import li.songe.gkd.ui.component.SubsSheet
-import li.songe.gkd.ui.component.TermsAcceptDialog
-import li.songe.gkd.ui.component.TextDialog
-import li.songe.gkd.ui.home.HomePage
-import li.songe.gkd.ui.home.HomeRoute
 import li.songe.gkd.ui.share.FixedWindowInsets
-import li.songe.gkd.ui.share.LocalMainViewModel
-import li.songe.gkd.ui.style.AppTheme
 import li.songe.gkd.util.AndroidTarget
 import li.songe.gkd.util.BarUtils
-import li.songe.gkd.util.EditGithubCookieDlg
 import li.songe.gkd.util.KeyboardUtils
 import li.songe.gkd.util.LogUtils
-import li.songe.gkd.util.ShortUrlSet
-import li.songe.gkd.util.appInfoMapFlow
 import li.songe.gkd.util.componentName
-import li.songe.gkd.util.copyText
 import li.songe.gkd.util.fixSomeProblems
 import li.songe.gkd.util.launchTry
-import li.songe.gkd.util.mapState
-import li.songe.gkd.util.openApp
-import li.songe.gkd.util.openUri
-import li.songe.gkd.util.shizukuAppId
-import li.songe.gkd.util.throttle
 import li.songe.gkd.util.toast
-import kotlin.concurrent.Volatile
-import kotlin.reflect.jvm.jvmName
 
+/**
+ * Bypass Ads product entry.
+ *
+ * The GKD engine (subscriptions, rule resolution, accessibility service) keeps
+ * running underneath; this activity only renders the Bypass Ads product UI and
+ * talks to the engine through [GkdBypassEngine]. No GKD product screens are
+ * reachable from the normal user flow.
+ */
 class MainActivity : ComponentActivity() {
-    val startTime = System.currentTimeMillis()
     val mainVm by viewModels<MainViewModel>()
     val launcher by lazy { StartActivityLauncher(this) }
     val pickContentLauncher by lazy { PickContentLauncher(this) }
 
+    // GKD 原有 UI 组件依赖这些成员（键盘/insets/文件选择）；Bypass Ads 产品壳保留定义。
     val imeFullHiddenFlow = MutableStateFlow(true)
     val imePlayingFlow = MutableStateFlow(false)
 
     private val imeVisible: Boolean
         get() = ViewCompat.getRootWindowInsets(window.decorView)
-            ?.isVisible(WindowInsetsCompat.Type.ime()) == true  // fix #1315
+            ?.isVisible(WindowInsetsCompat.Type.ime()) == true
 
     var topBarWindowInsets by mutableStateOf(WindowInsets(top = BarUtils.getStatusBarHeight()))
 
@@ -196,7 +122,6 @@ class MainActivity : ComponentActivity() {
                 })
         } else {
             KeyboardUtils.registerSoftInputChangedListener(window) { height ->
-                // onEnd
                 imeFullHiddenFlow.update { height == 0 }
             }
         }
@@ -235,113 +160,18 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         fixSomeProblems()
         super.onCreate(savedInstanceState)
-        LogUtils.d()
-        mainVm
+        mainVm // keep GKD engine initialization alive
         launcher
         pickContentLauncher
-        lifecycleScope.launch {
-            storeFlow.mapState(lifecycleScope) { s -> s.excludeFromRecents }.collect {
-                app.activityManager.appTasks.forEach { task ->
-                    task.setExcludeFromRecents(it)
-                }
-            }
-        }
-        addOnNewIntentListener {
-            mainVm.handleIntent(it)
-            intent = null
-        }
         watchKeyboardVisible()
         StatusService.autoStart()
-        if (storeFlow.value.enableBlockA11yAppList) {
-            updateTopTaskAppId(META.appId)
-        }
         setContent {
-            val latestInsets = TopAppBarDefaults.windowInsets
-            val density = LocalDensity.current
-            if (latestInsets.getTop(density) > topBarWindowInsets.getTop(density)) {
-                topBarWindowInsets = FixedWindowInsets(latestInsets)
-            }
-            CompositionLocalProvider(
-                LocalMainViewModel provides mainVm
-            ) {
-                AppTheme {
-                    NavDisplay(
-                        entryDecorators = listOf(
-                            rememberSaveableStateHolderNavEntryDecorator(),
-                            rememberViewModelStoreNavEntryDecorator(),
-                        ),
-                        backStack = mainVm.backStack,
-                        onBack = mainVm::popPage,
-                        entryProvider = entryProvider {
-                            entry<HomeRoute> { HomePage() }
-                            entry<AuthA11yRoute> { AuthA11yPage() }
-                            entry<AboutRoute> { AboutPage() }
-                            entry<BlockA11yAppListRoute> { BlockA11yAppListPage() }
-                            entry<AdvancedPageRoute> { AdvancedPage() }
-                            entry<SnapshotPageRoute> { SnapshotPage() }
-                            entry<AppOpsAllowRoute> { AppOpsAllowPage() }
-                            entry<A11YScopeAppListRoute> { A11yScopeAppListPage() }
-                            entry<ActivityLogRoute> { ActivityLogPage() }
-                            entry<A11yEventLogRoute> { A11yEventLogPage() }
-                            entry<EditBlockAppListRoute> { EditBlockAppListPage() }
-                            entry<SlowGroupRoute> { SlowGroupPage() }
-                            entry<SubsAppListRoute> { SubsAppListPage(it) }
-                            entry<WebViewRoute> { WebViewPage(it) }
-                            entry<SubsCategoryRoute> { SubsCategoryPage(it) }
-                            entry<SubsGlobalGroupListRoute> { SubsGlobalGroupListPage(it) }
-                            entry<SubsGlobalGroupExcludeRoute> { SubsGlobalGroupExcludePage(it) }
-                            entry<ActionLogRoute> { ActionLogPage(it) }
-                            entry<ImagePreviewRoute> { ImagePreviewPage(it) }
-                            entry<UpsertRuleGroupRoute> { UpsertRuleGroupPage(it) }
-                            entry<SubsAppGroupListRoute> { SubsAppGroupListPage(it) }
-                            entry<AppConfigRoute> { AppConfigPage(it) }
-                            entry<CrashReportRoute> { CrashReportPage() }
-                            entry<SubsCategoryGroupRoute> { SubsCategoryGroupPage(it) }
-                        },
-                        transitionSpec = {
-                            slideInHorizontally(initialOffsetX = { it }) togetherWith
-                                    slideOutHorizontally(targetOffsetX = { -it })
-                        },
-                        popTransitionSpec = {
-                            slideInHorizontally(initialOffsetX = { -it }) togetherWith
-                                    slideOutHorizontally(targetOffsetX = { it })
-                        },
-                        predictivePopTransitionSpec = {
-                            slideInHorizontally(initialOffsetX = { -it }) togetherWith
-                                    slideOutHorizontally(targetOffsetX = { it })
-                        },
-                    )
-                    if (!mainVm.termsAcceptedFlow.collectAsState().value) {
-                        TermsAcceptDialog()
-                    } else {
-                        UiAutomationAlreadyRegisteredDlg()
-                        AccessRestrictedSettingsDlg()
-                        ShizukuErrorDialog(mainVm.shizukuErrorFlow)
-                        AuthDialog(mainVm.authReasonFlow)
-                        BuildDialog(mainVm.dialogFlow)
-                        mainVm.uploadOptions.ShowDialog()
-                        EditGithubCookieDlg()
-                        mainVm.updateStatus?.UpgradeDialog()
-                        SubsSheet(mainVm, mainVm.sheetSubsIdFlow)
-                        mainVm.inputSubsLinkOption.ContentDialog()
-                        mainVm.ruleGroupState.Render()
-                        TextDialog(mainVm.textFlow)
-                        ShareLogDlg(mainVm.showShareLogDlgFlow)
-                    }
-                }
-            }
-            LaunchedEffect(null) {
-                intent?.let {
-                    mainVm.handleIntent(it)
-                    intent = null
-                }
-            }
+            BypassApp()
         }
     }
 
     override fun onStart() {
         super.onStart()
-        LogUtils.d()
         activityVisibleState++
         if (topActivityFlow.value.appId != META.appId) {
             synchronized(topActivityFlow) {
@@ -356,7 +186,6 @@ class MainActivity : ComponentActivity() {
     var isFirstResume = true
     override fun onResume() {
         super.onResume()
-        LogUtils.d()
         if (isFirstResume && startTime - app.startTime < 2000) {
             isFirstResume = false
         } else {
@@ -366,14 +195,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
-        LogUtils.d()
         activityVisibleState--
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        LogUtils.d()
-    }
+    private val startTime = System.currentTimeMillis()
 }
 
 @Volatile
@@ -408,153 +233,61 @@ fun syncFixState() {
     }
 }
 
+private const val TAB_HOME = 0
+private const val TAB_APPS = 1
+private const val TAB_RECENT = 2
+private const val TAB_SETTINGS = 3
+
 @Composable
-private fun ShizukuErrorDialog(stateFlow: MutableStateFlow<Throwable?>) {
-    val state = stateFlow.collectAsState().value
-    if (state != null) {
-        val errorText = remember { state.stackTraceToString() }
-        val appInfoCache = appInfoMapFlow.collectAsState().value
-        val installed = appInfoCache.contains(shizukuAppId)
-        AlertDialog(
-            onDismissRequest = { stateFlow.value = null },
-            title = { Text(text = "授权错误") },
-            text = {
-                Column {
-                    Text(
-                        text = if (installed) {
-                            "Shizuku 授权失败，请检查是否运行"
-                        } else {
-                            "Shizuku 授权失败，检测到 Shizuku 未安装，请先下载后安装，如果你是通过其它方式授权，请忽略此提示自行查找原因"
-                        }
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Box(
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        SelectionContainer(
-                            modifier = Modifier
-                                .align(Alignment.TopStart)
-                                .fillMaxWidth()
-                        ) {
-                            Text(
-                                text = errorText,
-                                modifier = Modifier
-                                    .clip(MaterialTheme.shapes.extraSmall)
-                                    .background(MaterialTheme.colorScheme.secondaryContainer)
-                                    .padding(8.dp)
-                                    .heightIn(max = 400.dp)
-                                    .verticalScroll(rememberScrollState()),
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
-                        PerfIcon(
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .clickable(onClick = throttle {
-                                    copyText(errorText)
-                                })
-                                .padding(4.dp)
-                                .size(20.dp),
-                            imageVector = PerfIcon.ContentCopy,
-                            tint = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.75f),
+private fun BypassApp() {
+    var tab by remember { mutableIntStateOf(TAB_HOME) }
+    var showLicenses by remember { mutableIntStateOf(0) }
+    val engine = GkdBypassEngine
+
+    MaterialTheme {
+        Surface(color = BypassPalette.PageBackground, modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .padding(horizontal = 24.dp, vertical = 28.dp),
+            ) {
+                BypassTitleBar(subtitle = "离线自动跳过开屏广告")
+                Spacer(Modifier.height(18.dp))
+                BypassTabBar(
+                    tabs = listOf(
+                        "首页" to TAB_HOME,
+                        "应用" to TAB_APPS,
+                        "最近" to TAB_RECENT,
+                        "设置" to TAB_SETTINGS,
+                    ),
+                    selected = tab,
+                    onSelect = { tab = it },
+                )
+                Spacer(Modifier.height(18.dp))
+
+                if (showLicenses > 0) {
+                    BypassLicensesPage(onBack = { showLicenses = 0 })
+                } else {
+                    when (tab) {
+                        TAB_HOME -> BypassHomePage(
+                            engine = engine,
+                            onOpenApps = { tab = TAB_APPS },
+                            onOpenRecent = { tab = TAB_RECENT },
+                            onOpenSettings = { tab = TAB_SETTINGS },
+                        )
+
+                        TAB_APPS -> BypassAppsPage(engine = engine)
+
+                        TAB_RECENT -> BypassRecentPage(engine = engine)
+
+                        TAB_SETTINGS -> BypassSettingsPage(
+                            engine = engine,
+                            onOpenLicenses = { showLicenses = 1 },
                         )
                     }
                 }
-            },
-            confirmButton = {
-                if (installed) {
-                    TextButton(onClick = {
-                        stateFlow.value = null
-                        openApp(shizukuAppId)
-                    }) {
-                        Text(text = "打开 Shizuku")
-                    }
-                } else {
-                    TextButton(onClick = {
-                        stateFlow.value = null
-                        openUri(ShortUrlSet.URL4)
-                    }) {
-                        Text(text = "去下载")
-                    }
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { stateFlow.value = null }) {
-                    Text(text = "我知道了")
-                }
             }
-        )
-    }
-}
-
-
-val accessRestrictedSettingsShowFlow = MutableStateFlow(false)
-
-@Composable
-fun AccessRestrictedSettingsDlg() {
-    val a11yRunning by A11yService.isRunning.collectAsState()
-    LaunchedEffect(a11yRunning) {
-        if (a11yRunning) {
-            accessRestrictedSettingsShowFlow.value = false
         }
-    }
-    val accessRestrictedSettingsShow by accessRestrictedSettingsShowFlow.collectAsState()
-    val mainVm = LocalMainViewModel.current
-    val isA11yPage = mainVm.topRoute is AuthA11yRoute
-    LaunchedEffect(isA11yPage, accessRestrictedSettingsShow) {
-        if (isA11yPage && accessRestrictedSettingsShow && !a11yRunning) {
-            toast("请重新授权以解除限制")
-            accessRestrictedSettingsShowFlow.value = false
-        }
-    }
-    if (accessRestrictedSettingsShow && !isA11yPage && !a11yRunning) {
-        AlertDialog(
-            title = {
-                Text(text = "权限受限")
-            },
-            text = {
-                Text(text = "当前操作权限「访问受限设置」已被限制, 请先解除限制")
-            },
-            onDismissRequest = {
-                accessRestrictedSettingsShowFlow.value = false
-            },
-            confirmButton = {
-                TextButton({
-                    accessRestrictedSettingsShowFlow.value = false
-                    mainVm.navigateWebPage(ShortUrlSet.URL2)
-                }) {
-                    Text(text = "解除")
-                }
-            },
-            dismissButton = {
-                TextButton({
-                    accessRestrictedSettingsShowFlow.value = false
-                }) {
-                    Text(text = "关闭")
-                }
-            },
-        )
-    }
-}
-
-@Composable
-fun UiAutomationAlreadyRegisteredDlg() {
-    if (automationRegisteredExceptionFlow.collectAsState().value != null) {
-        AlertDialog(
-            onDismissRequest = {
-                automationRegisteredExceptionFlow.value = null
-            },
-            title = { Text(text = "启动失败") },
-            text = {
-                Text(text = "自动化服务启动失败，检测到自动化服务已被其他应用占用，请先关闭已有服务后重试\n\n注：自动化服务只能同时运行一个，请确保没有其他应用或测试框架占用后再启动")
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    automationRegisteredExceptionFlow.value = null
-                }) {
-                    Text(text = "我知道了")
-                }
-            }
-        )
     }
 }
