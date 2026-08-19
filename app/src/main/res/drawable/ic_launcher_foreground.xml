@@ -3,8 +3,10 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Bypass mark: a protected, forward-moving skip chevron. -->
-    <path android:fillColor="@color/ic_launcher_foreground_tint"
-        android:pathData="M54,20C35.2,20 20,35.2 20,54s15.2,34 34,34 34,-15.2 34,-34S72.8,20 54,20zM48,37l20,17 -20,17 -5.3,-6.2L55.4,54 42.7,43.2z" />
-    <path android:fillColor="#E1F2E6" android:pathData="M35,49h17v10H35z" />
+    <path
+        android:fillColor="#111111"
+        android:pathData="M30,27h33c10.5,0 19,8.5 19,19v15c0,10.5 -8.5,19 -19,19H45c-10.5,0 -19,-8.5 -19,-19V31c0,-2.2 1.8,-4 4,-4z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M46,39h8v24h18v7H46z" />
 </vector>

@@ -21,6 +21,12 @@ interface BypassEngine {
     /** Coverage stats of the bundled splash rule set. */
     val stats: StateFlow<BypassRuleStats>
 
+    /** Persisted provenance for the rule package currently selected by the user. */
+    val ruleMetadata: StateFlow<BypassRuleMetadata>
+
+    /** Android permission and background-execution state shown in product UI. */
+    val permissionState: StateFlow<BypassPermissionState>
+
     /** Most recent skip action (null when nothing skipped yet). */
     val latestAction: StateFlow<BypassActionRecord?>
 
@@ -33,15 +39,23 @@ interface BypassEngine {
     /** Conservative generic splash fallback switch (default on). */
     val genericFallbackEnabled: StateFlow<Boolean>
 
+    /** Whether a successful skip should show the branded toast. */
+    val actionToastEnabled: StateFlow<Boolean>
+
     fun setMasterEnabled(enabled: Boolean)
 
     fun setGenericFallbackEnabled(enabled: Boolean)
+
+    fun setActionToastEnabled(enabled: Boolean)
+
+    /** Refresh system-controlled permission state after returning from Settings. */
+    fun refreshPermissionState()
 
     /** Try the existing internal recovery path; callers still offer the
      * system accessibility screen when Android requires user consent. */
     fun requestServiceRecovery()
 
-    suspend fun importLocalRules(source: String): BypassImportResult
+    suspend fun importLocalRules(source: String, sourceFileName: String? = null): BypassImportResult
 
     suspend fun restoreBundledRules(): BypassImportResult
 
@@ -84,6 +98,24 @@ data class BypassRuleStats(
     val appCount: Int = 0,
     val groupCount: Int = 0,
     val ruleCount: Int = 0,
+)
+
+enum class BypassRuleSourceType { BUNDLED, LOCAL_IMPORT }
+
+data class BypassRuleMetadata(
+    val sourceType: BypassRuleSourceType = BypassRuleSourceType.BUNDLED,
+    val bundleVersion: Int? = null,
+    val installedAt: Long = 0L,
+    val appCount: Int = 0,
+    val groupCount: Int = 0,
+    val ruleCount: Int = 0,
+    val sha256: String = "",
+    val sourceFileName: String? = null,
+)
+
+data class BypassPermissionState(
+    val notificationGranted: Boolean = false,
+    val ignoringBatteryOptimizations: Boolean = false,
 )
 
 data class BypassActionRecord(

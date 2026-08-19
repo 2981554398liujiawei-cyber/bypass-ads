@@ -49,11 +49,15 @@ import li.songe.gkd.a11y.topActivityFlow
 import li.songe.gkd.a11y.updateSystemDefaultAppId
 import li.songe.gkd.a11y.updateTopActivity
 import li.songe.gkd.bypass.BypassAppsPage
+import li.songe.gkd.bypass.BypassAboutPage
+import li.songe.gkd.bypass.BypassAdvancedSettingsPage
 import li.songe.gkd.bypass.BypassHomePage
 import li.songe.gkd.bypass.BypassLicensesPage
 import li.songe.gkd.bypass.BypassPalette
 import li.songe.gkd.bypass.BypassRecentPage
+import li.songe.gkd.bypass.BypassRuleDetailPage
 import li.songe.gkd.bypass.BypassRulesPage
+import li.songe.gkd.bypass.BypassServicePermissionsPage
 import li.songe.gkd.bypass.BypassSettingsPage
 import li.songe.gkd.bypass.BypassTabBar
 import li.songe.gkd.bypass.BypassTitleBar
@@ -240,10 +244,12 @@ private const val TAB_RECENT = 2
 private const val TAB_SETTINGS = 3
 private const val TAB_RULES = 4
 
+private enum class BypassSubpage { SERVICE, ADVANCED, ABOUT, LICENSES, RULE_DETAIL }
+
 @Composable
 private fun BypassApp() {
     var tab by remember { mutableIntStateOf(TAB_HOME) }
-    var showLicenses by remember { mutableIntStateOf(0) }
+    var subpage by remember { mutableStateOf<BypassSubpage?>(null) }
     val engine = GkdBypassEngine
 
     MaterialTheme {
@@ -264,13 +270,17 @@ private fun BypassApp() {
                         "设置" to TAB_SETTINGS,
                     ),
                     selected = tab,
-                    onSelect = { tab = it },
+                    onSelect = { tab = it; subpage = null },
                 )
                 Spacer(Modifier.height(18.dp))
 
-                if (showLicenses > 0) {
-                    BypassLicensesPage(onBack = { showLicenses = 0 })
-                } else {
+                when (subpage) {
+                    BypassSubpage.SERVICE -> BypassServicePermissionsPage(engine) { subpage = null }
+                    BypassSubpage.ADVANCED -> BypassAdvancedSettingsPage(engine) { subpage = null }
+                    BypassSubpage.ABOUT -> BypassAboutPage { subpage = null }
+                    BypassSubpage.LICENSES -> BypassLicensesPage { subpage = null }
+                    BypassSubpage.RULE_DETAIL -> BypassRuleDetailPage(engine) { subpage = null }
+                    null -> {
                     when (tab) {
                         TAB_HOME -> BypassHomePage(engine)
 
@@ -279,12 +289,21 @@ private fun BypassApp() {
                         TAB_RECENT -> BypassRecentPage(engine = engine)
 
                         TAB_SETTINGS -> BypassSettingsPage(
-                            engine = engine,
-                            onOpenLicenses = { showLicenses = 1 },
+                            onOpenService = { subpage = BypassSubpage.SERVICE },
                             onOpenRules = { tab = TAB_RULES },
+                            onOpenAdvanced = { subpage = BypassSubpage.ADVANCED },
+                            onOpenRecent = { tab = TAB_RECENT },
+                            onOpenAbout = { subpage = BypassSubpage.ABOUT },
+                            onOpenLicenses = { subpage = BypassSubpage.LICENSES },
                         )
 
-                        TAB_RULES -> BypassRulesPage(engine, onOpenApps = { tab = TAB_APPS })
+                        TAB_RULES -> BypassRulesPage(
+                            engine,
+                            onOpenApps = { tab = TAB_APPS },
+                            onOpenDetail = { subpage = BypassSubpage.RULE_DETAIL },
+                            onOpenAdvanced = { subpage = BypassSubpage.ADVANCED },
+                        )
+                    }
                     }
                 }
             }
