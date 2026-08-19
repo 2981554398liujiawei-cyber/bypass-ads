@@ -3,6 +3,7 @@ include(
     ":app",
     ":hidden_api",
     ":selector",
+    ":testad",
 )
 
 pluginManagement {

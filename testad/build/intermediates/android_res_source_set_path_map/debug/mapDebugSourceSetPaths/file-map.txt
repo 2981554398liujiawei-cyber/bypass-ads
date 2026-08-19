@@ -1,0 +1,8 @@
+app.bypassads.testad-pngs-0 C:\Users\cruelworld\Desktop\codex\bypass-ads\testad\build\generated\res\pngs\debug
+app.bypassads.testad-updated_navigation_xml-1 C:\Users\cruelworld\Desktop\codex\bypass-ads\testad\build\generated\updated_navigation_xml\debug
+app.bypassads.testad-packageDebugResources-2 C:\Users\cruelworld\Desktop\codex\bypass-ads\testad\build\intermediates\incremental\debug\packageDebugResources\merged.dir
+app.bypassads.testad-packageDebugResources-3 C:\Users\cruelworld\Desktop\codex\bypass-ads\testad\build\intermediates\incremental\debug\packageDebugResources\stripped.dir
+app.bypassads.testad-debug-4 C:\Users\cruelworld\Desktop\codex\bypass-ads\testad\build\intermediates\merged_res\debug\mergeDebugResources
+app.bypassads.testad-debug-5 C:\Users\cruelworld\Desktop\codex\bypass-ads\testad\src\debug\res
+app.bypassads.testad-main-6 C:\Users\cruelworld\Desktop\codex\bypass-ads\testad\src\main\res
+gradleHome-0 C:\Users\cruelworld\.gradle
