@@ -53,6 +53,7 @@ import li.songe.gkd.bypass.BypassHomePage
 import li.songe.gkd.bypass.BypassLicensesPage
 import li.songe.gkd.bypass.BypassPalette
 import li.songe.gkd.bypass.BypassRecentPage
+import li.songe.gkd.bypass.BypassRulesPage
 import li.songe.gkd.bypass.BypassSettingsPage
 import li.songe.gkd.bypass.BypassTabBar
 import li.songe.gkd.bypass.BypassTitleBar
@@ -237,6 +238,7 @@ private const val TAB_HOME = 0
 private const val TAB_APPS = 1
 private const val TAB_RECENT = 2
 private const val TAB_SETTINGS = 3
+private const val TAB_RULES = 4
 
 @Composable
 private fun BypassApp() {
@@ -270,12 +272,7 @@ private fun BypassApp() {
                     BypassLicensesPage(onBack = { showLicenses = 0 })
                 } else {
                     when (tab) {
-                        TAB_HOME -> BypassHomePage(
-                            engine = engine,
-                            onOpenApps = { tab = TAB_APPS },
-                            onOpenRecent = { tab = TAB_RECENT },
-                            onOpenSettings = { tab = TAB_SETTINGS },
-                        )
+                        TAB_HOME -> BypassHomePage(engine)
 
                         TAB_APPS -> BypassAppsPage(engine = engine)
 
@@ -284,7 +281,10 @@ private fun BypassApp() {
                         TAB_SETTINGS -> BypassSettingsPage(
                             engine = engine,
                             onOpenLicenses = { showLicenses = 1 },
+                            onOpenRules = { tab = TAB_RULES },
                         )
+
+                        TAB_RULES -> BypassRulesPage(engine)
                     }
                 }
             }

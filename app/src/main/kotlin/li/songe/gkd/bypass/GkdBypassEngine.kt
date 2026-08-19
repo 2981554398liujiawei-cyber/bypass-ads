@@ -7,16 +7,22 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import li.songe.gkd.BYPASS_SPLASH_SUBS_ID
+import li.songe.gkd.BYPASS_SPLASH_ASSETS_LOCAL_NAME
+import li.songe.gkd.BYPASS_SPLASH_ASSETS_NAME
+import li.songe.gkd.app
 import li.songe.gkd.appScope
 import li.songe.gkd.data.AppConfig
+import li.songe.gkd.data.RawSubscription
 import li.songe.gkd.data.SubsConfig
 import li.songe.gkd.db.DbSet
+import li.songe.gkd.service.fixRestartAutomatorService
 import li.songe.gkd.service.A11yService
 import li.songe.gkd.store.storeFlow
 import li.songe.gkd.util.appInfoMapFlow
 import li.songe.gkd.util.launchTry
 import li.songe.gkd.util.mapState
 import li.songe.gkd.util.subsMapFlow
+import li.songe.gkd.util.updateSubscription
 
 /**
  * Key of the generic splash fallback global group; must stay in sync with
@@ -129,6 +135,51 @@ object GkdBypassEngine : BypassEngine {
                     )
             )
         }
+    }
+
+    override fun requestServiceRecovery() {
+        appScope.launchTry(Dispatchers.IO) { fixRestartAutomatorService() }
+    }
+
+    override suspend fun importLocalRules(source: String): BypassImportResult {
+        val parsed = runCatching { RawSubscription.parse(source) }.getOrElse {
+            return BypassImportResult(false, "无法解析规则文件")
+        }
+        val splashApps = parsed.apps.mapNotNull { app ->
+            val groups = app.groups.filter { it.name == "开屏广告" || it.name.startsWith("开屏广告-") }
+            app.takeIf { groups.isNotEmpty() }?.copy(groups = groups)
+        }
+        if (splashApps.isEmpty()) return BypassImportResult(false, "文件中没有可导入的开屏规则")
+        val current = subsMapFlow.value[BYPASS_SPLASH_SUBS_ID]
+        val imported = parsed.copy(
+            id = BYPASS_SPLASH_SUBS_ID,
+            name = "Bypass Ads 开屏规则",
+            version = (current?.version ?: 0) + 1,
+            apps = splashApps,
+            // Never accept external global rules in this product: retain only
+            // our known conservative fallback from the active Bypass bundle.
+            globalGroups = current?.globalGroups ?: emptyList(),
+        )
+        updateSubscription(imported)
+        return BypassImportResult(true, "已导入 ${splashApps.size} 个应用的开屏规则")
+    }
+
+    override suspend fun restoreBundledRules(): BypassImportResult {
+        val raw = runCatching {
+            app.assets.open(BYPASS_SPLASH_ASSETS_LOCAL_NAME).bufferedReader().use { it.readText() }
+        }.recoverCatching {
+            app.assets.open(BYPASS_SPLASH_ASSETS_NAME).bufferedReader().use { it.readText() }
+        }.getOrElse { return BypassImportResult(false, "内置规则包不可用") }
+        val restored = runCatching { RawSubscription.parse(raw, json5 = false) }.getOrElse {
+            return BypassImportResult(false, "内置规则包无效")
+        }
+        val currentVersion = subsMapFlow.value[BYPASS_SPLASH_SUBS_ID]?.version ?: 0
+        updateSubscription(restored.copy(id = BYPASS_SPLASH_SUBS_ID, version = currentVersion + 1))
+        return BypassImportResult(true, "已恢复内置开屏规则")
+    }
+
+    override suspend fun clearRecentActions() {
+        DbSet.actionLogDao.deleteBySubsId(BYPASS_SPLASH_SUBS_ID)
     }
 
     override suspend fun getProtectedApps(): List<BypassAppInfo> {

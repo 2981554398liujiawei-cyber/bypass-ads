@@ -19,6 +19,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import li.songe.gkd.META
+import li.songe.gkd.bypass.BypassPerfTrace
 import li.songe.gkd.data.ActionPerformer
 import li.songe.gkd.data.ActionResult
 import li.songe.gkd.data.AppRule
@@ -114,6 +115,7 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
     private var lastEventTime = 0L
     private val eventDeque = ArrayDeque<A11yEvent>()
     fun onA11yEvent(event: AccessibilityEvent?) {
+        BypassPerfTrace.appSwitch()
         if (!effective) return
         if (!event.isUseful()) return
         // 拒绝副屏无障碍事件
@@ -404,6 +406,7 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
             }
             if (!matchApp) continue
             val target = a11yContext.queryRule(rule, nodeVal) ?: continue
+            BypassPerfTrace.matched(rule.toString())
             if (rule.checkDelay() && rule.actionDelayJob.value == null) {
                 rule.actionDelayJob.value = scope.launch(actionDispatcher) {
                     delay(rule.actionDelay)
@@ -414,7 +417,9 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
             }
             if (rule.status != RuleStatus.StatusOk) break
             if (checkOutDate(activityRule, tempStateEvent)) break
+            BypassPerfTrace.actionStarted(rule.toString())
             val actionResult = rule.performAction(target)
+            BypassPerfTrace.actionFinished(rule.toString())
             if (actionResult.result) {
                 val topActivity = topActivityFlow.value
                 rule.trigger()

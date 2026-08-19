@@ -34,6 +34,16 @@ interface BypassEngine {
 
     fun setGenericFallbackEnabled(enabled: Boolean)
 
+    /** Try the existing internal recovery path; callers still offer the
+     * system accessibility screen when Android requires user consent. */
+    fun requestServiceRecovery()
+
+    suspend fun importLocalRules(source: String): BypassImportResult
+
+    suspend fun restoreBundledRules(): BypassImportResult
+
+    suspend fun clearRecentActions()
+
     /** Apps that currently have at least one splash rule in the bundled set. */
     suspend fun getProtectedApps(): List<BypassAppInfo>
 
@@ -86,3 +96,5 @@ data class BypassAppInfo(
     val enabled: Boolean,
     val groupCount: Int,
 )
+
+data class BypassImportResult(val accepted: Boolean, val message: String)
