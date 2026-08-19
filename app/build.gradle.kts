@@ -151,13 +151,20 @@ android {
         create("play") {
             signingConfig = playSigningConfig
             resValue("bool", "is_accessibility_tool", "false")
+            manifestPlaceholders["channel"] = "bypassads"
+        }
+        create("fulltools") {
+            signingConfig = gkdSigningConfig
+            applicationIdSuffix = ".fulltools"
+            resValue("bool", "is_accessibility_tool", "true")
+            manifestPlaceholders["channel"] = "fulltools"
         }
         all {
             dimension = flavorDimensions.first()
             // Bypass Ads: keep flavor name "gkd" for build/task compatibility,
             // but brand the channel as bypassads so GKD channel-gated surfaces
             // (donation, update channel picker) stay hidden.
-            manifestPlaceholders["channel"] = "bypassads"
+            manifestPlaceholders.putIfAbsent("channel", "bypassads")
         }
     }
     compileOptions {

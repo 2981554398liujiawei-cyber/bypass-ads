@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Build the Bypass Ads bundled splash-ad subscription.
+"""Build the Bypass Ads bundled advertising subscription.
 
 Pipeline (single source of truth for the self-use rule stack):
 
-    third-party splash rules (开屏广告* only)
+    third-party advertising rules (开屏/全屏/局部/分段广告)
             ↓ filter
     merge rules/bypass_overrides.json   (Bypass-owned overrides, tracked in git)
             ↓
     append host rules (WeChat / Alipay miniprogram host patches)
             ↓
-    append conservative generic splash fallback (global group)
+    retain mature splash global groups, or append a conservative fallback
             ↓
     validate + report
             ↓
@@ -32,18 +32,26 @@ import sys
 from pathlib import Path
 
 SPLASH_GROUP_PREFIX = "开屏广告"
+FULLSCREEN_GROUP_PREFIX = "全屏广告"
+LOCAL_GROUP_PREFIX = "局部广告"
+SEGMENT_GROUP_PREFIX = "分段广告"
+AD_GROUP_PREFIXES = (
+    SPLASH_GROUP_PREFIX,
+    FULLSCREEN_GROUP_PREFIX,
+    LOCAL_GROUP_PREFIX,
+    SEGMENT_GROUP_PREFIX,
+)
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT = REPO_ROOT / "app/src/main/assets/bypass_splash_rules.local.json"
 OVERRIDES_PATH = REPO_ROOT / "rules/bypass_overrides.json"
+CATEGORY_MAP_PATH = REPO_ROOT / "rules/category_map.json"
 
 # ---------------------------------------------------------------------------
-# Conservative generic splash fallback (global group).
-#
-# Only matches a short, visible, clickable "跳过/跳過/Skip" button. Never acts
-# on clickable=false nodes (no clickCenter gestures here). High-risk apps are
-# excluded via the `apps` list (enable=false), so banking / payment /
-# authentication / password-manager apps are only ever handled by precise
-# per-app rules, never by this generic rule.
+# Conservative generic splash fallback (global group). The mature source
+# global rule is preferred. This group is emitted only when the source has no
+# splash global rule, so broad global selectors never compete with each other.
+# The last rule uses clickCenter only for a short, visible, skip-semantic node
+# in the opening window. All risky application classes are explicitly blocked.
 # ---------------------------------------------------------------------------
 GENERIC_FALLBACK_GROUP = {
     "key": 9000,
@@ -55,10 +63,20 @@ GENERIC_FALLBACK_GROUP = {
     "rules": [
         {
             "key": 0,
-            "matches": [
-                '[text="跳过" || text="跳過" || text="Skip"][clickable=true][visibleToUser=true][text.length<10][width<400 && height<200]'
+            "excludeMatches": '[text="NEXT" || text="下一步" || text="完成" || text="设置" || text="搜索" || text="历史记录" || text*="阅读并同意" || text*="跳过片头" || text*="跳过片尾" || text*="跳过视频" || text="取消" || text*="退出" || text="帮助"][visibleToUser=true]',
+            "anyMatches": [
+                '[clickable=true][visibleToUser=true][width<500 && height<300][(text.length<10 && (text*="跳过" || text*="跳 过" || text*="跳過" || text~="(?is).*skip.*")) || (desc.length<10 && (desc*="跳过" || desc*="跳過" || desc~="(?is).*skip.*")) || (vid~="(?is).*skip.*" && vid!~="(?is).*video.*" && vid!~="(?is).*head.*" && vid!~="(?is).*tail.*") || id$="tt_splash_skip_btn"]',
+                '@[clickable=true][visibleToUser=true][width<500 && height<300] > [childCount=0][visibleToUser=true][(text.length<10 && (text*="跳过" || text*="跳 过" || text*="跳過" || text~="(?is).*skip.*")) || (desc.length<10 && (desc*="跳过" || desc*="跳過" || desc~="(?is).*skip.*")) || (vid~="(?is).*skip.*" && vid!~="(?is).*video.*" && vid!~="(?is).*head.*" && vid!~="(?is).*tail.*") || id$="tt_splash_skip_btn"]'
             ],
-        }
+        },
+        {
+            "key": 1,
+            "action": "clickCenter",
+            "excludeMatches": '[text="NEXT" || text="下一步" || text="完成" || text="设置" || text="搜索" || text="历史记录" || text*="阅读并同意" || text*="跳过片头" || text*="跳过片尾" || text*="跳过视频" || text="取消" || text*="退出" || text="帮助"][visibleToUser=true]',
+            "anyMatches": [
+                '[clickable=false][childCount=0][visibleToUser=true][width<300 && height<200][(text.length<10 && (text*="跳过" || text*="跳 过" || text*="跳過" || text~="(?is).*skip.*")) || (desc.length<10 && (desc*="跳过" || desc*="跳過" || desc~="(?is).*skip.*")) || (vid~="(?is).*skip.*" && vid!~="(?is).*video.*" && vid!~="(?is).*head.*" && vid!~="(?is).*tail.*") || id$="tt_splash_skip_btn"]'
+            ]
+        },
     ],
     # enable=false -> these apps are excluded from the generic fallback.
     # Hosts with their own precise rules plus high-risk categories.
@@ -118,6 +136,53 @@ GENERIC_FALLBACK_GROUP = {
         {"id": "app.bypassads.debug", "enable": False},
     ],
 }
+
+# Source-global rules remain the primary broad matcher. When present, these
+# Bypass-owned rules are appended to that same mature group rather than
+# creating a competing second global group. They cover two interaction shapes
+# that the current source group can identify but cannot safely actuate:
+# a bounded clickable parent and a small non-clickable skip target.
+SOURCE_GLOBAL_REINFORCEMENT_RULES = (
+    {
+        "name": "Bypass Ads 可点击父节点补强",
+        "excludeMatches": '[text="NEXT" || text="下一步" || text="完成" || text="设置" || text="搜索" || text="历史记录" || text*="阅读并同意" || text*="跳过片头" || text*="跳过片尾" || text*="跳过视频" || text="取消" || text*="退出" || text="帮助"][visibleToUser=true]',
+        "anyMatches": [
+            '@[clickable=true][visibleToUser=true][width<500 && height<300] > [childCount=0][visibleToUser=true][(text.length<10 && (text*="跳过" || text*="跳 过" || text*="跳過" || text~="(?is).*skip.*")) || (desc.length<10 && (desc*="跳过" || desc*="跳過" || desc~="(?is).*skip.*")) || (vid~="(?is).*skip.*" && vid!~="(?is).*video.*" && vid!~="(?is).*head.*" && vid!~="(?is).*tail.*") || id$="tt_splash_skip_btn"]'
+        ],
+    },
+    {
+        "name": "Bypass Ads 安全手势补强",
+        "action": "clickCenter",
+        "excludeMatches": '[text="NEXT" || text="下一步" || text="完成" || text="设置" || text="搜索" || text="历史记录" || text*="阅读并同意" || text*="跳过片头" || text*="跳过片尾" || text*="跳过视频" || text="取消" || text*="退出" || text="帮助"][visibleToUser=true]',
+        "anyMatches": [
+            '[clickable=false][childCount=0][visibleToUser=true][width<300 && height<200][(text.length<10 && (text*="跳过" || text*="跳 过" || text*="跳過" || text~="(?is).*skip.*")) || (desc.length<10 && (desc*="跳过" || desc*="跳過" || desc~="(?is).*skip.*")) || (vid~="(?is).*skip.*" && vid!~="(?is).*video.*" && vid!~="(?is).*head.*" && vid!~="(?is).*tail.*") || id$="tt_splash_skip_btn"]'
+        ],
+    },
+)
+
+
+def reinforce_source_global_groups(groups: list) -> int:
+    """Add Bypass-owned safe actuation to one retained source-global group.
+
+    The primary mature group stays responsible for broad matching. The two
+    additions only cover interaction shapes that need a different target or
+    action; marker names make the merge idempotent across repeated builds.
+    """
+    if not groups:
+        return 0
+    target = next((g for g in groups if g.get("name") == "开屏广告-全局"), groups[0])
+    rules = target.setdefault("rules", [])
+    existing_names = {rule.get("name") for rule in rules}
+    next_key = max((rule.get("key", -1) for rule in rules if isinstance(rule.get("key", -1), int)), default=-1) + 1
+    added = 0
+    for template in SOURCE_GLOBAL_REINFORCEMENT_RULES:
+        if template["name"] in existing_names:
+            continue
+        rules.append({**template, "key": next_key})
+        existing_names.add(template["name"])
+        next_key += 1
+        added += 1
+    return added
 
 
 def strip_json5(text: str) -> str:
@@ -188,6 +253,72 @@ def is_splash_group(name: str) -> bool:
     return name == SPLASH_GROUP_PREFIX or name.startswith(SPLASH_GROUP_PREFIX + "-")
 
 
+def is_ad_group(name: str) -> bool:
+    return any(name == prefix or name.startswith(prefix + "-") for prefix in AD_GROUP_PREFIXES)
+
+
+def is_splash_global_group(name: str) -> bool:
+    return is_splash_group(name)
+
+
+def product_categories(source_categories: list) -> list:
+    """Keep stable GKD category keys while setting Bypass product defaults."""
+    defaults = {
+        SPLASH_GROUP_PREFIX: True,
+        FULLSCREEN_GROUP_PREFIX: True,
+        LOCAL_GROUP_PREFIX: False,
+        SEGMENT_GROUP_PREFIX: False,
+    }
+    categories = []
+    for category in source_categories:
+        name = category.get("name", "")
+        if name in defaults:
+            categories.append({**category, "enable": defaults[name]})
+    return categories
+
+
+def load_category_map() -> dict:
+    """Load the tracked category policy used by both the generator audit and
+    the Android product facade. Keeping this checked here catches accidental
+    drift between the build-time policy and the packaged asset."""
+    if not CATEGORY_MAP_PATH.exists():
+        raise ValueError(f"missing category map: {CATEGORY_MAP_PATH}")
+    category_map = json.loads(CATEGORY_MAP_PATH.read_text(encoding="utf-8"))
+    valid = {"SPLASH", "IN_APP_FULLSCREEN", "MARKETING_POPUP", "OTHER_CLOSABLE"}
+    invalid = {
+        key: value for key, value in category_map.get("overrides", {}).items()
+        if value not in valid
+    }
+    if invalid:
+        raise ValueError(f"invalid category override values: {invalid}")
+    return category_map
+
+
+def classify_product_category(app_id: str, group_name: str, category_map: dict) -> str:
+    override = category_map.get("overrides", {}).get(f"{app_id}/{group_name}")
+    if override:
+        return override
+    if any(word and word.lower() in group_name.lower() for word in category_map.get("marketingKeywords", [])):
+        return "MARKETING_POPUP"
+    if is_splash_group(group_name):
+        return "SPLASH"
+    if group_name == FULLSCREEN_GROUP_PREFIX or group_name.startswith(FULLSCREEN_GROUP_PREFIX + "-"):
+        return "IN_APP_FULLSCREEN"
+    return "OTHER_CLOSABLE"
+
+
+def validate_category_map(bundle: dict, category_map: dict) -> list:
+    """Ensure explicit overrides address real advertising groups and report a
+    deterministic category distribution for the build audit."""
+    available = {
+        f"{app.get('id')}/{group.get('name')}"
+        for app in bundle.get("apps", [])
+        for group in app.get("groups", [])
+    }
+    errors = [f"分类覆盖不存在: {key}" for key in category_map.get("overrides", {}) if key not in available]
+    return errors
+
+
 def load_subscription(raw: str):
     """Parse a GKD subscription that may be JSON or JSON5. Prefers the json5
     library when installed; falls back to the built-in minimal cleaner."""
@@ -224,12 +355,18 @@ def apply_overrides(apps: list, overrides: dict) -> int:
         for ov_group in ov_app.get("groups", []):
             group = next((g for g in app["groups"] if g.get("name") == ov_group.get("name")), None)
             if group is None:
+                # Override groups can carry matching-policy fields such as
+                # ignoreGlobalGroupMatch. Keep those fields when creating a
+                # new group; otherwise a source global rule can accidentally
+                # suppress the deterministic override's companion coverage.
                 group = {
-                    "key": max((g.get("key", 0) for g in app["groups"]), default=-1) + 1,
-                    "name": ov_group["name"],
-                    "matchTime": 10000,
-                    "rules": [],
+                    key: value
+                    for key, value in ov_group.items()
+                    if key not in {"key", "rules"}
                 }
+                group["key"] = max((g.get("key", 0) for g in app["groups"]), default=-1) + 1
+                group.setdefault("matchTime", 10000)
+                group["rules"] = []
                 app["groups"].append(group)
             existing = group.get("rules", [])
             for rule in ov_group.get("rules", []):
@@ -261,15 +398,21 @@ def add_generic_fallback(bundle: dict) -> int:
 def validate_bundle(bundle: dict) -> list:
     """Validate the final bundle. Returns a list of error strings (empty = ok)."""
     errors = []
-    # 1. only splash groups allowed
+    # 1. only product advertising groups are allowed
     for app in bundle.get("apps", []):
         for g in app.get("groups", []):
-            if not is_splash_group(g.get("name", "")):
-                errors.append(f"非开屏组: {app.get('id')}/{g.get('name')}")
-    # 2. globalGroups: only our generic fallback allowed
+            if not is_ad_group(g.get("name", "")):
+                errors.append(f"非广告组: {app.get('id')}/{g.get('name')}")
+    # 2. globalGroups: splash groups only; fallback is used only if absent.
     for g in bundle.get("globalGroups", []):
-        if g.get("name") != GENERIC_FALLBACK_GROUP["name"]:
+        if not is_splash_global_group(g.get("name", "")):
             errors.append(f"非法的全局组: {g.get('name')}")
+    source_global = [g for g in bundle.get("globalGroups", []) if g.get("name") != GENERIC_FALLBACK_GROUP["name"]]
+    fallback = [g for g in bundle.get("globalGroups", []) if g.get("name") == GENERIC_FALLBACK_GROUP["name"]]
+    if source_global and fallback:
+        errors.append("成熟全局开屏规则与 Bypass 兜底规则同时存在")
+    if not source_global and len(fallback) != 1:
+        errors.append("缺少通用开屏规则")
     # 3. presence checks
     app_ids = {a.get("id") for a in bundle.get("apps", [])}
     if "com.tencent.qqmusic" not in app_ids:
@@ -331,6 +474,11 @@ def main() -> int:
         print(f"ERROR: failed to parse {src}: {e}", file=sys.stderr)
         print("Note: strings must use double quotes; comments/trailing commas are OK.", file=sys.stderr)
         return 1
+    try:
+        category_map = load_category_map()
+    except Exception as e:
+        print(f"ERROR: failed to load category map: {e}", file=sys.stderr)
+        return 1
 
     apps_in = data.get("apps", [])
     total_groups = 0
@@ -340,12 +488,12 @@ def main() -> int:
     for app in apps_in:
         groups = app.get("groups", [])
         total_groups += len(groups)
-        splash = [g for g in groups if is_splash_group(g.get("name", ""))]
-        if not splash:
+        ad_groups = [g for g in groups if is_ad_group(g.get("name", ""))]
+        if not ad_groups:
             continue
-        kept_groups += len(splash)
-        kept_rules += sum(len(g.get("rules", [])) for g in splash)
-        kept_apps.append({**app, "groups": splash})
+        kept_groups += len(ad_groups)
+        kept_rules += sum(len(g.get("rules", [])) for g in ad_groups)
+        kept_apps.append({**app, "groups": ad_groups})
 
     # Bypass-owned overrides (tracked in git)
     overrides_added = 0
@@ -361,16 +509,18 @@ def main() -> int:
 
     bundle = {
         "id": data.get("id", 100000001),
-        "name": "Bypass Ads 开屏规则",
+        "name": "Bypass Ads 广告规则",
         "version": data.get("version", 1),
         "author": data.get("author", "bypass-ads"),
-        "globalGroups": [],
-        "categories": [c for c in data.get("categories", []) if c.get("name", "").startswith(SPLASH_GROUP_PREFIX)],
+        "globalGroups": [g for g in data.get("globalGroups", []) if is_splash_global_group(g.get("name", ""))],
+        "categories": product_categories(data.get("categories", [])),
         "apps": kept_apps,
     }
-    fallback_added = add_generic_fallback(bundle)
+    source_globals_kept = len(bundle["globalGroups"])
+    source_global_reinforcements = reinforce_source_global_groups(bundle["globalGroups"])
+    fallback_added = 0 if source_globals_kept else add_generic_fallback(bundle)
 
-    errors = validate_bundle(bundle)
+    errors = validate_bundle(bundle) + validate_category_map(bundle, category_map)
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text(json.dumps(bundle, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -378,13 +528,26 @@ def main() -> int:
     print(f"input subscription : {src}")
     print(f"  total apps       : {len(apps_in)}")
     print(f"  total rule groups: {total_groups}")
-    print("filtered splash only:")
+    print("filtered advertising groups:")
     print(f"  kept apps        : {len(kept_apps)}")
     print(f"  kept groups      : {kept_groups}")
     print(f"  kept rules       : {kept_rules}")
     print(f"overrides added    : {overrides_added}")
-    print(f"generic fallback   : {'added' if fallback_added else 'already present'}")
+    source_splash_globals = [g for g in data.get("globalGroups", []) if is_splash_global_group(g.get("name", ""))]
+    print(f"source global groups input: {len(source_splash_globals)}")
+    print(f"source global groups kept : {source_globals_kept}")
+    print(f"source global reinforcements: {source_global_reinforcements}")
+    print(f"generic fallback          : {'added' if fallback_added else 'not used'}")
     print(f"final apps/groups/rules: {summary['apps']}/{summary['groups']}/{summary['rules']}")
+    category_counts = {}
+    for app_rule in kept_apps:
+        for group in app_rule["groups"]:
+            category = classify_product_category(app_rule["id"], group["name"], category_map)
+            category_counts[category] = category_counts.get(category, 0) + 1
+    print("product category groups: " + ", ".join(
+        f"{category}={category_counts.get(category, 0)}"
+        for category in ("SPLASH", "IN_APP_FULLSCREEN", "MARKETING_POPUP", "OTHER_CLOSABLE")
+    ))
     for want in ("com.tencent.qqmusic", "com.tencent.mm", "com.eg.android.AlipayGphone"):
         hit = next((a for a in kept_apps if a.get("id") == want), None)
         if hit:

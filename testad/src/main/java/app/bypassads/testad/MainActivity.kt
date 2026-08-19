@@ -5,11 +5,13 @@ import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 
 /** Debug/self-use deterministic splash scenes. This module is never part of
@@ -21,19 +23,24 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         root = FrameLayout(this).apply { setBackgroundColor(Color.WHITE) }
         setContentView(root)
-        showPicker()
+        intent.getStringExtra(EXTRA_SCENARIO)?.takeIf { it in scenarioNames }?.let(::showScene) ?: showPicker()
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.getStringExtra(EXTRA_SCENARIO)?.takeIf { it in scenarioNames }?.let(::showScene) ?: showPicker()
     }
 
     private fun showPicker() {
-        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(48), dp(24), dp(24)) }
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(48), dp(24), dp(24))
+        }
         list.addView(TextView(this).apply { text = "Bypass Ads · 开屏回归测试"; textSize = 21f; setTextColor(Color.BLACK) })
-        list.addView(TextView(this).apply { text = "仅用于 debug/self-use：精确规则、通用规则和安全拒绝场景。"; setTextColor(Color.DKGRAY) })
-        sceneButton(list, "A 精确规则：跳过广告", "exact")
-        sceneButton(list, "B 通用规则：跳过", "generic")
-        sceneButton(list, "C 非广告：下一步 / 取消 / 关闭", "safe")
-        sceneButton(list, "D Master OFF：跳过", "master-off")
-        sceneButton(list, "E Per-app OFF：跳过广告", "app-off")
-        setScene(list)
+        list.addView(TextView(this).apply { text = "仅用于 debug/self-use；每个场景也可通过 adb extra 独立启动。"; setTextColor(Color.DKGRAY) })
+        scenarioNames.forEach { mode -> sceneButton(list, scenarioLabel(mode), mode) }
+        setScene(ScrollView(this).apply { addView(list) })
     }
 
     private fun sceneButton(parent: LinearLayout, label: String, mode: String) {
@@ -42,23 +49,101 @@ class MainActivity : Activity() {
 
     private fun showScene(mode: String) {
         val scene = FrameLayout(this).apply { setBackgroundColor(Color.rgb(25, 31, 46)) }
-        scene.addView(TextView(this).apply { text = "测试场景：$mode"; textSize = 17f; setTextColor(Color.WHITE) }, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { setMargins(dp(24), dp(64), 0, 0) })
+        scene.addView(TextView(this).apply {
+            text = "测试场景 ${mode.uppercase()}: ${scenarioLabel(mode)}"
+            textSize = 17f
+            setTextColor(Color.WHITE)
+        }, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { setMargins(dp(24), dp(64), 0, 0) })
         when (mode) {
-            "safe" -> listOf("下一步", "取消", "关闭").forEachIndexed { index, text -> scene.addView(button(text, false), FrameLayout.LayoutParams(dp(160), dp(56), Gravity.CENTER).apply { topMargin = dp((index - 1) * 80) }) }
-            "exact", "app-off" -> scene.addView(button("跳过广告", true), topEndParams())
-            else -> scene.addView(button("跳过", true), topEndParams())
+            "a" -> scene.addView(skipTarget(text = "跳过广告") { showResult(mode) }, topEndParams())
+            "b" -> scene.addView(skipTarget(desc = "跳过") { showResult(mode) }, topEndParams())
+            "c" -> scene.addView(skipTarget(id = R.id.splash_skip_control) { showResult(mode) }, topEndParams())
+            "d" -> addClickableParent(scene, mode)
+            "e" -> addGestureSafeTarget(scene, mode)
+            "f" -> scene.addView(skipTarget(text = "NEXT") { showUnexpectedAction(mode) }, topEndParams())
+            "g" -> scene.addView(skipTarget(text = "跳过片头") { showUnexpectedAction(mode) }, topEndParams())
+            "h", "i" -> scene.addView(skipTarget(text = "跳过") { showUnexpectedAction(mode) }, topEndParams())
+            "j" -> scene.addView(skipTarget(desc = "跳过") { showUnexpectedAction(mode) }, topEndParams())
         }
         setScene(scene)
     }
 
-    private fun button(text: String, clickable: Boolean) = TextView(this).apply {
-        this.text = text; textSize = 16f; gravity = Gravity.CENTER; setTextColor(Color.WHITE)
-        background = GradientDrawable().apply { setColor(Color.rgb(37, 123, 229)); cornerRadius = dp(14).toFloat() }
-        isClickable = clickable; isFocusable = clickable
-        setOnClickListener { (parent as? ViewGroup)?.removeView(this); showPicker() }
+    private fun addClickableParent(scene: FrameLayout, mode: String) {
+        val parent = FrameLayout(this).apply {
+            isClickable = true
+            setOnClickListener { showResult(mode) }
+            background = targetBackground()
+        }
+        parent.addView(skipTarget(text = "跳过", clickable = false), FrameLayout.LayoutParams(-1, -1))
+        scene.addView(parent, topEndParams())
     }
 
-    private fun topEndParams() = FrameLayout.LayoutParams(dp(120), dp(56), Gravity.TOP or Gravity.END).apply { topMargin = dp(120); marginEnd = dp(24) }
+    private fun addGestureSafeTarget(scene: FrameLayout, mode: String) {
+        val target = skipTarget(text = "跳过", clickable = false)
+        scene.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_UP &&
+                event.x >= target.left && event.x <= target.right &&
+                event.y >= target.top && event.y <= target.bottom
+            ) {
+                showResult(mode)
+            }
+            true
+        }
+        scene.addView(target, topEndParams())
+    }
+
+    private fun skipTarget(
+        text: String = "",
+        desc: String? = null,
+        id: Int = View.NO_ID,
+        clickable: Boolean = true,
+        onClick: (() -> Unit)? = null,
+    ) = TextView(this).apply {
+        this.text = text
+        contentDescription = desc
+        this.id = id
+        textSize = 16f
+        gravity = Gravity.CENTER
+        setTextColor(Color.WHITE)
+        background = GradientDrawable().apply { setColor(Color.rgb(37, 123, 229)); cornerRadius = dp(14).toFloat() }
+        isClickable = clickable
+        isFocusable = clickable
+        onClick?.let { handler -> setOnClickListener { handler() } }
+    }
+
+    private fun targetBackground() = GradientDrawable().apply { setColor(Color.rgb(37, 123, 229)); cornerRadius = dp(14).toFloat() }
+    private fun showResult(mode: String) = setScene(TextView(this).apply {
+        text = "测试已跳过 (${mode.uppercase()})"
+        textSize = 22f
+        gravity = Gravity.CENTER
+        setTextColor(Color.rgb(36, 112, 69))
+    })
+    private fun showUnexpectedAction(mode: String) = setScene(TextView(this).apply {
+        text = "错误：发生了不应执行的动作 (${mode.uppercase()})"
+        textSize = 20f
+        gravity = Gravity.CENTER
+        setTextColor(Color.rgb(180, 52, 43))
+    })
+    private fun topEndParams() = FrameLayout.LayoutParams(dp(88), dp(40), Gravity.TOP or Gravity.END).apply { topMargin = dp(120); marginEnd = dp(24) }
     private fun setScene(view: View) { root.removeAllViews(); root.addView(view, FrameLayout.LayoutParams(-1, -1)) }
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+
+    private fun scenarioLabel(mode: String) = when (mode) {
+        "a" -> "A 精确规则：可点击跳过"
+        "b" -> "B 通用规则：contentDescription 跳过"
+        "c" -> "C 通用规则：view id 包含 skip"
+        "d" -> "D 通用规则：可点击父节点"
+        "e" -> "E 通用规则：不可点击节点的安全手势"
+        "f" -> "F 非广告：NEXT"
+        "g" -> "G 非广告：跳过片头"
+        "h" -> "H 总开关关闭"
+        "i" -> "I 本应用关闭"
+        "j" -> "J 通用开屏保护关闭"
+        else -> mode
+    }
+
+    companion object {
+        const val EXTRA_SCENARIO = "scenario"
+        private val scenarioNames = ('a'..'j').map(Char::toString).toSet()
+    }
 }

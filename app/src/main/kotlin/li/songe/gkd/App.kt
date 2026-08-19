@@ -121,8 +121,10 @@ data class AppMeta(
         plus(if (tagName != null) "/tree/$tagName" else "/commit/$commitId")
     }
     val isGkdChannel get() = channel == "gkd"
-    // Bypass Ads: fully offline product — never check for app updates
-    val updateEnabled get() = false
+    val isFullTools get() = channel == "fulltools"
+    // Network-powered update checks are available only in the explicitly
+    // separate fulltools build. The normal product remains fully offline.
+    val updateEnabled get() = isFullTools
     val isBeta get() = versionName.contains("beta")
 }
 

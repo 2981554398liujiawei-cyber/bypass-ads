@@ -1,6 +1,36 @@
 {
   "apps": [
     {
+      "id": "app.bypassads.testad",
+      "name": "Bypass Ads Test",
+      "groups": [
+        {
+          "name": "开屏广告-通用测试",
+          "ignoreGlobalGroupMatch": true,
+          "rules": []
+        }
+      ]
+    },
+    {
+      "id": "app.bypassads.testad.exact",
+      "name": "Bypass Ads Exact Test",
+      "groups": [
+        {
+          "name": "开屏广告-确定性测试",
+          "order": -20,
+          "rules": [
+            {
+              "key": 0,
+              "matches": [
+                "[text=\"跳过广告\"][clickable=true][visibleToUser=true]"
+              ],
+              "action": "clickCenter"
+            }
+          ]
+        }
+      ]
+    },
+    {
       "id": "com.tencent.mm",
       "name": "微信",
       "groups": [

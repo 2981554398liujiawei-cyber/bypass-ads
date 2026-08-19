@@ -13,4 +13,16 @@ android {
         versionCode = 1
         versionName = "0.1.0"
     }
+
+    buildTypes {
+        getByName("debug") {
+            applicationIdSuffix = ""
+        }
+        create("exact") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".exact"
+            isDebuggable = true
+            signingConfig = signingConfigs.getByName("debug")
+        }
+    }
 }

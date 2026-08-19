@@ -8,9 +8,12 @@ import android.util.LruCache
 import android.view.accessibility.AccessibilityNodeInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import li.songe.gkd.META
+import li.songe.gkd.BYPASS_SPLASH_SUBS_ID
 import li.songe.gkd.app
 import li.songe.gkd.appScope
 import li.songe.gkd.data.ActionLog
@@ -131,6 +134,14 @@ class ActivityRule(
 }
 
 val activityRuleFlow = MutableStateFlow(ActivityRule())
+
+/** Bypass app-level opt-out, including Bypass global splash rules. */
+val bypassAppConfigsFlow = DbSet.appConfigDao
+    .queryAppTypeConfig(BYPASS_SPLASH_SUBS_ID)
+    .stateIn(appScope, SharingStarted.Eagerly, emptyList())
+
+fun isBypassAppEnabled(appId: String): Boolean =
+    bypassAppConfigsFlow.value.find { it.appId == appId }?.enable ?: true
 
 private var lastAppId = ""
 

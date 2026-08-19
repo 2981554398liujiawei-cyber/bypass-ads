@@ -15,8 +15,11 @@ interface BypassEngine {
     /** Translated accessibility/service status for the home screen. */
     val serviceState: StateFlow<BypassServiceState>
 
-    /** Master "自动跳过开屏广告" switch. */
+    /** Master matching switch. */
     val masterEnabled: StateFlow<Boolean>
+
+    /** Product-level advertising categories backed by real rule groups. */
+    val adCategories: StateFlow<List<BypassAdCategoryState>>
 
     /** Coverage stats of the bundled splash rule set. */
     val stats: StateFlow<BypassRuleStats>
@@ -42,11 +45,18 @@ interface BypassEngine {
     /** Whether a successful skip should show the branded toast. */
     val actionToastEnabled: StateFlow<Boolean>
 
+    /** Whether the ongoing service notification is enabled. */
+    val persistentNotificationEnabled: StateFlow<Boolean>
+
     fun setMasterEnabled(enabled: Boolean)
+
+    fun setAdCategoryEnabled(category: BypassAdCategory, enabled: Boolean)
 
     fun setGenericFallbackEnabled(enabled: Boolean)
 
     fun setActionToastEnabled(enabled: Boolean)
+
+    fun setPersistentNotificationEnabled(enabled: Boolean)
 
     /** Refresh system-controlled permission state after returning from Settings. */
     fun refreshPermissionState()
@@ -67,6 +77,43 @@ interface BypassEngine {
     suspend fun getAppEnabled(packageName: String): Boolean
 
     suspend fun setAppEnabled(packageName: String, enabled: Boolean)
+
+    suspend fun getAppDetail(packageName: String): BypassAppDetail?
+
+    suspend fun setRuleGroupEnabled(packageName: String, groupKey: Int, enabled: Boolean)
+
+    suspend fun getSubscriptions(): List<BypassSubscriptionInfo>
+}
+
+enum class BypassAdCategory {
+    SPLASH,
+    IN_APP_FULLSCREEN,
+    MARKETING_POPUP,
+    OTHER_CLOSABLE,
+}
+
+data class BypassAdCategoryState(
+    val category: BypassAdCategory,
+    val enabled: Boolean,
+    val appCount: Int,
+    val groupCount: Int,
+    val ruleCount: Int,
+) {
+    val title: String
+        get() = when (category) {
+            BypassAdCategory.SPLASH -> "自动跳过开屏广告"
+            BypassAdCategory.IN_APP_FULLSCREEN -> "全屏 / 插屏广告"
+            BypassAdCategory.MARKETING_POPUP -> "营销弹窗"
+            BypassAdCategory.OTHER_CLOSABLE -> "其它可关闭广告"
+        }
+
+    val description: String
+        get() = when (category) {
+            BypassAdCategory.SPLASH -> "启动应用时自动关闭开屏广告"
+            BypassAdCategory.IN_APP_FULLSCREEN -> "关闭遮挡整个界面的广告"
+            BypassAdCategory.MARKETING_POPUP -> "关闭活动、推广、会员等营销内容"
+            BypassAdCategory.OTHER_CLOSABLE -> "局部与分段广告，可能影响原有操作体验"
+        }
 }
 
 enum class BypassServiceStatus {
@@ -130,6 +177,32 @@ data class BypassAppInfo(
     val appName: String,
     val enabled: Boolean,
     val groupCount: Int,
+    val ruleCount: Int = 0,
+)
+
+data class BypassRuleGroupInfo(
+    val key: Int,
+    val name: String,
+    val category: BypassAdCategory,
+    val enabled: Boolean,
+    val ruleCount: Int,
+)
+
+data class BypassAppDetail(
+    val packageName: String,
+    val appName: String,
+    val versionName: String?,
+    val enabled: Boolean,
+    val groups: List<BypassRuleGroupInfo>,
+)
+
+data class BypassSubscriptionInfo(
+    val id: Long,
+    val name: String,
+    val enabled: Boolean,
+    val appCount: Int,
+    val groupCount: Int,
+    val ruleCount: Int,
 )
 
 data class BypassImportResult(val accepted: Boolean, val message: String)

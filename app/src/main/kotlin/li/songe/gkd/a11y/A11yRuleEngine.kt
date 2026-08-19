@@ -18,6 +18,7 @@ import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import li.songe.gkd.BYPASS_SPLASH_SUBS_ID
 import li.songe.gkd.META
 import li.songe.gkd.bypass.BypassPerfTrace
 import li.songe.gkd.data.ActionPerformer
@@ -345,6 +346,9 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
         }
         val activityRule = synchronized(topActivityFlow) { activityRuleFlow.value }
         activityRule.currentRules.forEach { rule ->
+            if (rule.subsItem.id == BYPASS_SPLASH_SUBS_ID && !isBypassAppEnabled(topActivityFlow.value.appId)) {
+                return@forEach
+            }
             if (rule.status == RuleStatus.Status3 && rule.matchDelayJob.value == null) {
                 rule.matchDelayJob.value = scope.launch(actionDispatcher) {
                     delay(rule.matchDelay)
@@ -380,6 +384,7 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
             if (!effective) return
             if (checkOutDate(activityRule, tempStateEvent)) break
             if (delayRule != null && delayRule !== rule) continue
+            if (rule.subsItem.id == BYPASS_SPLASH_SUBS_ID && !isBypassAppEnabled(topActivityFlow.value.appId)) continue
             if (rule.status != RuleStatus.StatusOk) continue
             if (byForced && !rule.checkForced()) continue
             lastNode?.let { n ->
@@ -406,7 +411,7 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
             }
             if (!matchApp) continue
             val target = a11yContext.queryRule(rule, nodeVal) ?: continue
-            BypassPerfTrace.matched(rule.toString())
+            BypassPerfTrace.matched(rule.statusText())
             if (rule.checkDelay() && rule.actionDelayJob.value == null) {
                 rule.actionDelayJob.value = scope.launch(actionDispatcher) {
                     delay(rule.actionDelay)
@@ -417,9 +422,9 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
             }
             if (rule.status != RuleStatus.StatusOk) break
             if (checkOutDate(activityRule, tempStateEvent)) break
-            BypassPerfTrace.actionStarted(rule.toString())
+            BypassPerfTrace.actionStarted(rule.statusText())
             val actionResult = rule.performAction(target)
-            BypassPerfTrace.actionFinished(rule.toString())
+            BypassPerfTrace.actionFinished(rule.statusText())
             if (actionResult.result) {
                 val topActivity = topActivityFlow.value
                 rule.trigger()

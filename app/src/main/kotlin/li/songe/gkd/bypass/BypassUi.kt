@@ -49,7 +49,7 @@ fun BypassSectionCard(title: String, content: @Composable () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color.White, RoundedCornerShape(22.dp))
+            .background(Color.White, RoundedCornerShape(8.dp))
             .padding(20.dp),
     ) {
         Text(title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = BypassPalette.Ink)
@@ -62,7 +62,7 @@ fun BypassSectionCard(title: String, content: @Composable () -> Unit) {
 fun BypassMetric(label: String, value: String, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
-            .background(BypassPalette.SoftGray, RoundedCornerShape(16.dp))
+            .background(BypassPalette.SoftGray, RoundedCornerShape(8.dp))
             .padding(12.dp),
     ) {
         Text(value, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = BypassPalette.Ink)
@@ -94,6 +94,9 @@ fun BypassSwitchRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
+            // A settings row is a single affordance. The full row target also
+            // avoids a tiny hit area on large-screen and accessibility setups.
+            .clickable { onCheckedChange(!checked) }
             .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -134,7 +137,7 @@ fun BypassStatusCard(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .background(if (healthy) BypassPalette.SoftGreen else Color.White, RoundedCornerShape(24.dp))
+            .background(if (healthy) BypassPalette.SoftGreen else Color.White, RoundedCornerShape(8.dp))
             .padding(22.dp),
     ) {
         Column {
@@ -173,7 +176,7 @@ fun BypassNavRow(label: String, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color.White, RoundedCornerShape(18.dp))
+            .background(Color.White, RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 18.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -195,11 +198,14 @@ fun BypassAppRow(
     packageName: String,
     icon: ImageBitmap?,
     enabled: Boolean,
+    subtitle: String,
+    onClick: (() -> Unit)? = null,
     onToggle: (Boolean) -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .run { if (onClick != null) clickable(onClick = onClick) else this }
             .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -227,7 +233,8 @@ fun BypassAppRow(
         Spacer(Modifier.size(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(appName, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = BypassPalette.Ink)
-            Text(packageName, modifier = Modifier.padding(top = 1.dp), fontSize = 11.sp, color = BypassPalette.Faint)
+            Text(subtitle, modifier = Modifier.padding(top = 1.dp), fontSize = 11.sp, color = BypassPalette.Faint)
+            Text(packageName, modifier = Modifier.padding(top = 1.dp), fontSize = 10.sp, color = BypassPalette.Faint)
         }
         Spacer(Modifier.size(10.dp))
         Switch(
