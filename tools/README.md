@@ -73,5 +73,12 @@ SHA256 与生成物一致）→ 打印最终报告。
 
 ## 当前已知输出
 
-- 完整 bundle：170 apps / 171 groups（+1 通用 fallback 组）/ ~301 rules
-- 微信组含 desc「跳过」补丁（key 200，仅 `desc=跳过/跳過`，无泛化「关闭」）
+- 完整 bundle 规模随第三方源输入变化（生成器实时汇总 apps/groups/rules，
+  不在本文件固化，避免陈旧数字误导）。
+- 微信小程序组（`开屏广告-微信小程序`，仅 AppBrandUI / AppBrandLaunchProxyUI
+  Activity）：key 200 desc「跳过」+ key 201 关闭（AGGRESSIVE）+ key 202 ×
+  （AGGRESSIVE）+ key 203 结构关闭（CRAZY）；支付宝小程序组绑定
+  XRiverActivity / Nebula（key 210 关闭，AGGRESSIVE）。
+- 全局补强：`开屏广告-全局` 组追加可点击父节点补强、安全手势补强、
+  策略化关闭补强（AGGRESSIVE）、策略化 X 补强（AGGRESSIVE）、
+  策略化结构关闭补强（CRAZY）；所有策略化规则携带 `bypassMode` 元数据。

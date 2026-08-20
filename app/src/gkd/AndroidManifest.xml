@@ -2,7 +2,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Bypass Ads (default flavor): fully offline. No install capability is
+         exposed by the product UI, so REQUEST_INSTALL_PACKAGES is removed
+         here (kept only in flavors that actually need it). -->
     <uses-permission
         android:name="android.permission.REQUEST_INSTALL_PACKAGES"
-        tools:ignore="RequestInstallPackagesPolicy" />
+        tools:node="remove" />
+
+    <!-- Android auto-backup is off for the self-use product; the product's
+         own backup/restore flow keeps working through its local files. -->
+    <application
+        android:allowBackup="false"
+        tools:replace="android:allowBackup" />
 </manifest>

@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [codex/gkd-migration-repaired, main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python deps
+        run: pip install json5
+
+      - name: git diff --check
+        run: git diff --check HEAD~1 || git diff --check
+
+      - name: Repo integrity
+        run: python tools/check_repo_integrity.py
+
+      - name: Python policy tests
+        run: |
+          python tools/test_splash_policy.py
+          python tools/test_safety_exclusions.py
+
+      - name: Multi-source tests (fixture based)
+        run: python tools/test_multi_source.py
+
+      - name: Required files non-empty
+        run: |
+          python - <<'EOF'
+          import sys
+          from pathlib import Path
+          required = [
+              "app/src/main/kotlin/li/songe/gkd/bypass/BypassEngine.kt",
+              "app/src/main/kotlin/li/songe/gkd/bypass/GkdBypassEngine.kt",
+              "app/src/main/kotlin/li/songe/gkd/bypass/BypassRulePolicy.kt",
+              "app/src/main/kotlin/li/songe/gkd/bypass/BypassOutcomeVerifier.kt",
+              "app/src/main/kotlin/li/songe/gkd/bypass/BypassActionBudget.kt",
+              "app/src/main/kotlin/li/songe/gkd/bypass/BypassRuleStack.kt",
+              "rules/bypass_overrides.json",
+              "rules/safety_exclusions.json",
+              "tools/build_splash_bundle.py",
+              "docs/PROJECT_STATE.md",
+          ]
+          missing = [p for p in required if not (Path(p).exists() and Path(p).stat().st_size > 0)]
+          if missing:
+              print("MISSING/EMPTY:", missing, file=sys.stderr)
+              sys.exit(1)
+          print("required files ok")
+          EOF
+
+      - name: Gradle wrapper cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle/caches
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle.kts') }}
+
+      - name: JVM unit tests
+        run: ./gradlew :app:testGkdDebugUnitTest --console=plain --stacktrace
+
+      - name: Assemble default APK
+        run: ./gradlew :app:assembleGkdDebug --console=plain
+
+      - name: Assemble FullTools APK
+        run: ./gradlew :app:assembleFulltoolsDebug --console=plain
+
+      - name: AndroidTest compile
+        run: ./gradlew :app:assembleGkdDebugAndroidTest --console=plain

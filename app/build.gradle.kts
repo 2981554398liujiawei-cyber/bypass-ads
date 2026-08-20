@@ -71,8 +71,8 @@ android {
         applicationId = "app.bypassads"
         // Bypass Ads self-use version; the bundled GKD engine stays at 1.12.1
         // (kept as an internal constant, not advertised in the product UI).
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

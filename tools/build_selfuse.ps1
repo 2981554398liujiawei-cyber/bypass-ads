@@ -72,12 +72,12 @@ if ($bundleSize -lt 100000) {
 }
 Write-Step "Bundle: $localBundle ($bundleSize bytes)"
 
-# 3. gradle build
+# 3. gradle build (gradlew from the repo; SDK auto-detected below)
 Write-Step "Building APK (assembleGkdDebug)"
 Push-Location $repoRoot
 try {
-    $gradle = "C:\Users\cruelworld\.gradle\wrapper\dists\gradle-9.5.0-bin\bvnork1r7n8i6kp5cnkibsc9q\gradle-9.5.0\bin\gradle.bat"
-    & $gradle --console=plain --no-daemon :app:kspGkdDebugKotlin :app:assembleGkdDebug
+    $gradlew = Join-Path $repoRoot "gradlew.bat"
+    & $gradlew --console=plain --no-daemon :app:kspGkdDebugKotlin :app:assembleGkdDebug
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Gradle build FAILED"
         exit 1
@@ -94,7 +94,43 @@ if (-not (Test-Path $apkPath)) {
 $apkSize = (Get-Item $apkPath).Length
 Write-Step "APK: $apkPath ($apkSize bytes)"
 
-$aapt = "C:\Users\cruelworld\AppData\Local\Android\Sdk\build-tools\37.0.0\aapt.exe"
+# Locate the Android SDK: ANDROID_SDK_ROOT > ANDROID_HOME > local.properties sdk.dir
+function Get-AndroidSdkPath {
+    if ($env:ANDROID_SDK_ROOT -and (Test-Path $env:ANDROID_SDK_ROOT)) { return $env:ANDROID_SDK_ROOT }
+    if ($env:ANDROID_HOME -and (Test-Path $env:ANDROID_HOME)) { return $env:ANDROID_HOME }
+    $localProps = Join-Path $repoRoot "local.properties"
+    if (Test-Path $localProps) {
+        $line = Get-Content $localProps | Where-Object { $_ -match "^sdk.dir=" } | Select-Object -First 1
+        if ($line) {
+            $sdkDir = ($line -replace "^sdk.dir=", "").Trim()
+            $sdkDir = $sdkDir -replace "^\\\\", "" -replace "\\\\:", ":"
+            if (Test-Path $sdkDir) { return $sdkDir }
+        }
+    }
+    return $null
+}
+$sdkPath = Get-AndroidSdkPath
+if (-not $sdkPath) {
+    Write-Error "Android SDK not found (set ANDROID_SDK_ROOT / ANDROID_HOME, or sdk.dir in local.properties)."
+    exit 1
+}
+
+# Pick the highest available build-tools aapt
+function Get-AaptPath {
+    $btRoot = Join-Path $sdkPath "build-tools"
+    if (-not (Test-Path $btRoot)) { return $null }
+    $versions = Get-ChildItem $btRoot -Directory | ForEach-Object { $_.Name } | Sort-Object { [version]$_ } -Descending
+    foreach ($v in $versions) {
+        $candidate = Join-Path $btRoot "$v\aapt.exe"
+        if (Test-Path $candidate) { return $candidate }
+    }
+    return $null
+}
+$aapt = Get-AaptPath
+if (-not $aapt) {
+    Write-Error "aapt not found under $sdkPath\build-tools"
+    exit 1
+}
 $perms = & $aapt dump permissions $apkPath 2>&1
 $hasInternet = ($perms | Select-String "android.permission.INTERNET") -ne $null
 if ($hasInternet) {
