@@ -265,6 +265,8 @@ data class BypassFailureRecord(
     val reason: FailureReason,
     val detail: String,
     val candidates: List<BypassCandidateSnapshot> = emptyList(),
+    /** Strategy in effect when the session started (historical). */
+    val strategyMode: BypassAdStrategyMode? = null,
 ) {
     val explanation: String
         get() = when (reason) {

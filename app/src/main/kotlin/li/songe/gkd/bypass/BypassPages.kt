@@ -382,33 +382,36 @@ fun BypassRecordsPage(
     engine: BypassEngine,
     onOpenFailure: (String) -> Unit,
 ) {
-    val actions by engine.recentActions.collectAsState()
-    val failures by engine.failureRecords.collectAsState()
-    val averageResponse by engine.averageResponseMs.collectAsState()
+    val sessions by engine.sessionRecords.collectAsState()
+    val stats by engine.productStats.collectAsState()
     val scope = rememberCoroutineScope()
     var filter by rememberSaveable { mutableStateOf("全部") }
     val listState = rememberLazyListState()
-    val now = System.currentTimeMillis()
-    val todayStart = dayStart(now)
-    val weekStart = todayStart - 6L * 24 * 60 * 60 * 1000
-    val records = buildList {
-        if (filter != "疑似失败") {
-            actions.forEach { add(BypassTimelineItem("action-${it.id}", it.time, action = it)) }
-        }
-        if (filter != "已跳过") {
-            failures.forEach { add(BypassTimelineItem("failure-${it.id}", it.time, failure = it)) }
-        }
-    }.sortedByDescending { it.time }
+    val records = when (filter) {
+        "已跳过" -> sessions.filter { it.isSuccess }
+        "未跳过" -> sessions.filter { !it.isSuccess && it.result != BypassSessionResult.OPEN }
+        else -> sessions.filter { it.result != BypassSessionResult.OPEN }
+    }
 
     Column(Modifier.fillMaxSize()) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            BypassMetric("今天", actions.count { it.time >= todayStart }.toString(), Modifier.weight(1f))
-            BypassMetric("本周", actions.count { it.time >= weekStart }.toString(), Modifier.weight(1f))
-            BypassMetric("平均响应", averageResponse?.let { "${it} ms" } ?: "--", Modifier.weight(1f))
+            BypassMetric("今天跳过", stats.todaySkips.toString(), Modifier.weight(1f))
+            BypassMetric("本周跳过", stats.weekSkips.toString(), Modifier.weight(1f))
+            BypassMetric("总跳过", stats.totalSkips.toString(), Modifier.weight(1f))
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            BypassMetric(
+                "平均响应",
+                stats.averageResponseMs?.let { "$it ms" } ?: "--",
+                Modifier.weight(1f),
+            )
+            BypassMetric("记录", sessions.size.toString(), Modifier.weight(1f))
+            Spacer(Modifier.weight(1f))
         }
         Spacer(Modifier.height(14.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("全部", "已跳过", "疑似失败").forEach { label ->
+            listOf("全部", "已跳过", "未跳过").forEach { label ->
                 FilterChip(
                     selected = filter == label,
                     onClick = { filter = label },
@@ -424,46 +427,45 @@ fun BypassRecordsPage(
         Spacer(Modifier.height(10.dp))
         if (records.isEmpty()) {
             BypassSectionCard("记录") {
-                BypassMutedText("暂时没有匹配记录。成功跳过和疑似失败会在这里汇总。", 13)
+                BypassMutedText("暂无广告会话记录。统计只计算“结果已确认成功”的会话。", 13)
             }
         } else {
             LazyColumn(Modifier.weight(1f), state = listState) {
-                items(records, key = { it.id }) { item ->
-                    val action = item.action
-                    val failure = item.failure
+                items(records, key = { it.id }) { record ->
+                    val failure = record.result == BypassSessionResult.FAILURE_CONFIRMED ||
+                        record.result == BypassSessionResult.UNRESOLVED
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(androidx.compose.ui.graphics.Color.White, RoundedCornerShape(8.dp))
                             .run {
-                                if (failure != null) clickable { onOpenFailure(failure.id) } else this
+                                if (failure) clickable { onOpenFailure(record.id) } else this
                             }
                             .padding(16.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(Modifier.weight(1f)) {
-                            if (action != null) {
-                                Text(
-                                    "${formatBypassClock(action.time)}  ${action.appName ?: action.appId}",
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = BypassPalette.Ink,
-                                )
-                                BypassMutedText("${action.groupName ?: "开屏广告"}\n已跳过", 12)
-                            } else if (failure != null) {
-                                Text(
-                                    "${formatBypassClock(failure.time)}  ${failure.packageName}",
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = BypassPalette.Ink,
-                                )
-                                BypassMutedText("${failure.explanation}\n查看原因", 12)
+                            Text(
+                                "${formatBypassClock(record.time)}  ${record.packageName}",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = BypassPalette.Ink,
+                            )
+                            val meta = buildString {
+                                append(record.label)
+                                if (record.isSuccess && record.confirmedLatencyMs > 0) {
+                                    append(" · ").append(record.confirmedLatencyMs).append(" ms")
+                                }
+                                append(" · 策略 ").append(record.strategyMode.label)
+                                if (record.actionAttempts > 0) append(" · ").append(record.actionAttempts).append(" 次动作")
+                                record.candidateType?.let { append(" · 出口 ").append(it.name) }
                             }
+                            BypassMutedText(meta, 12)
                         }
                         Text(
-                            if (failure == null) "已跳过" else "查看",
+                            record.label,
                             fontSize = 12.sp,
-                            color = if (failure == null) BypassPalette.Accent else BypassPalette.Muted,
+                            color = if (record.isSuccess) BypassPalette.Accent else BypassPalette.Muted,
                         )
                     }
                     Spacer(Modifier.height(8.dp))
@@ -499,7 +501,7 @@ fun BypassFailureDetailPage(
         BypassSectionCard("为什么没有跳过？") {
             Text(event.explanation, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = BypassPalette.Ink)
             Spacer(Modifier.height(10.dp))
-            BypassMutedText("App\n${event.packageName}\n\n页面\n${event.activityName ?: "Activity 未知"}\n\n识别\n${event.reason.name}\n\n策略\n${currentStrategy.label}\n\n操作\n${event.detail.ifBlank { "没有额外信息" }}", 12, 19)
+            BypassMutedText("App\n${event.packageName}\n\n页面\n${event.activityName ?: "Activity 未知"}\n\n识别\n${event.reason.name}\n\n策略（发生时）\n${event.strategyMode?.label ?: currentStrategy.label}\n\n操作\n${event.detail.ifBlank { "没有额外信息" }}", 12, 19)
         }
         Spacer(Modifier.height(14.dp))
         BypassSectionCard("处理") {
@@ -1007,7 +1009,7 @@ fun BypassTeachModePage(
             BypassMutedText("目标：跳过 · 预计规则：${currentDraft()?.selector ?: "尚未选择"}", 12)
             Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                BypassModeButton("测试一次", false, onClick = {
+                BypassModeButton("开始一次验证", false, onClick = {
                     val draft = currentDraft()
                     if (draft == null) {
                         feedback = "请先选择控件，或填写有效的相对坐标"
@@ -1026,13 +1028,15 @@ fun BypassTeachModePage(
                             runCatching { engine.saveTeachRule(draft) }
                                 .onSuccess {
                                     savedRules = engine.getTeachRules()
-                                    feedback = "已保存为待验证；下次目标应用和 Activity 出现时会自动验证"
+                                    feedback = "已保存为待验证；点“开始一次验证”后返回目标应用"
                                 }
                                 .onFailure { feedback = "保存失败：${it.message ?: "未知错误"}" }
                         }
                     }
                 })
             }
+            Spacer(Modifier.height(8.dp))
+            BypassMutedText("验证方式：记录目标应用与页面后，返回目标应用；引擎只执行一次验证动作，并用结果写回（成功需结果确认，首次未匹配不算失败）。微信/支付宝小程序请手动返回小程序，不自动跳转。", 12)
             feedback?.let { BypassMutedText(it, 12) }
         }
         Spacer(Modifier.height(14.dp))
@@ -1043,13 +1047,27 @@ fun BypassTeachModePage(
                 savedRules.forEachIndexed { index, rule ->
                     if (index > 0) Spacer(Modifier.height(8.dp))
                     BypassMutedText("${rule.packageName}\n${rule.activityName}\n${rule.selector}${if (rule.coordinateFallback) " · 坐标回退" else ""}\n${rule.verification.label}", 12)
-                    BypassModeButton("删除", false, onClick = {
-                        scope.launch {
-                            engine.deleteTeachRule(rule.key)
-                            savedRules = engine.getTeachRules()
-                            feedback = "已删除本地教学规则"
-                        }
-                    })
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        BypassModeButton("重新验证", false, onClick = {
+                            scope.launch {
+                                val result = engine.testTeachRule(
+                                    BypassTeachDraft(
+                                        packageName = rule.packageName,
+                                        activityName = rule.activityName,
+                                        selector = rule.selector,
+                                    ),
+                                )
+                                feedback = result.message
+                            }
+                        })
+                        BypassModeButton("删除", false, onClick = {
+                            scope.launch {
+                                engine.deleteTeachRule(rule.key)
+                                savedRules = engine.getTeachRules()
+                                feedback = "已删除本地教学规则"
+                            }
+                        })
+                    }
                 }
             }
             Spacer(Modifier.height(8.dp))

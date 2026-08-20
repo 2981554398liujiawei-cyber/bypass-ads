@@ -52,6 +52,14 @@
                 "[clickable=false][visibleToUser=true][width<200 && height<100][text=null][desc=null][vid=null]"
               ],
               "action": "clickCenter"
+            },
+            {
+              "key": 105,
+              "name": "Bypass-Test-Dedicated-Close",
+              "matches": [
+                "[text=\"关闭\"][visibleToUser=true][clickable=true][width<300 && height<200]"
+              ],
+              "action": "clickCenter"
             }
           ]
         }

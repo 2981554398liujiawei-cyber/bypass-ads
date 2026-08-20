@@ -230,6 +230,7 @@ object GkdBypassEngine : BypassEngine {
                     packageName = r.packageName,
                     activityName = r.activityName,
                     reason = r.reason,
+                    strategyMode = r.strategyMode,
                     detail = buildString {
                         append(r.strategyMode.label).append(" · ")
                         append(r.label)

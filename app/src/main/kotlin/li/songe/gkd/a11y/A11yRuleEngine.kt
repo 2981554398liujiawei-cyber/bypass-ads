@@ -274,6 +274,8 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
         byDelayRule: ResolvedRule? = null,
     ) {
         if (!effective) return
+        // Expire armed teach verifications whose window ended without success.
+        BypassTeachRules.checkVerificationWindows()
         if (!storeFlow.value.enableMatch) {
             BypassDiagnostics.record(FailureReason.MASTER_DISABLED, detail = "matching_disabled")
             return
@@ -459,7 +461,9 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
                 if (rule.subsItem.id == BYPASS_SPLASH_SUBS_ID) {
                     BypassDiagnostics.record(FailureReason.SELECTOR_NO_MATCH, detail = "gkd_selector_no_match")
                     if (BypassTeachRules.isPendingVerification(rule.g.appId, rule.g.group.key)) {
-                        BypassTeachRules.markVerification(rule.g.appId, rule.g.group.key, success = false)
+                        // A first no-match is never a verification failure:
+                        // only the armed verification window decides.
+                        BypassTeachRules.noticeNoMatch(rule.g.appId, rule.g.group.key)
                     }
                 }
                 continue
@@ -627,6 +631,7 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
                             activityName = bypassContext.activityId,
                             a11yContext = a11yContext,
                             freshWindowProvider = { getTimeoutActiveWindow() },
+                            freshAdCandidateProvider = { root -> hasFreshAdCandidate(root) },
                         )
                         val latency = System.currentTimeMillis() - actionStart
                         BypassPerfTrace.outcomeConfirmed(rule.statusText(), outcome.name)
@@ -688,6 +693,24 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
         if (stateEvent !== latestStateEvent) return true
         synchronized(topActivityFlow) {
             if (activityRule !== activityRuleFlow.value) return true
+        }
+        return false
+    }
+
+    /**
+     * Whether any Bypass ad candidate still matches on a fresh root. Used by
+     * the OutcomeVerifier: after an action, if any ad rule still matches, the
+     * ad has not been closed yet. Reuses the GKD selector machinery (no
+     * second scanner); bounded to keep the check cheap.
+     */
+    private fun hasFreshAdCandidate(root: AccessibilityNodeInfo): Boolean {
+        val activityRule = synchronized(topActivityFlow) { activityRuleFlow.value }
+        var queries = 0
+        for (rule in activityRule.priorityRules) {
+            if (rule.subsItem.id != BYPASS_SPLASH_SUBS_ID) continue
+            if (queries++ >= 24) break
+            val matched = runCatching { a11yContext.queryRule(rule, root) != null }.getOrDefault(false)
+            if (matched) return true
         }
         return false
     }

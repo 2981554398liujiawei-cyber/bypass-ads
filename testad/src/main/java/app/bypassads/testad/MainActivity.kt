@@ -1,6 +1,7 @@
 package app.bypassads.testad
 
 import android.app.Activity
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
@@ -72,23 +73,69 @@ class MainActivity : Activity() {
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             }, topEndParams())
             "o" -> scene.addView(skipTarget(text = "跳过") { showResult(mode) }, topEndParams())
-            // R6.2 strategy matrix scenes (p..w):
+            // R6.2 strategy matrix scenes (p..w). Scenes with an explicit
+            // "广告" label establish STRONG ad context for the V2 gate.
             // D  text=关闭          -> AGGRESSIVE+ may click
-            "p" -> scene.addView(skipTarget(text = "关闭") { showResult(mode) }, topEndParams())
+            "p" -> addAdLabeled(scene) { addView(skipTarget(text = "关闭") { showResult(mode) }, topEndParams()) }
             // E  desc=关闭广告      -> AGGRESSIVE+ may click
-            "q" -> scene.addView(skipTarget(desc = "关闭广告") { showResult(mode) }, topEndParams())
+            "q" -> addAdLabeled(scene) { addView(skipTarget(desc = "关闭广告") { showResult(mode) }, topEndParams()) }
             // F  vid=ad_close       -> AGGRESSIVE+ may click
-            "r" -> scene.addView(skipTarget(id = R.id.ad_close) { showResult(mode) }, topEndParams())
+            "r" -> addAdLabeled(scene) { addView(skipTarget(id = R.id.ad_close) { showResult(mode) }, topEndParams()) }
             // G  text=×             -> AGGRESSIVE+ may click (small glyph)
-            "s" -> scene.addView(skipTarget(text = "×", desc = "close") { showResult(mode) }, tinyParams())
-            // H  structural X (no text/desc View) -> AGGRESSIVE+ may click
-            "t" -> scene.addView(structuralXTarget { showResult(mode) }, tinyParams())
-            // I  coordinate-only close (non-clickable node, no semantic)
-            "u" -> scene.addView(structuralXTarget(clickable = false) { showResult(mode) }, tinyParams())
+            "s" -> addAdLabeled(scene) { addView(skipTarget(text = "×", desc = "close") { showResult(mode) }, tinyParams()) }
+            // H  structural X (no text/desc View) -> CRAZY-only
+            "t" -> addAdLabeled(scene) { addView(structuralXTarget { showResult(mode) }, tinyParams()) }
+            // I  coordinate-only close (non-clickable node, no semantic) -> CRAZY-only
+            "u" -> addAdLabeled(scene) { addView(structuralXTarget(clickable = false) { showResult(mode) }, tinyParams()) }
             // L  ordinary non-ad close button -> must NOT be clicked in any mode
             "w" -> scene.addView(skipTarget(text = "关闭") { showUnexpectedAction(mode) }, largeParams())
+            // R6.3:
+            // X  multi-stage Skip -> X -> Close: ONE session, 3 attempts, 1 success
+            "x" -> addAdLabeled(scene) {
+                addView(skipTarget(text = "跳过") {
+                    addAdLabeled(scene) {
+                        addView(skipTarget(text = "×") {
+                            addAdLabeled(scene) {
+                                addView(skipTarget(text = "关闭") { showResult(mode) }, topEndParams())
+                            }
+                        }, topEndParams())
+                    }
+                }, topEndParams())
+            }
+            // Y  ACTION_RESULT_TRUE_BUT_AD_REMAINS: action accepted but the ad
+            //    stays -> must NOT be SUCCESS (OutcomeVerifier decides).
+            "y" -> addAdLabeled(scene) { addView(skipTarget(text = "跳过") { /* ad remains */ }, topEndParams()) }
+            // Z  external landing misclick: click jumps to the launcher/browser
+            //    -> MISCLICK_SUSPECTED, session stops immediately.
+            "z" -> addAdLabeled(scene) {
+                addView(skipTarget(text = "关闭") {
+                    runCatching {
+                        startActivity(
+                            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    }
+                }, topEndParams())
+            }
+            // AA trusted dedicated close (rule without bypassMode -> BUNDLED_DEDICATED)
+            //    -> clicked even in CONSERVATIVE.
+            "aa" -> scene.addView(skipTarget(text = "关闭") { showResult(mode) }, topEndParams())
+            // AB teach fixture: plain clickable node with a close-ish desc.
+            "ab" -> addAdLabeled(scene) {
+                addView(skipTarget(text = "", desc = "关闭广告区域") { showResult(mode) }, tinyParams())
+            }
         }
         setScene(scene)
+    }
+
+    /** Adds a small "广告" label so the V2 gate sees STRONG ad context. */
+    private fun addAdLabeled(scene: FrameLayout, block: FrameLayout.() -> Unit) {
+        scene.addView(TextView(this).apply {
+            text = "广告"
+            textSize = 12f
+            setTextColor(Color.rgb(180, 180, 180))
+        }, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { setMargins(dp(24), dp(120), 0, 0) })
+        scene.block()
     }
 
     private fun largeParams() = FrameLayout.LayoutParams(dp(520), dp(320), Gravity.CENTER).apply { topMargin = dp(120) }
@@ -203,11 +250,19 @@ class MainActivity : Activity() {
         "t" -> "T 策略：结构 X（无文本）"
         "u" -> "U 策略：坐标-only 关闭"
         "w" -> "W 策略：普通关闭（非广告，禁止点击）"
+        "x" -> "X 多阶段：跳过 → X → 关闭（1 会话 3 动作）"
+        "y" -> "Y 动作成功但广告仍在（不得计成功）"
+        "z" -> "Z 外部落地误触（跳到桌面，立即停止）"
+        "aa" -> "AA 可信专用关闭（保守也可点）"
+        "ab" -> "AB 教学节点固定场景"
         else -> mode
     }
 
     companion object {
         const val EXTRA_SCENARIO = "scenario"
-        private val scenarioNames = ('a'..'u').map(Char::toString).toSet() + "w"
+        private val scenarioNames = setOf(
+            "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o",
+            "p", "q", "r", "s", "t", "u", "w", "x", "y", "z", "aa", "ab",
+        )
     }
 }

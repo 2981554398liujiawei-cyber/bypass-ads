@@ -11,12 +11,12 @@ import org.junit.Test
 class OutcomeVerifierTest {
 
     @Test
-    fun action_accepted_but_ad_remains_is_not_success() {
+    fun action_accepted_but_ad_candidate_remains_is_not_success() {
         assertEquals(
             BypassOutcome.ACTION_NO_EFFECT,
             BypassOutcomeVerifier.decide(
-                stillMatches = true,
-                context = BypassAdContextLevel.STRONG,
+                freshAdCandidateExists = true,
+                shellContextStrong = false,
                 topChanged = false,
                 topChangedToExternal = false,
             ),
@@ -24,25 +24,25 @@ class OutcomeVerifierTest {
     }
 
     @Test
-    fun candidate_gone_and_context_gone_is_success() {
+    fun mini_program_shell_still_foreground_is_not_success() {
+        assertEquals(
+            BypassOutcome.ACTION_NO_EFFECT,
+            BypassOutcomeVerifier.decide(
+                freshAdCandidateExists = false,
+                shellContextStrong = true,
+                topChanged = false,
+                topChangedToExternal = false,
+            ),
+        )
+    }
+
+    @Test
+    fun no_candidate_and_no_shell_is_success() {
         assertEquals(
             BypassOutcome.SUCCESS_CONFIRMED,
             BypassOutcomeVerifier.decide(
-                stillMatches = false,
-                context = BypassAdContextLevel.NONE,
-                topChanged = false,
-                topChangedToExternal = false,
-            ),
-        )
-    }
-
-    @Test
-    fun candidate_gone_but_strong_ad_context_remains_is_no_effect() {
-        assertEquals(
-            BypassOutcome.ACTION_NO_EFFECT,
-            BypassOutcomeVerifier.decide(
-                stillMatches = false,
-                context = BypassAdContextLevel.STRONG,
+                freshAdCandidateExists = false,
+                shellContextStrong = false,
                 topChanged = false,
                 topChangedToExternal = false,
             ),
@@ -54,8 +54,8 @@ class OutcomeVerifierTest {
         assertEquals(
             BypassOutcome.MISCLICK_SUSPECTED,
             BypassOutcomeVerifier.decide(
-                stillMatches = false,
-                context = BypassAdContextLevel.NONE,
+                freshAdCandidateExists = false,
+                shellContextStrong = false,
                 topChanged = true,
                 topChangedToExternal = true,
             ),
@@ -67,8 +67,8 @@ class OutcomeVerifierTest {
         assertEquals(
             BypassOutcome.UNRESOLVED,
             BypassOutcomeVerifier.decide(
-                stillMatches = false,
-                context = BypassAdContextLevel.NONE,
+                freshAdCandidateExists = false,
+                shellContextStrong = false,
                 topChanged = true,
                 topChangedToExternal = false,
             ),
@@ -80,6 +80,7 @@ class OutcomeVerifierTest {
         assertTrue(BypassOutcomeVerifier.isExternalLanding("com.android.chrome"))
         assertTrue(BypassOutcomeVerifier.isExternalLanding("com.xiaomi.market"))
         assertTrue(BypassOutcomeVerifier.isExternalLanding("com.tencent.mtt"))
+        assertTrue(BypassOutcomeVerifier.isExternalLanding("com.miui.home"))
         assertTrue(!BypassOutcomeVerifier.isExternalLanding("com.tencent.mm"))
         assertTrue(!BypassOutcomeVerifier.isExternalLanding("com.example.app"))
     }

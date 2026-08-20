@@ -50,12 +50,97 @@ enum class BypassTeachVerification {
 object BypassTeachRules {
     private const val FILE_NAME = "bypass-teach-overrides.json"
     private const val VERIFICATION_PREFS = "bypass_teach_verification"
+    private const val RETEST_PREFS = "bypass_teach_retest"
     private const val MAX_TREE_DEPTH = 24
     private const val MAX_CANDIDATES = 24
     private const val MATCH_WINDOW_MS = 15_000L
+    private const val VERIFICATION_WINDOW_MS = 60_000L
 
     private val file: File by lazy { File(app.filesDir, FILE_NAME) }
     private val verificationPrefs by lazy { app.getSharedPreferences(VERIFICATION_PREFS, 0) }
+    private val retestPrefs by lazy { app.getSharedPreferences(RETEST_PREFS, 0) }
+
+    /**
+     * RetestController state: an armed verification waits for the target
+     * package/activity to reappear, then runs ONE armed test; the verdict is
+     * written back by the engine via OutcomeVerifier (SUCCESS_CONFIRMED ->
+     * VERIFIED) or by window expiry (TEST_FAILED). Never by a first
+     * SELECTOR_NO_MATCH.
+     */
+    data class ArmedVerification(
+        val packageName: String,
+        val activityName: String,
+        val selector: String,
+        val coordinate: Boolean,
+        val armedAt: Long,
+    )
+
+    /** ARM (微信/支付宝禁止瞎 deep link: 用户手动返回小程序). */
+    fun armVerification(draft: BypassTeachDraft): Boolean {
+        val now = System.currentTimeMillis()
+        val coordinate = draft.coordinateX != null && draft.coordinateY != null
+        return retestPrefs.edit()
+            .putString("packageName", draft.packageName)
+            .putString("activityName", draft.activityName)
+            .putString("selector", draft.selector)
+            .putBoolean("coordinate", coordinate)
+            .putLong("armedAt", now)
+            .commit()
+    }
+
+    fun readArmedVerification(): ArmedVerification? {
+        val packageName = retestPrefs.getString("packageName", null) ?: return null
+        val armedAt = retestPrefs.getLong("armedAt", 0L)
+        if (armedAt <= 0L) return null
+        return ArmedVerification(
+            packageName = packageName,
+            activityName = retestPrefs.getString("activityName", "").orEmpty(),
+            selector = retestPrefs.getString("selector", "").orEmpty(),
+            coordinate = retestPrefs.getBoolean("coordinate", false),
+            armedAt = armedAt,
+        )
+    }
+
+    fun clearArmedVerification() {
+        retestPrefs.edit().clear().apply()
+    }
+
+    /** Whether the armed verification window has expired. */
+    fun armedWindowExpired(armedAt: Long): Boolean =
+        System.currentTimeMillis() - armedAt > VERIFICATION_WINDOW_MS
+
+    /**
+     * A pending/armed rule saw a no-match (or failed action). Do NOT fail
+     * the verification on the first miss: only when the armed window is over
+     * without a SUCCESS_CONFIRMED does it become TEST_FAILED.
+     */
+    fun noticeNoMatch(packageName: String?, groupKey: Int) {
+        val armed = readArmedVerification() ?: return
+        if (armed.packageName != packageName) return
+        if (!armedWindowExpired(armed.armedAt)) return
+        markVerification(packageName, groupKey, success = false)
+        clearArmedVerification()
+    }
+
+    /** Expire armed verifications whose window ended without success. */
+    fun checkVerificationWindows() {
+        val armed = readArmedVerification() ?: return
+        if (!armedWindowExpired(armed.armedAt)) return
+        // Find the matching saved group and mark it failed.
+        val key = savedKeyFor(armed.packageName, armed.selector)
+        if (key != null) {
+            markVerification(armed.packageName, key, success = false)
+        }
+        clearArmedVerification()
+    }
+
+    private fun savedKeyFor(packageName: String, selector: String): Int? = runCatching {
+        if (!file.exists()) return@runCatching null
+        val current = RawSubscription.parse(file.readText(), json5 = false)
+        current.apps.firstOrNull { it.id == packageName }
+            ?.groups?.firstOrNull { g -> g.rules.firstOrNull()?.matches?.firstOrNull() == selector }
+            ?.key
+    }.getOrNull()
 
     private fun emptySubscription() = RawSubscription(
         id = BYPASS_SPLASH_SUBS_ID,
@@ -149,6 +234,11 @@ object BypassTeachRules {
             verificationKey(packageName!!, groupKey),
             if (success) BypassTeachVerification.VERIFIED.name else BypassTeachVerification.TEST_FAILED.name,
         ).apply()
+        if (success) {
+            // VERIFIED only via OutcomeVerifier SUCCESS_CONFIRMED; clear any
+            // armed retest so a later window expiry cannot overwrite it.
+            clearArmedVerification()
+        }
     }
 
     fun currentCandidates(): List<BypassTeachCandidate> {
@@ -181,34 +271,34 @@ object BypassTeachRules {
         return candidates.values.toList()
     }
 
+    /**
+     * ARM a verification (RetestController). The rule must already be saved;
+     * this only records the target and waits for the package/activity to
+     * reappear. The engine runs one armed test and writes the verdict back
+     * (SUCCESS_CONFIRMED -> VERIFIED, window expiry -> TEST_FAILED). A first
+     * SELECTOR_NO_MATCH is never a failure by itself.
+     */
     suspend fun test(draft: BypassTeachDraft): BypassTeachTestResult {
         val current = topActivityFlow.value
-        if (current.appId != draft.packageName) {
-            return BypassTeachTestResult(false, "当前应用已变化，请回到目标广告界面")
+        if (draft.packageName.isBlank()) {
+            return BypassTeachTestResult(false, "缺少目标应用")
         }
-        if (current.activityId != draft.activityName) {
-            return BypassTeachTestResult(false, "当前 Activity 已变化，请重新读取布局")
+        if (draft.selector.isBlank()) {
+            return BypassTeachTestResult(false, "缺少选择器，请先选择控件")
         }
-        return runCatching {
-            val result = A11yRuleEngine.execAction(
-                GkdAction(
-                    selector = draft.selector,
-                    action = if (draft.coordinateX != null) "clickCenter" else "clickNode",
-                    position = if (draft.coordinateX != null && draft.coordinateY != null) {
-                        RawSubscription.Position(
-                            left = "left + width * ${draft.coordinateX}",
-                            top = "top + height * ${draft.coordinateY}",
-                            right = null,
-                            bottom = null,
-                            x = null,
-                            y = null,
-                        )
-                    } else null,
-                ),
-            )
-            if (result.result) BypassTeachTestResult(true, "测试点击成功，可以保存")
-            else BypassTeachTestResult(false, "测试动作未成功，请重新选择控件")
-        }.getOrElse { BypassTeachTestResult(false, "测试失败：${it.message ?: "无法匹配当前布局"}") }
+        val saved = list().any {
+            it.packageName == draft.packageName && it.selector == draft.selector
+        }
+        if (!saved) {
+            return BypassTeachTestResult(false, "请先保存为待验证，再开始验证")
+        }
+        armVerification(draft)
+        val instruction = if (current.appId == draft.packageName) {
+            "验证已开始：请稍候，验证窗口 60 秒"
+        } else {
+            "验证已开始：请返回 ${draft.packageName}，验证窗口 60 秒"
+        }
+        return BypassTeachTestResult(true, instruction)
     }
 
     fun coordinateDraft(packageName: String, activityName: String, x: Float, y: Float) =
