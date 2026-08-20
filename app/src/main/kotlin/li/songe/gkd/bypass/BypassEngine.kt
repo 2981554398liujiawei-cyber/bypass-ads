@@ -37,11 +37,9 @@ interface BypassEngine {
      * lifecycle restrictions; it exposes the states users can actually fix. */
     val runtimeProtection: StateFlow<BypassRuntimeProtection>
 
-    /** Most recent skip action (null when nothing skipped yet). */
+    /** Latest finalized ad session (null when nothing finalized yet). The
+     *  raw GKD ActionLog is only exposed from the Advanced/debug screens. */
     val latestAction: StateFlow<BypassActionRecord?>
-
-    /** Recent skip actions (newest first). */
-    val recentActions: StateFlow<List<BypassActionRecord>>
 
     /** Number of successful actions kept in the Bypass Ads local history. */
     val skipCount: StateFlow<Int>

@@ -33,8 +33,10 @@ import li.songe.gkd.bypass.BypassExitCandidateType
 import li.songe.gkd.bypass.BypassExitClassifier
 import li.songe.gkd.bypass.BypassRulePolicyResolver
 import li.songe.gkd.bypass.BypassRuleTrust
+import li.songe.gkd.bypass.BypassRuntimeFlow
 import li.songe.gkd.bypass.BypassStrategyGate
 import li.songe.gkd.bypass.BypassTeachRules
+import li.songe.gkd.bypass.BypassWindowAnchor
 import li.songe.gkd.bypass.FailureReason
 import li.songe.gkd.data.ActionPerformer
 import li.songe.gkd.data.ActionResult
@@ -452,11 +454,15 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
             val rightAppId = nodeVal.packageName?.toString() ?: break
             // Anchor the ad window to an observed top-app change. OEMs
             // sometimes swallow the launch event; a fresh active-window read
-            // that reveals a new top app is a real app change, not a service
-            // reconnect. Repeated reads of the same app never refresh it.
+            // that reveals a real top-app transition is a launch. A service
+            // reconnect (empty baseline) or a re-read of the same app is NOT:
+            // it must never re-open the startup window (P0-6).
             if (rightAppId != observedTopApp) {
+                val reanchor = BypassWindowAnchor.shouldReanchorOnObservation(observedTopApp, rightAppId)
                 observedTopApp = rightAppId
-                BypassAdContextTracker.onAppObserved(rightAppId, System.currentTimeMillis())
+                if (reanchor) {
+                    BypassAdContextTracker.onAppObserved(rightAppId, System.currentTimeMillis())
+                }
             }
             val matchApp = rule.matchActivity(rightAppId)
             if (topActivityFlow.value.appId != rightAppId || (!matchApp && rule is AppRule)) {
@@ -585,38 +591,71 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
                     )
                 }
                 BypassDetectionSessions.strategyApplied(bypassContext.appId, bypassContext.activityId, mode)
-                // E. Action budget: reserve BEFORE acting so a failed action
-                // still consumes an attempt (no infinite retry).
-                bypassMaxAttempts = mode.policy.maxExitAttempts.coerceAtMost(3)
-                if (!BypassActionBudget.reserveAttempt(sessionId, bypassMaxAttempts)) {
-                    if (META.debuggable) {
-                        Log.d("A11yRuleEngine", "bypass budget exhausted for session $sessionId")
-                    }
-                    BypassDiagnostics.record(
-                        FailureReason.ACTION_NO_EFFECT,
-                        packageName = bypassContext.appId,
-                        activityName = bypassContext.activityId,
-                        detail = "BUDGET_EXHAUSTED attempts=$bypassMaxAttempts",
-                    )
-                    BypassDetectionSessions.confirmedFailure(sessionId, FailureReason.ACTION_NO_EFFECT)
-                    continue
-                }
+                // E. Per-session attempt cap:
+                //    minOf(mode.policy.maxExitAttempts, rulePolicy.maxAttempts, 3).
+                //    The reservation itself happens immediately before
+                //    performAction below (Runtime V2): waiting for an action
+                //    delay, selector misses and scheduled re-queries never
+                //    consume an attempt.
+                bypassMaxAttempts = BypassRuntimeFlow.effectiveMaxAttempts(mode, rulePolicy)
                 bypassSessionId = sessionId
             }
-            if (rule.checkDelay() && rule.actionDelayJob.value == null) {
-                if (isBypassRule) {
-                    BypassDiagnostics.record(FailureReason.WAITING_FOR_DELAY, detail = "rule_action_delay")
-                    BypassDetectionSessions.waitingForDelay(bypassContext.appId, bypassContext.activityId)
+            // ---- Runtime V2 sequencing (P0-1). Order is fixed:
+            // match -> gates (above) -> action delay (WAIT only, no budget)
+            // -> status/outdate -> reserveAttempt -> performAction -> verifier.
+            if (isBypassRule) {
+                val decision = BypassRuntimeFlow.decide(
+                    ruleHasPendingActionDelay = rule.checkDelay() && rule.actionDelayJob.value == null,
+                    ruleStatusOk = rule.status == RuleStatus.StatusOk,
+                    outOfDate = checkOutDate(activityRule, tempStateEvent),
+                    budgetUsed = BypassActionBudget.attemptsUsed(bypassSessionId!!),
+                    maxAttempts = bypassMaxAttempts,
+                )
+                when (decision) {
+                    BypassRuntimeFlow.Decision.WAIT_FOR_DELAY -> {
+                        BypassDiagnostics.record(FailureReason.WAITING_FOR_DELAY, detail = "rule_action_delay")
+                        BypassDetectionSessions.waitingForDelay(bypassContext.appId, bypassContext.activityId)
+                        rule.actionDelayJob.value = scope.launch(actionDispatcher) {
+                            delay(rule.actionDelay)
+                            rule.actionDelayJob.value = null
+                            startQueryJob(byDelayRule = rule)
+                        }
+                        continue
+                    }
+                    BypassRuntimeFlow.Decision.NOT_READY -> break
+                    BypassRuntimeFlow.Decision.BUDGET_EXHAUSTED -> {
+                        if (META.debuggable) {
+                            Log.d("A11yRuleEngine", "bypass budget exhausted for session $bypassSessionId")
+                        }
+                        BypassDiagnostics.record(
+                            FailureReason.ACTION_NO_EFFECT,
+                            packageName = bypassContext.appId,
+                            activityName = bypassContext.activityId,
+                            detail = "BUDGET_EXHAUSTED attempts=$bypassMaxAttempts",
+                        )
+                        BypassDetectionSessions.confirmedFailure(bypassSessionId, FailureReason.ACTION_NO_EFFECT)
+                        continue
+                    }
+                    BypassRuntimeFlow.Decision.PROCEED -> {
+                        // Reserve exactly once, immediately before the action.
+                        if (!BypassActionBudget.reserveAttempt(bypassSessionId, bypassMaxAttempts)) {
+                            BypassDetectionSessions.confirmedFailure(bypassSessionId, FailureReason.ACTION_NO_EFFECT)
+                            continue
+                        }
+                    }
                 }
-                rule.actionDelayJob.value = scope.launch(actionDispatcher) {
-                    delay(rule.actionDelay)
-                    rule.actionDelayJob.value = null
-                    startQueryJob(byDelayRule = rule)
+            } else {
+                if (rule.checkDelay() && rule.actionDelayJob.value == null) {
+                    rule.actionDelayJob.value = scope.launch(actionDispatcher) {
+                        delay(rule.actionDelay)
+                        rule.actionDelayJob.value = null
+                        startQueryJob(byDelayRule = rule)
+                    }
+                    continue
                 }
-                continue
+                if (rule.status != RuleStatus.StatusOk) break
+                if (checkOutDate(activityRule, tempStateEvent)) break
             }
-            if (rule.status != RuleStatus.StatusOk) break
-            if (checkOutDate(activityRule, tempStateEvent)) break
             BypassPerfTrace.actionStarted(rule.statusText())
             if (isBypassRule && !target.isClickable) {
                 BypassDiagnostics.record(FailureReason.TARGET_FOUND_NOT_CLICKABLE, detail = "matched_target_not_clickable")
@@ -625,7 +664,7 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
             val actionResult = rule.performAction(target)
             BypassPerfTrace.actionFinished(rule.statusText())
             BypassPerfTrace.actionFinishedT3(rule.statusText())
-            bypassSessionId?.let { BypassDetectionSessions.actionAttempted(it, actionResult.action.toString()) }
+            bypassSessionId?.let { BypassDetectionSessions.actionAttempted(it, actionResult.action) }
             if (actionResult.result) {
                 BypassPerfTrace.actionSucceeded()
                 val topActivity = topActivityFlow.value
@@ -638,13 +677,14 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
                     scope.launch(actionDispatcher) {
                         val actionStart = System.currentTimeMillis()
                         val outcome = BypassOutcomeVerifier.verify(
-                            rule = rule,
-                            target = target,
                             packageName = bypassContext.appId,
-                            activityName = bypassContext.activityId,
-                            a11yContext = a11yContext,
                             freshWindowProvider = { getTimeoutActiveWindow() },
+                            // P0-5: the verifier re-reads the top app AFTER
+                            // its own delay; the event-driven flow is only the
+                            // fallback when the window read fails.
+                            topFallbackProvider = { topActivityFlow.value.appId },
                             freshAdCandidateProvider = { root -> hasFreshAdCandidate(root) },
+                            freshAdLabelProvider = { root -> BypassAdContextTracker.scanFreshAdLabel(root) },
                         )
                         val latency = System.currentTimeMillis() - actionStart
                         BypassPerfTrace.outcomeConfirmed(rule.statusText(), outcome.name)

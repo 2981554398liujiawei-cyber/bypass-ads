@@ -2,9 +2,6 @@ package li.songe.gkd.bypass
 
 import android.view.accessibility.AccessibilityNodeInfo
 import kotlinx.coroutines.delay
-import li.songe.gkd.a11y.A11yContext
-import li.songe.gkd.a11y.topActivityFlow
-import li.songe.gkd.data.ResolvedRule
 
 /**
  * Outcome of one performed action, decided from a fresh state read (never
@@ -19,14 +16,25 @@ enum class BypassOutcome {
 
 /**
  * Verifies what an action actually did by re-reading the active window and
- * re-querying ad candidates with the same GKD selector machinery (no second
- * scanner). The result is the session-level truth:
+ * re-querying ad evidence with the same GKD selector machinery (no second
+ * scanner). The result is the session-level truth.
  *
- *  - jumped to an external landing package      -> MISCLICK_SUSPECTED
- *  - top app changed elsewhere                  -> UNRESOLVED
- *  - any ad candidate still matches fresh state -> ACTION_NO_EFFECT
- *  - mini-program ad shell still foreground     -> ACTION_NO_EFFECT
- *  - otherwise                                  -> SUCCESS_CONFIRMED
+ * Mini-program shells are NOT treated as ad proof: WeChat keeps running the
+ * mini-program inside AppBrandUI after the ad closes, so "AppBrandUI is
+ * foreground" alone proves nothing. The verifier only accepts fresh
+ * evidence gathered AFTER the action:
+ *
+ *   Action -> delay -> re-read top package/activity (P0-5: never the
+ *   pre-delay cached state) -> fresh root -> fresh ad-exit candidates +
+ *   fresh ad-label scan.
+ *
+ *  - top moved to an external landing package (browser / store / launcher)
+ *    after the delay               -> MISCLICK_SUSPECTED
+ *  - top moved elsewhere           -> UNRESOLVED
+ *  - an ad exit candidate or an ad label still matches the fresh root
+ *                                   -> ACTION_NO_EFFECT
+ *  - same app, no ad evidence      -> SUCCESS_CONFIRMED
+ *  - cannot determine              -> UNRESOLVED
  */
 object BypassOutcomeVerifier {
 
@@ -62,41 +70,54 @@ object BypassOutcomeVerifier {
         "com.android.launcher",
     )
 
+    /**
+     * @param packageName the package the action ran in (the original top app)
+     * @param freshWindowProvider fresh active-window read after the delay
+     * @param topFallbackProvider fallback fresh top-package read when the
+     *        window read fails (e.g. the event-driven topActivityFlow)
+     * @param freshAdCandidateProvider fresh ad-exit candidate query
+     * @param freshAdLabelProvider one-shot ad-label scan (ad overlay evidence,
+     *        never persisted window state)
+     */
     suspend fun verify(
-        rule: ResolvedRule,
-        target: AccessibilityNodeInfo,
         packageName: String,
-        activityName: String?,
-        a11yContext: A11yContext,
         freshWindowProvider: suspend () -> AccessibilityNodeInfo?,
+        topFallbackProvider: suspend () -> String?,
         freshAdCandidateProvider: suspend (AccessibilityNodeInfo) -> Boolean,
+        freshAdLabelProvider: suspend (AccessibilityNodeInfo) -> Boolean,
     ): BypassOutcome {
-        // 1. External landing check first: did the top app move somewhere
-        //    that a click should never take the user?
-        val top = topActivityFlow.value
-        if (top.appId != packageName) {
+        // 1. Give the target app a moment to react — and a possible external
+        //    jump (browser/store/launcher) a moment to show up.
+        delay(VERIFY_DELAY_MS)
+
+        // 2. Re-read the top package/activity AFTER the delay. The cached
+        //    pre-delay top state must never decide the outcome (P0-5): a
+        //    performAction returning true followed 200ms later by a jump to
+        //    Chrome must be MISCLICK_SUSPECTED, never SUCCESS_CONFIRMED.
+        val freshRoot = freshWindowProvider()
+        val freshTopPkg = freshRoot?.packageName?.toString() ?: topFallbackProvider()
+        if (freshTopPkg != null && freshTopPkg != packageName) {
             return decide(
                 freshAdCandidateExists = false,
-                shellContextStrong = false,
+                freshAdEvidence = false,
                 topChanged = true,
-                topChangedToExternal = isExternalLanding(top.appId),
+                topChangedToExternal = isExternalLanding(freshTopPkg),
             )
         }
 
-        // 2. Give the target app a moment to react.
-        delay(VERIFY_DELAY_MS)
-
-        // 3. Fresh state: re-read the active window, re-query ad candidates.
-        val freshRoot = freshWindowProvider() ?: return BypassOutcome.UNRESOLVED
+        // 3. Fresh evidence on the same window: ad exit candidates and ad
+        //    labels. A mini-program shell being foreground is NOT evidence.
+        if (freshRoot == null) return BypassOutcome.UNRESOLVED
         val freshAdCandidate = runCatching {
             freshAdCandidateProvider(freshRoot)
         }.getOrDefault(true)
-        // The mini-program / webview ad shell is still foreground.
-        val shellContextStrong = BypassAdContextTracker.isMiniProgramAdActivity(packageName, activityName)
+        val freshAdEvidence = runCatching {
+            freshAdLabelProvider(freshRoot)
+        }.getOrDefault(false)
 
         return decide(
             freshAdCandidateExists = freshAdCandidate,
-            shellContextStrong = shellContextStrong,
+            freshAdEvidence = freshAdEvidence,
             topChanged = false,
             topChangedToExternal = false,
         )
@@ -107,22 +128,26 @@ object BypassOutcomeVerifier {
      *
      *  - top moved to an external landing package  -> MISCLICK_SUSPECTED
      *  - top moved elsewhere (not external)        -> UNRESOLVED
-     *  - an ad candidate still matches fresh state -> ACTION_NO_EFFECT
-     *  - the mini-program ad shell still holds     -> ACTION_NO_EFFECT
-     *  - otherwise                                 -> SUCCESS_CONFIRMED
+     *  - an ad exit candidate still matches        -> ACTION_NO_EFFECT
+     *  - an ad label is still visible on the fresh root (ad overlay) ->
+     *    ACTION_NO_EFFECT
+     *  - otherwise (same app, no ad evidence)      -> SUCCESS_CONFIRMED
      */
     fun decide(
         freshAdCandidateExists: Boolean,
-        shellContextStrong: Boolean,
+        freshAdEvidence: Boolean,
         topChanged: Boolean,
         topChangedToExternal: Boolean,
     ): BypassOutcome = when {
         topChanged && topChangedToExternal -> BypassOutcome.MISCLICK_SUSPECTED
         topChanged -> BypassOutcome.UNRESOLVED
         freshAdCandidateExists -> BypassOutcome.ACTION_NO_EFFECT
-        shellContextStrong -> BypassOutcome.ACTION_NO_EFFECT
+        freshAdEvidence -> BypassOutcome.ACTION_NO_EFFECT
         else -> BypassOutcome.SUCCESS_CONFIRMED
     }
 
     fun isExternalLanding(packageName: String): Boolean = externalLandingPackages.contains(packageName)
+
+    /** Accessor kept for tests that want to pin the verifier delay. */
+    internal fun verifyDelayMs(): Long = VERIFY_DELAY_MS
 }

@@ -85,28 +85,43 @@ object BypassAdContextTracker {
      * the already-fetched root, never a second scanner.
      */
     fun noteAdLabelFromWindow(root: AccessibilityNodeInfo, packageName: String, activityName: String?) {
+        scanForAdLabel(root)?.let {
+            noteAdLabel(packageName, activityName)
+        }
+    }
+
+    /**
+     * One-shot ad-label scan on a fresh root. Unlike [noteAdLabelFromWindow]
+     * this never persists window evidence: the OutcomeVerifier uses it AFTER
+     * an action, where the question is "is there ad evidence RIGHT NOW",
+     * not "was there ever any". A still-visible 广告/ad label means the ad
+     * overlay is still up.
+     */
+    fun scanFreshAdLabel(root: AccessibilityNodeInfo): Boolean =
+        scanForAdLabel(root) != null
+
+    private fun scanForAdLabel(root: AccessibilityNodeInfo): String? {
         var visited = 0
         val MAX_SCAN_NODES = 80
-        fun visit(node: AccessibilityNodeInfo): Boolean {
-            if (visited++ >= MAX_SCAN_NODES) return false
+        fun visit(node: AccessibilityNodeInfo): String? {
+            if (visited++ >= MAX_SCAN_NODES) return null
             if (BypassExitClassifier.hasAdLabel(
                     node.text?.toString(),
                     node.contentDescription?.toString(),
                     node.viewIdResourceName,
                 )
             ) {
-                noteAdLabel(packageName, activityName)
-                return true
+                return "ad_label"
             }
             val childCount = runCatching { node.childCount }.getOrDefault(0)
             repeat(childCount.coerceAtMost(24)) { index ->
                 runCatching { node.getChild(index) }.getOrNull()?.let {
-                    if (visit(it)) return true
+                    visit(it)?.let { label -> return label }
                 }
             }
-            return false
+            return null
         }
-        runCatching { visit(root) }
+        return runCatching { visit(root) }.getOrDefault(null)
     }
 
     fun resetWindow(packageName: String, activityName: String?) {
@@ -170,4 +185,28 @@ object BypassAdContextTracker {
     }
 
     private fun windowKey(packageName: String, activityName: String?) = "$packageName|${activityName ?: ""}"
+
+    /** Test hook: wipe all tracker state (JVM unit tests). */
+    fun clearForTest() {
+        packageEntryTimes.clear()
+        activityEntryTimes.clear()
+        windowSkipSeen.clear()
+        windowCloseSeen.clear()
+        windowAdLabelSeen.clear()
+    }
+}
+
+/**
+ * Pure decision for the ad-window anchor: whether a fresh top-app
+ * observation is a real transition that may (re)anchor the startup window.
+ *
+ * A service reconnect starts with an empty baseline: the first fresh root
+ * read after reconnect only ESTABLISHES the baseline and is not evidence of
+ * a launch — it must never call [BypassAdContextTracker.onAppObserved]
+ * (P0-6). A genuine A -> B transition (or a stale-baseline reveal of a
+ * different app) does re-anchor.
+ */
+object BypassWindowAnchor {
+    fun shouldReanchorOnObservation(previousObservedApp: String, freshApp: String): Boolean =
+        previousObservedApp.isNotEmpty() && previousObservedApp != freshApp
 }

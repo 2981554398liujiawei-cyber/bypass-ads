@@ -1,5 +1,6 @@
 package li.songe.gkd.bypass
 
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -7,6 +8,10 @@ import org.junit.Test
 /**
  * Outcome decision logic (pure part of BypassOutcomeVerifier):
  * ActionResult=true is NOT success; only fresh-state verification is.
+ *
+ * Mini-program shells are deliberately NOT ad proof: after the ad closes,
+ * WeChat keeps the mini-program running inside AppBrandUI, so "AppBrandUI is
+ * still foreground" must not force ACTION_NO_EFFECT (P0-2).
  */
 class OutcomeVerifierTest {
 
@@ -16,7 +21,7 @@ class OutcomeVerifierTest {
             BypassOutcome.ACTION_NO_EFFECT,
             BypassOutcomeVerifier.decide(
                 freshAdCandidateExists = true,
-                shellContextStrong = false,
+                freshAdEvidence = false,
                 topChanged = false,
                 topChangedToExternal = false,
             ),
@@ -24,12 +29,14 @@ class OutcomeVerifierTest {
     }
 
     @Test
-    fun mini_program_shell_still_foreground_is_not_success() {
+    fun fresh_ad_label_still_visible_is_not_success() {
+        // An ad overlay still showing its 广告/ad label after the action means
+        // the ad is still up, even when no exit candidate re-matched.
         assertEquals(
             BypassOutcome.ACTION_NO_EFFECT,
             BypassOutcomeVerifier.decide(
                 freshAdCandidateExists = false,
-                shellContextStrong = true,
+                freshAdEvidence = true,
                 topChanged = false,
                 topChangedToExternal = false,
             ),
@@ -37,12 +44,16 @@ class OutcomeVerifierTest {
     }
 
     @Test
-    fun no_candidate_and_no_shell_is_success() {
+    fun wechat_appbrandui_without_ad_evidence_is_success() {
+        // P0-2 acceptance: before the action an ad candidate exists inside
+        // AppBrandUI; after the action the SAME AppBrandUI shows no ad
+        // candidate and no ad label -> the ad closed, the mini-program is
+        // simply still running -> SUCCESS_CONFIRMED.
         assertEquals(
             BypassOutcome.SUCCESS_CONFIRMED,
             BypassOutcomeVerifier.decide(
                 freshAdCandidateExists = false,
-                shellContextStrong = false,
+                freshAdEvidence = false,
                 topChanged = false,
                 topChangedToExternal = false,
             ),
@@ -55,7 +66,7 @@ class OutcomeVerifierTest {
             BypassOutcome.MISCLICK_SUSPECTED,
             BypassOutcomeVerifier.decide(
                 freshAdCandidateExists = false,
-                shellContextStrong = false,
+                freshAdEvidence = false,
                 topChanged = true,
                 topChangedToExternal = true,
             ),
@@ -68,7 +79,7 @@ class OutcomeVerifierTest {
             BypassOutcome.UNRESOLVED,
             BypassOutcomeVerifier.decide(
                 freshAdCandidateExists = false,
-                shellContextStrong = false,
+                freshAdEvidence = false,
                 topChanged = true,
                 topChangedToExternal = false,
             ),
@@ -83,5 +94,47 @@ class OutcomeVerifierTest {
         assertTrue(BypassOutcomeVerifier.isExternalLanding("com.miui.home"))
         assertTrue(!BypassOutcomeVerifier.isExternalLanding("com.tencent.mm"))
         assertTrue(!BypassOutcomeVerifier.isExternalLanding("com.example.app"))
+    }
+
+    // ---- P0-5: the verifier must re-read the top app AFTER its delay ----
+
+    @Test
+    fun action_true_then_late_chrome_jump_is_misclick_even_with_no_window() = runBlocking {
+        // performAction returns true -> 200ms later the app jumps to Chrome
+        // -> at the 300ms verifier the fresh top read sees Chrome. The cached
+        // pre-delay top state (WeChat) must NOT win; without fresh evidence
+        // of Chrome the verdict would be SUCCESS_CONFIRMED, which is banned.
+        val outcome = BypassOutcomeVerifier.verify(
+            packageName = "com.tencent.mm",
+            freshWindowProvider = { null }, // window read unavailable
+            topFallbackProvider = { "com.android.chrome" }, // fresh top AFTER delay
+            freshAdCandidateProvider = { false },
+            freshAdLabelProvider = { false },
+        )
+        assertEquals(BypassOutcome.MISCLICK_SUSPECTED, outcome)
+    }
+
+    @Test
+    fun late_jump_to_unknown_app_is_unresolved_not_success() = runBlocking {
+        val outcome = BypassOutcomeVerifier.verify(
+            packageName = "com.tencent.mm",
+            freshWindowProvider = { null },
+            topFallbackProvider = { "com.other.app" },
+            freshAdCandidateProvider = { false },
+            freshAdLabelProvider = { false },
+        )
+        assertEquals(BypassOutcome.UNRESOLVED, outcome)
+    }
+
+    @Test
+    fun no_window_and_unchanged_top_is_unresolved() = runBlocking {
+        val outcome = BypassOutcomeVerifier.verify(
+            packageName = "com.tencent.mm",
+            freshWindowProvider = { null },
+            topFallbackProvider = { "com.tencent.mm" },
+            freshAdCandidateProvider = { false },
+            freshAdLabelProvider = { false },
+        )
+        assertEquals(BypassOutcome.UNRESOLVED, outcome)
     }
 }

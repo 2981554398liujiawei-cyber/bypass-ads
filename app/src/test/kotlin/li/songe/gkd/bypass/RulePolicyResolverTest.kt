@@ -12,12 +12,14 @@ class RulePolicyResolverTest {
 
     private fun id(
         subsId: Long = BYPASS_SPLASH_SUBS_ID,
+        appId: String? = null,
+        groupKey: Int = 0,
         isGlobal: Boolean = false,
         groupName: String = "开屏广告-微信小程序",
         bypassMode: String? = null,
         coordinate: Boolean = false,
         maxAttempts: Int = 3,
-    ) = BypassRulePolicyResolver.RuleIdentity(subsId, isGlobal, groupName, bypassMode, coordinate, maxAttempts)
+    ) = BypassRulePolicyResolver.RuleIdentity(subsId, appId, groupKey, isGlobal, groupName, bypassMode, coordinate, maxAttempts)
 
     @Test
     fun bundled_dedicated_runs_in_every_mode_without_context_requirement() {

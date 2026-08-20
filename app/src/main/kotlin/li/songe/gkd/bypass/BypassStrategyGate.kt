@@ -40,16 +40,21 @@ object BypassStrategyGate {
         contextLevel: BypassAdContextLevel,
         inWindow: Boolean,
     ): String? {
-        // High-risk hosts: only curated dedicated rules or Bypass-owned
-        // overrides may act; generic fallback is always off there.
-        if (isBypassHighRiskApp(packageName)) {
-            val exempt = rulePolicy.trust == BypassRuleTrust.BUNDLED_DEDICATED ||
-                rulePolicy.trust == BypassRuleTrust.BYPASS_OVERRIDE
-            return if (exempt) null else BypassRejectReason.SENSITIVE_ACTIVITY
+        // High-risk hosts: untrusted sources are always denied. Exempt
+        // sources (curated dedicated / official overrides) are allowed to
+        // continue through the FULL gate below — the override may only waive
+        // "untrusted source", never context/window/size/strategy (P0-3).
+        val isHighRisk = isBypassHighRiskApp(packageName)
+        val exemptSource = rulePolicy.trust == BypassRuleTrust.BUNDLED_DEDICATED ||
+            rulePolicy.trust == BypassRuleTrust.BYPASS_OVERRIDE
+        if (isHighRisk && !exemptSource) {
+            return BypassRejectReason.SENSITIVE_ACTIVITY
         }
 
-        // Curated dedicated rules run in every mode without candidate gating.
-        if (rulePolicy.trust == BypassRuleTrust.BUNDLED_DEDICATED) {
+        // On normal hosts, curated dedicated rules run in every mode without
+        // candidate gating. On high-risk hosts they keep going through the
+        // window/size/strategy/context checks below.
+        if (!isHighRisk && rulePolicy.trust == BypassRuleTrust.BUNDLED_DEDICATED) {
             return null
         }
 

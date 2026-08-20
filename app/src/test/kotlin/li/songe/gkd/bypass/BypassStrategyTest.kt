@@ -199,6 +199,22 @@ class BypassStrategyTest {
         assertFalse(BypassExitClassifier.hasAdLabel("关闭", null, null))
     }
 
+    @Test
+    fun english_ad_label_uses_word_boundaries() {
+        // Whole-word English ad labels are evidence:
+        assertTrue(BypassExitClassifier.hasAdLabel("Ad", null, null))
+        assertTrue(BypassExitClassifier.hasAdLabel(null, "ads", null))
+        assertTrue(BypassExitClassifier.hasAdLabel("Sponsored", null, null))
+        assertTrue(BypassExitClassifier.hasAdLabel("Advertisement", null, null))
+        // Substring collisions must NOT count as ad evidence:
+        assertFalse(BypassExitClassifier.hasAdLabel("address", null, null))
+        assertFalse(BypassExitClassifier.hasAdLabel(null, "badge", null))
+        assertFalse(BypassExitClassifier.hasAdLabel("read", null, null))
+        assertFalse(BypassExitClassifier.hasAdLabel(null, null, "com.example:id/adapter"))
+        assertFalse(BypassExitClassifier.hasAdLabel("radio", null, null))
+        assertFalse(BypassExitClassifier.hasAdLabel("ready", null, null))
+    }
+
     // ------------------------------------------------------------------
     // Negative semantics are hard gates
     // ------------------------------------------------------------------

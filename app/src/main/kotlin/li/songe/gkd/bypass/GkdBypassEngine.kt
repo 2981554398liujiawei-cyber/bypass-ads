@@ -179,39 +179,6 @@ object GkdBypassEngine : BypassEngine {
         protection.copy(lastRecoveryAttemptAt = recoveryAttempt)
     }.stateIn(appScope, SharingStarted.Eagerly, BypassRuntimeProtection())
 
-    override val recentActions: StateFlow<List<BypassActionRecord>> =
-        combine(
-            DbSet.actionLogDao.query(),
-            appInfoMapFlow,
-            subsMapFlow,
-        ) { records, appMap, subsMap ->
-            records.asSequence()
-                // Do not show historical entries that might have been left by
-                // an earlier GKD install: this is Bypass Ads product history.
-                .filter { it.subsId == BYPASS_SPLASH_SUBS_ID }
-                .take(30)
-                .map { r ->
-                    val groupName = if (r.groupType == SubsConfig.AppGroupType) {
-                        subsMap[r.subsId]?.apps?.find { it.id == r.appId }
-                            ?.groups?.find { it.key == r.groupKey }?.name
-                    } else {
-                        subsMap[r.subsId]?.globalGroups
-                            ?.find { it.key == r.groupKey }?.name
-                    }
-                BypassActionRecord(
-                    id = r.id,
-                    appId = r.appId,
-                    appName = appMap[r.appId]?.name,
-                    groupName = groupName,
-                    time = r.ctime,
-                )
-            }.toList()
-        }.stateIn(appScope, SharingStarted.Eagerly, emptyList())
-
-    override val latestAction: StateFlow<BypassActionRecord?> =
-        recentActions.map { it.firstOrNull() }
-            .stateIn(appScope, SharingStarted.Eagerly, null)
-
     override val skipCount: StateFlow<Int> =
         DbSet.bypassDetectionSessionDao.countSuccessAll()
             .stateIn(appScope, SharingStarted.Eagerly, 0)
@@ -220,6 +187,24 @@ object GkdBypassEngine : BypassEngine {
         DbSet.bypassDetectionSessionDao.queryAll().map { sessions ->
             sessions.map { it.toSessionRecord() }
         }.stateIn(appScope, SharingStarted.Eagerly, emptyList())
+
+    /**
+     * Latest FINALIZED ad session (never an in-progress OPEN session, never
+     * the raw GKD ActionLog). The raw ActionLog is only reachable from the
+     * Advanced/debug screens; Home "最近触发" is product history.
+     */
+    override val latestAction: StateFlow<BypassActionRecord?> =
+        sessionRecords.map { records ->
+            records.firstOrNull { it.result != BypassSessionResult.OPEN }?.let { r ->
+                BypassActionRecord(
+                    id = r.id.hashCode(),
+                    appId = r.packageName,
+                    appName = appInfoMapFlow.value[r.packageName]?.name,
+                    groupName = r.label,
+                    time = r.time,
+                )
+            }
+        }.stateIn(appScope, SharingStarted.Eagerly, null)
 
     override val failureRecords: StateFlow<List<BypassFailureRecord>> =
         DbSet.bypassDetectionSessionDao.queryFailures().map { sessions ->

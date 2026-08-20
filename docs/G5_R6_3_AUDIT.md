@@ -74,19 +74,25 @@
   `allowGlyphClose=true` / `allowStructuralNoSemanticClose=false`。
 - 疯狂：+ `allowStructuralNoSemanticClose=true` + `allowCoordinateFallback=true`，
   仍要求 STRONG 上下文。
-- 真机硬 Gate（TestAd）：
+- **TestAd 合成 fixture 硬 Gate**（`app.bypassads.testad` 测试页，
+  **非真实广告流量**；结论只证明策略门控逻辑，不构成 Field Gate）：
   - structural (t)：保守 NO / 激进 NO / 疯狂 YES
   - coordinate (u)：保守 NO / 激进 NO / 疯狂 YES
   - multi-stage (x)：疯狂下 1 会话、3 动作、1 SUCCESS_CONFIRMED
   - trusted dedicated close (aa)：保守 YES
   - ACTION_RESULT_TRUE_BUT_AD_REMAINS (y)：非 SUCCESS（UNRESOLVED）
+- **真实 Field Gate（星星充电等真实广告）与本矩阵无关**：见第 8/14 节，
+  真实广告样本 NO_SAMPLE，FIELD GATE=PENDING。
 
 ## 8. 微信/支付宝
 
 - 微信 override 显式绑定 `AppBrandUI` / `AppBrandLaunchProxyUI` activityIds；
   规则 200 Skip / 201 Close(AGGRESSIVE) / 202 ×(AGGRESSIVE) / 203 结构(CRAZY)。
 - 支付宝绑定 XRiverActivity / Nebula（真实类名未在设备确认，上下文门控兜底）。
-- 真实小程序成功率：NO_SAMPLE（环境无法稳定触发广告 SDK 填充）。
+- AppBrandUI / XRiverActivity 仅用于**动作前**建立 STRONG 上下文；**动作后**
+  小程序壳仍在 ≠ 广告仍在（OutcomeVerifier 只认 fresh 证据，R6.3.1 修正）。
+- 真实小程序成功率：NO_SAMPLE（环境无法稳定触发广告 SDK 填充），
+  FIELD GATE=PENDING。TestAd fixture 矩阵（第 7 节）不是真实广告证据。
 
 ## 9. Teach V2
 
@@ -141,6 +147,8 @@
 ## 14. 已知事项 / 未通过
 
 - **FIELD GATE：PENDING**（真实广告样本 NO_SAMPLE，采样工具就绪）。
+  TestAd fixture 已闭环 ≠ Field Gate 通过；真实广告（如星星充电小程序
+  开屏广告）需要独立 Field Gate。
 - 结构/坐标 selector 对真实广告快照待实机样本调优（TestAd fixture 已闭环）。
 - Shizuku：NO_ENV（无授权环境）。
 - HyperOS 在 force-stop 后可能使无障碍服务假死（bound 但事件不投递），

@@ -136,10 +136,11 @@ class BypassStrategyMatrixTest {
     }
 
     @Test
-    fun high_risk_app_blocks_generic_fallback_but_allows_dedicated_and_override() {
+    fun high_risk_app_blocks_untrusted_sources_but_exempt_sources_keep_gating() {
         for (ordinal in 0..2) {
             val p = policyFor(ordinal)
-            // Generic fallback is always off on a high-risk host.
+            // Untrusted source on a high-risk host is always denied, even
+            // with STRONG context and inside the window.
             assertEquals(
                 BypassRejectReason.SENSITIVE_ACTIVITY,
                 BypassStrategyGate.rejectReason(
@@ -160,8 +161,10 @@ class BypassStrategyMatrixTest {
                     inWindow = true,
                 ),
             )
-            // Curated dedicated rule on the same host is still allowed.
-            assertNull(
+            // Exempt source (curated dedicated) is NOT allowed to bypass the
+            // window check on a high-risk host: OUTSIDE_WINDOW still denies.
+            assertEquals(
+                BypassRejectReason.OUTSIDE_WINDOW,
                 BypassStrategyGate.rejectReason(
                     candidate = BypassExitCandidateType.CLOSE_TEXT,
                     packageName = "com.eg.android.AlipayGphone",
@@ -182,6 +185,82 @@ class BypassStrategyMatrixTest {
             )
         }
     }
+
+    @Test
+    fun wechat_override_outside_window_is_no() {
+        // P0-3 acceptance: 微信 override + OUTSIDE_WINDOW => NO.
+        assertEquals(
+            BypassRejectReason.OUTSIDE_WINDOW,
+            wechatOverrideGate(inWindow = false, context = BypassAdContextLevel.STRONG),
+        )
+    }
+
+    @Test
+    fun wechat_override_without_strong_context_is_no() {
+        // P0-3 acceptance: 微信 override + context NONE => NO.
+        assertEquals(
+            BypassRejectReason.NO_AD_CONTEXT,
+            wechatOverrideGate(inWindow = true, context = BypassAdContextLevel.NONE),
+        )
+        assertEquals(
+            BypassRejectReason.NO_AD_CONTEXT,
+            wechatOverrideGate(inWindow = true, context = BypassAdContextLevel.WEAK),
+        )
+    }
+
+    @Test
+    fun wechat_override_strong_in_window_is_yes() {
+        // P0-3 acceptance: 微信 override + STRONG + inWindow => YES.
+        assertNull(
+            wechatOverrideGate(inWindow = true, context = BypassAdContextLevel.STRONG),
+        )
+    }
+
+    @Test
+    fun wechat_override_close_in_conservative_is_strategy_gated() {
+        // The override may only waive "untrusted source": the strategy gate
+        // still applies, so a generic CLOSE_TEXT override cannot act in the
+        // CONSERVATIVE mode even on WeChat with STRONG + inWindow.
+        assertEquals(
+            BypassRejectReason.STRATEGY_GATE,
+            BypassStrategyGate.rejectReason(
+                candidate = BypassExitCandidateType.CLOSE_TEXT,
+                packageName = "com.tencent.mm",
+                activityName = "com.tencent.mm.plugin.appbrand.ui.AppBrandUI",
+                nodeWidth = 80,
+                nodeHeight = 40,
+                policy = BypassAdStrategyMode.CONSERVATIVE.policy,
+                rulePolicy = BypassRulePolicy(
+                    trust = BypassRuleTrust.BYPASS_OVERRIDE,
+                    minimumMode = BypassAdStrategyMode.AGGRESSIVE,
+                    requiresStrongAdContext = true,
+                    coordinate = false,
+                    maxAttempts = 3,
+                ),
+                contextLevel = BypassAdContextLevel.STRONG,
+                inWindow = true,
+            ),
+        )
+    }
+
+    private fun wechatOverrideGate(inWindow: Boolean, context: BypassAdContextLevel): String? =
+        BypassStrategyGate.rejectReason(
+            candidate = BypassExitCandidateType.CLOSE_TEXT,
+            packageName = "com.tencent.mm",
+            activityName = "com.tencent.mm.plugin.appbrand.ui.AppBrandUI",
+            nodeWidth = 80,
+            nodeHeight = 40,
+            policy = BypassAdStrategyMode.AGGRESSIVE.policy,
+            rulePolicy = BypassRulePolicy(
+                trust = BypassRuleTrust.BYPASS_OVERRIDE,
+                minimumMode = BypassAdStrategyMode.AGGRESSIVE,
+                requiresStrongAdContext = true,
+                coordinate = false,
+                maxAttempts = 3,
+            ),
+            contextLevel = context,
+            inWindow = inWindow,
+        )
 
     private fun gateCloseText(p: BypassStrategyPolicy): String? =
         gate(BypassExitCandidateType.CLOSE_TEXT, p, 80, 40)

@@ -1,6 +1,7 @@
 package li.songe.gkd.bypass
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -86,5 +87,42 @@ class AdContextTrackerTest {
         val t2 = t1 + 60_000L
         BypassAdContextTracker.onTopActivityChanged(pkg, act, t2)
         assert(BypassAdContextTracker.freshEntry(pkg, act, t2 + 1_000L))
+    }
+
+    // ---- P0-6: a service reconnect must not re-open the startup window ----
+
+    @Test
+    fun reconnect_first_fresh_read_does_not_reanchor() {
+        // A fresh engine / service reconnect starts with an empty observedTopApp
+        // baseline. The first fresh root read of the SAME app is only a
+        // baseline, never a transition: it must not call onAppObserved(now).
+        assertTrue(!BypassWindowAnchor.shouldReanchorOnObservation("", "com.tencent.mm"))
+        // A genuine A -> B transition while the service is up DOES re-anchor.
+        assertTrue(BypassWindowAnchor.shouldReanchorOnObservation("com.tencent.mm", "com.example.app"))
+        // Re-reads of the same app never re-anchor.
+        assertTrue(!BypassWindowAnchor.shouldReanchorOnObservation("com.tencent.mm", "com.tencent.mm"))
+    }
+
+    @Test
+    fun normal_screen_60s_then_reconnect_stays_outside_startup_window() {
+        BypassAdContextTracker.clearForTest()
+        val pkg = "com.example.normal"
+        val act = "com.example.Main"
+        val t0 = 1_000_000L
+        // User entered a normal screen (not a mini-program ad activity).
+        BypassAdContextTracker.onTopActivityChanged(pkg, act, t0)
+        assertTrue(BypassAdContextTracker.freshEntry(pkg, act, t0 + 1_000L))
+
+        // 60s later the accessibility service reconnects. The first fresh
+        // root read after reconnect must NOT re-anchor the window (empty
+        // baseline), so the entry time stays at t0:
+        assertTrue(!BypassWindowAnchor.shouldReanchorOnObservation("", pkg))
+        // Without re-anchoring the startup window is closed:
+        assertTrue(!BypassAdContextTracker.freshEntry(pkg, act, t0 + 60_000L))
+        // A real transition to a different app DOES anchor a fresh window:
+        val tLaunch = t0 + 60_000L
+        BypassAdContextTracker.onAppObserved("com.example.adhost", tLaunch)
+        assertTrue(BypassAdContextTracker.freshEntry("com.example.adhost", null, tLaunch + 1_000L))
+        BypassAdContextTracker.clearForTest()
     }
 }

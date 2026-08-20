@@ -273,8 +273,11 @@ object BypassDetectionSessions {
                     finalFailureReason = reason.name,
                     diagnosticTimeline = append(current.record.diagnosticTimeline, "FINAL:$reason", MAX_TIMELINE_ITEMS),
                 )
-                active = ActiveSession(finalized, System.currentTimeMillis())
+                // Terminal: a FAILURE_CONFIRMED session must never be reused
+                // as the active session by a later update (P1). The next
+                // window opens a brand-new session instead.
                 persist(finalized, cleanup = true)
+                active = null
             }
             scheduledFinalizers.remove(sessionId)
             BypassActionBudget.reset(sessionId)

@@ -62,6 +62,9 @@ object BypassRulePolicyResolver {
     /** Identity inputs the resolver needs (pure, unit-testable). */
     data class RuleIdentity(
         val subsId: Long,
+        /** App package of the matched rule (null for global rules). */
+        val appId: String?,
+        val groupKey: Int,
         val isGlobal: Boolean,
         val groupName: String,
         val bypassMode: String?,
@@ -72,6 +75,8 @@ object BypassRulePolicyResolver {
     fun resolve(rule: ResolvedRule): BypassRulePolicy = resolveForIdentity(
         RuleIdentity(
             subsId = rule.subsItem.id,
+            appId = (rule as? AppRule)?.appId,
+            groupKey = rule.g.group.key,
             isGlobal = rule is GlobalRule,
             groupName = rule.g.group.name,
             bypassMode = rule.rule.bypassMode,
@@ -106,15 +111,29 @@ object BypassRulePolicyResolver {
 
     private fun trustOf(identity: RuleIdentity): BypassRuleTrust {
         val inBypassSubs = identity.subsId == BYPASS_SPLASH_SUBS_ID
+        // Teach rules are created by the app with their own identity prefix
+        // and always live in the Bypass subscription; they win over any other
+        // origin with the same key.
+        if (inBypassSubs && identity.groupName.startsWith(teachGroupPrefix)) {
+            return if (identity.coordinate) BypassRuleTrust.TEACH_COORDINATE
+            else BypassRuleTrust.TEACH_NODE
+        }
+        // Structured origin side-map: after the local-import merge every rule
+        // carries BYPASS_SPLASH_SUBS_ID, so subsId alone can no longer
+        // separate imported from bundled rules (P0-4). The side-map is keyed
+        // by the same structured identity used everywhere else; origins are
+        // never guessed from rule names.
+        if (!identity.isGlobal && BypassRuleProvenance.isLocalAppGroup(identity.appId, identity.groupKey)) {
+            return BypassRuleTrust.LOCAL_IMPORT_DEDICATED
+        }
+        if (identity.isGlobal && BypassRuleProvenance.isLocalGlobalGroup(identity.groupKey)) {
+            return BypassRuleTrust.LOCAL_IMPORT_GLOBAL
+        }
         return when {
             !inBypassSubs && identity.isGlobal -> BypassRuleTrust.LOCAL_IMPORT_GLOBAL
             !inBypassSubs -> BypassRuleTrust.LOCAL_IMPORT_DEDICATED
             identity.isGlobal -> BypassRuleTrust.BUNDLED_GLOBAL
             else -> when {
-                identity.groupName.startsWith(teachGroupPrefix) -> {
-                    if (identity.coordinate) BypassRuleTrust.TEACH_COORDINATE
-                    else BypassRuleTrust.TEACH_NODE
-                }
                 identity.bypassMode != null -> BypassRuleTrust.BYPASS_OVERRIDE
                 else -> BypassRuleTrust.BUNDLED_DEDICATED
             }

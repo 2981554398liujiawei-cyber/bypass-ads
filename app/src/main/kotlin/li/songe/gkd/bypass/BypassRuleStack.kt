@@ -45,8 +45,16 @@ object BypassRuleStackManager {
         local: RawSubscription?,
     ): RawSubscription {
         if (local == null || (local.apps.isEmpty() && local.globalGroups.isEmpty())) {
+            BypassRuleProvenance.clear()
             return bundled
         }
+        // Record the structured origin of every imported group BEFORE the
+        // merge rewrites identities: the resolver needs the side-map to tell
+        // imported rules from bundled ones once they share BYPASS_SPLASH_SUBS_ID.
+        local.apps.forEach { localApp ->
+            localApp.groups.forEach { group -> BypassRuleProvenance.markLocalApp(localApp.id, group.key) }
+        }
+        local.globalGroups.forEach { group -> BypassRuleProvenance.markLocalGlobal(group.key) }
         val conflicts = mutableListOf<LayerConflict>()
         val localByApp = local.apps.associateBy { it.id }
         val apps = bundled.apps.map { bundledApp ->
@@ -92,6 +100,7 @@ object BypassRuleStackManager {
     }
 
     suspend fun clearLocalImport() {
+        BypassRuleProvenance.clear()
         lock.withLock {
             withContext(Dispatchers.IO) {
                 if (localImportFile.exists()) localImportFile.delete()

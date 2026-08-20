@@ -111,7 +111,10 @@ object BypassExitClassifier {
     private val closeDescTokens = listOf("关闭", "关闭广告", "關閉", "close")
     private val negativeTokens = listOf("next", "下一步", "完成", "设置", "搜索", "历史记录", "阅读并同意", "跳过片头", "跳过片尾", "跳过视频", "取消", "退出", "帮助")
     private val sensitiveTokens = listOf("支付", "付款", "确认支付", "提交订单", "转账", "验证码", "授权登录", "允许", "安装", "卸载", "同意", "银行卡", "身份认证", "password", "otp", "card", "bank")
-    private val adLabelTokens = listOf("广告", "推广", "ad", "ads", "sponsored")
+    // Chinese ad labels match by containment; English tokens must be whole
+    // words so "address"/"badge"/"read"/"adapter" never count as "ad".
+    private val adLabelCjkTokens = listOf("广告", "推广")
+    private val adLabelEnRegex = Regex("(?i)(?<![a-z0-9])(ad|ads|advertisement|sponsored)(?![a-z0-9])")
 
     /**
      * Normalize any text for semantic matching: trim + lowercase. All
@@ -121,8 +124,9 @@ object BypassExitClassifier {
 
     /** Whether the node carries an explicit ad label (ad context evidence). */
     fun hasAdLabel(text: String?, description: String?, viewId: String?): Boolean {
-        val haystack = listOfNotNull(text, description, viewId).joinToString(" ").lowercase()
-        return adLabelTokens.any { haystack.contains(it) }
+        val haystack = listOfNotNull(text, description, viewId).joinToString(" ")
+        if (adLabelCjkTokens.any { haystack.contains(it) }) return true
+        return adLabelEnRegex.containsMatchIn(haystack)
     }
 
     fun classify(

@@ -14,6 +14,8 @@ class TeachPolicyTest {
     private fun teachPolicy(coordinate: Boolean) = BypassRulePolicyResolver.resolveForIdentity(
         BypassRulePolicyResolver.RuleIdentity(
             subsId = li.songe.gkd.BYPASS_SPLASH_SUBS_ID,
+            appId = "com.example.teachhost",
+            groupKey = 9001,
             isGlobal = false,
             groupName = "教学规则 · 跳过",
             bypassMode = null,
