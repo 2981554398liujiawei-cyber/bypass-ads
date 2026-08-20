@@ -15,6 +15,7 @@ import li.songe.gkd.data.ActionLog
 import li.songe.gkd.data.ActivityLog
 import li.songe.gkd.data.AppConfig
 import li.songe.gkd.data.AppVisitLog
+import li.songe.gkd.data.BypassDetectionSession
 import li.songe.gkd.data.CategoryConfig
 import li.songe.gkd.data.Snapshot
 import li.songe.gkd.data.SubsConfig
@@ -23,7 +24,7 @@ import li.songe.gkd.util.dbFolder
 import li.songe.gkd.util.json
 
 @Database(
-    version = 14,
+    version = 15,
     entities = [
         SubsItem::class,
         Snapshot::class,
@@ -34,6 +35,7 @@ import li.songe.gkd.util.json
         AppConfig::class,
         AppVisitLog::class,
         A11yEventLog::class,
+        BypassDetectionSession::class,
     ],
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
@@ -49,6 +51,7 @@ import li.songe.gkd.util.json
         AutoMigration(from = 11, to = 12),
         AutoMigration(from = 12, to = 13),
         AutoMigration(from = 13, to = 14),
+        AutoMigration(from = 14, to = 15),
     ]
 )
 @TypeConverters(DbConverters::class)
@@ -62,6 +65,7 @@ abstract class AppDb : RoomDatabase() {
     abstract fun activityLogDao(): ActivityLog.ActivityLogDao
     abstract fun appVisitLogDao(): AppVisitLog.AppLogDao
     abstract fun a11yEventLogDao(): A11yEventLog.A11yEventLogDao
+    abstract fun bypassDetectionSessionDao(): BypassDetectionSession.BypassDetectionSessionDao
 }
 
 @RenameColumn(
@@ -125,4 +129,5 @@ object DbSet {
     val appConfigDao get() = db.appConfigDao()
     val appVisitLogDao get() = db.appVisitLogDao()
     val a11yEventLogDao get() = db.a11yEventLogDao()
+    val bypassDetectionSessionDao get() = db.bypassDetectionSessionDao()
 }

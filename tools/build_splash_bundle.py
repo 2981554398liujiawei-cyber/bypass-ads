@@ -160,6 +160,31 @@ SOURCE_GLOBAL_REINFORCEMENT_RULES = (
             '[clickable=false][childCount=0][visibleToUser=true][width<300 && height<200][(text.length<10 && (text*="跳过" || text*="跳 过" || text*="跳過" || text~="(?is).*skip.*")) || (desc.length<10 && (desc*="跳过" || desc*="跳過" || desc~="(?is).*skip.*")) || (vid~="(?is).*skip.*" && vid!~="(?is).*video.*" && vid!~="(?is).*head.*" && vid!~="(?is).*tail.*") || id$="tt_splash_skip_btn"]'
         ],
     },
+    {
+        # Strategy-gated close text / desc / view id. The runtime gate
+        # (BypassStrategyGate) decides whether this rule may run: it only
+        # actuates in AGGRESSIVE+ modes. The rule name marker keeps the
+        # merge idempotent across repeated builds.
+        "name": "Bypass Ads 策略化关闭补强-Aggressive",
+        "excludeMatches": '[text="NEXT" || text="下一步" || text="完成" || text="设置" || text="搜索" || text="历史记录" || text*="阅读并同意" || text*="跳过片头" || text*="跳过片尾" || text*="跳过视频" || text="取消" || text*="退出" || text="帮助"][visibleToUser=true]',
+        "anyMatches": [
+            '[clickable=true][visibleToUser=true][width<300 && height<200][(text="关闭" || text="关闭广告" || text="关闭此广告" || text="关闭该广告" || text="關閉" || text="關閉廣告" || text="Close" || text="close")]',
+            '[clickable=true][visibleToUser=true][width<300 && height<200][(desc="关闭" || desc="关闭广告" || desc="關閉" || desc="close" || desc="Close")]',
+            '[clickable=true][visibleToUser=true][width<300 && height<200][vid~="(?is).*(ad_close|splash_close|close_ad|close_btn|close_icon)"]'
+        ],
+    },
+    {
+        # Strategy-gated structural X / × glyph. Only actuates in AGGRESSIVE+
+        # modes, and only for a small, visible glyph. The runtime gate also
+        # enforces the ad-context window.
+        "name": "Bypass Ads 策略化 X 补强-Aggressive",
+        "action": "clickCenter",
+        "excludeMatches": '[text="NEXT" || text="下一步" || text="完成" || text="设置" || text="搜索" || text="历史记录" || text*="阅读并同意" || text*="跳过片头" || text*="跳过片尾" || text*="跳过视频" || text="取消" || text*="退出" || text="帮助"][visibleToUser=true]',
+        "anyMatches": [
+            '[clickable=true][visibleToUser=true][width<120 && height<120][(text="X" || text="×" || text="✕")]',
+            '[clickable=false][childCount=0][visibleToUser=true][width<120 && height<120][(text="X" || text="×" || text="✕")]'
+        ],
+    },
 )
 
 

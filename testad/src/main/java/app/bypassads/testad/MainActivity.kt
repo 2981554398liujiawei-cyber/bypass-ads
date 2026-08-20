@@ -72,9 +72,27 @@ class MainActivity : Activity() {
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             }, topEndParams())
             "o" -> scene.addView(skipTarget(text = "跳过") { showResult(mode) }, topEndParams())
+            // R6.2 strategy matrix scenes (p..w):
+            // D  text=关闭          -> AGGRESSIVE+ may click
+            "p" -> scene.addView(skipTarget(text = "关闭") { showResult(mode) }, topEndParams())
+            // E  desc=关闭广告      -> AGGRESSIVE+ may click
+            "q" -> scene.addView(skipTarget(desc = "关闭广告") { showResult(mode) }, topEndParams())
+            // F  vid=ad_close       -> AGGRESSIVE+ may click
+            "r" -> scene.addView(skipTarget(id = R.id.ad_close) { showResult(mode) }, topEndParams())
+            // G  text=×             -> AGGRESSIVE+ may click (small glyph)
+            "s" -> scene.addView(skipTarget(text = "×", desc = "close") { showResult(mode) }, tinyParams())
+            // H  structural X (no text/desc View) -> AGGRESSIVE+ may click
+            "t" -> scene.addView(structuralXTarget { showResult(mode) }, tinyParams())
+            // I  coordinate-only close (non-clickable node, no semantic)
+            "u" -> scene.addView(structuralXTarget(clickable = false) { showResult(mode) }, tinyParams())
+            // L  ordinary non-ad close button -> must NOT be clicked in any mode
+            "w" -> scene.addView(skipTarget(text = "关闭") { showUnexpectedAction(mode) }, largeParams())
         }
         setScene(scene)
     }
+
+    private fun largeParams() = FrameLayout.LayoutParams(dp(520), dp(320), Gravity.CENTER).apply { topMargin = dp(120) }
+    private fun tinyParams() = FrameLayout.LayoutParams(dp(30), dp(30), Gravity.TOP or Gravity.END).apply { topMargin = dp(120); marginEnd = dp(24) }
 
     private fun addClickableParent(scene: FrameLayout, mode: String) {
         val parent = FrameLayout(this).apply {
@@ -115,10 +133,17 @@ class MainActivity : Activity() {
         desc: String? = null,
         id: Int = View.NO_ID,
         clickable: Boolean = true,
+        forceDesc: Boolean = false,
         onClick: (() -> Unit)? = null,
     ) = TextView(this).apply {
-        this.text = text
-        contentDescription = desc
+        if (forceDesc) {
+            // Structural-X scene: no text, no desc, plain ImageView-like node.
+            this.text = ""
+            contentDescription = null
+        } else {
+            this.text = text
+            contentDescription = desc
+        }
         this.id = id
         textSize = 16f
         gravity = Gravity.CENTER
@@ -130,6 +155,15 @@ class MainActivity : Activity() {
     }
 
     private fun targetBackground() = GradientDrawable().apply { setColor(Color.rgb(37, 123, 229)); cornerRadius = dp(14).toFloat() }
+
+    /** A plain View with no text/desc: structural X / coordinate-only fixture. */
+    private fun structuralXTarget(clickable: Boolean = true, onClick: (() -> Unit)? = null) =
+        View(this).apply {
+            background = targetBackground()
+            isClickable = clickable
+            isFocusable = clickable
+            onClick?.let { handler -> setOnClickListener { handler() } }
+        }
     private fun showResult(mode: String) = setScene(TextView(this).apply {
         text = "测试已跳过 (${mode.uppercase()})"
         textSize = 22f
@@ -162,11 +196,18 @@ class MainActivity : Activity() {
         "m" -> "M 延迟后才可点击"
         "n" -> "N 无 Accessibility 节点"
         "o" -> "O 导航栈验证 Hook"
+        "p" -> "P 策略：text=关闭"
+        "q" -> "Q 策略：desc=关闭广告"
+        "r" -> "R 策略：vid=ad_close"
+        "s" -> "S 策略：text=×"
+        "t" -> "T 策略：结构 X（无文本）"
+        "u" -> "U 策略：坐标-only 关闭"
+        "w" -> "W 策略：普通关闭（非广告，禁止点击）"
         else -> mode
     }
 
     companion object {
         const val EXTRA_SCENARIO = "scenario"
-        private val scenarioNames = ('a'..'o').map(Char::toString).toSet()
+        private val scenarioNames = ('a'..'u').map(Char::toString).toSet() + "w"
     }
 }

@@ -22,6 +22,12 @@ import li.songe.gkd.BYPASS_SPLASH_SUBS_ID
 import li.songe.gkd.META
 import li.songe.gkd.bypass.BypassPerfTrace
 import li.songe.gkd.bypass.BypassDiagnostics
+import li.songe.gkd.bypass.BypassDetectionSessions
+import li.songe.gkd.bypass.BypassRejectReason
+import li.songe.gkd.bypass.BypassExitCandidateType
+import li.songe.gkd.bypass.BypassExitClassifier
+import li.songe.gkd.bypass.BypassStrategyGate
+import li.songe.gkd.bypass.BypassTeachRules
 import li.songe.gkd.bypass.FailureReason
 import li.songe.gkd.data.ActionPerformer
 import li.songe.gkd.data.ActionResult
@@ -34,6 +40,7 @@ import li.songe.gkd.isActivityVisible
 import li.songe.gkd.service.A11yService
 import li.songe.gkd.service.EventService
 import li.songe.gkd.service.topAppIdFlow
+import li.songe.gkd.shizuku.casted
 import li.songe.gkd.shizuku.shizukuContextFlow
 import li.songe.gkd.shizuku.uiAutomationFlow
 import li.songe.gkd.store.actualBlockA11yAppList
@@ -64,6 +71,13 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
     private val hasOthersService = when (service.mode) {
         AutomatorModeOption.A11yMode -> uiAutomationFlow.value != null
         AutomatorModeOption.AutomationMode -> A11yService.instance != null
+    }
+
+    /** Per-top-app exit-attempt counters for strategy-aware bounded retries. */
+    private val sessionExitAttempts = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+    fun onAppChanged() {
+        sessionExitAttempts.clear()
     }
 
     fun onA11yConnected() {
@@ -440,13 +454,84 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
             val target = a11yContext.queryRule(rule, nodeVal) ?: run {
                 if (rule.subsItem.id == BYPASS_SPLASH_SUBS_ID) {
                     BypassDiagnostics.record(FailureReason.SELECTOR_NO_MATCH, detail = "gkd_selector_no_match")
+                    if (BypassTeachRules.isPendingVerification(rule.g.appId, rule.g.group.key)) {
+                        BypassTeachRules.markVerification(rule.g.appId, rule.g.group.key, success = false)
+                    }
                 }
                 continue
             }
             BypassPerfTrace.matched(rule.statusText())
+            val bypassContext = topActivityFlow.value
+            val isBypassRule = rule.subsItem.id == BYPASS_SPLASH_SUBS_ID
+            if (META.debuggable && isBypassRule) {
+                Log.d("A11yRuleEngine", "bypass rule matched: ${rule.g.group.name}/${rule.rule.name} status=${rule.status}")
+            }
+            if (isBypassRule) {
+                // Bypass-owned rules can carry an explicit strategy marker in
+                // their rule name ("...-Aggressive", "...-Crazy"). A rule the
+                // active mode does not reach is skipped before classification.
+                if (!BypassStrategyGate.isRuleAllowedByStrategy(rule.rule.name)) {
+                    if (META.debuggable) {
+                        Log.d("A11yRuleEngine", "bypass rule rejected by strategy level: ${rule.rule.name}")
+                    }
+                    BypassDiagnostics.record(
+                        FailureReason.GLOBAL_EXCLUDED,
+                        packageName = bypassContext.appId,
+                        activityName = bypassContext.activityId,
+                        detail = "CLOSE_CANDIDATE_REJECTED reason=STRATEGY_GATE type=RULE_LEVEL",
+                    )
+                    continue
+                }
+                // Strategy gate: classify the matched control and let the
+                // active strategy mode decide whether this candidate may act.
+                // Skip semantics are always allowed; close / X / structural
+                // candidates are gated per mode. Rejections are debug-only
+                // timeline events, never user failure records.
+                val candidate = BypassExitClassifier.classifyNode(target)
+                if (candidate != null) {
+                    val reject = BypassStrategyGate.rejectReason(
+                        candidate = candidate,
+                        packageName = bypassContext.appId,
+                        activityName = bypassContext.activityId,
+                        nodeWidth = target.casted.boundsInScreen.width(),
+                        nodeHeight = target.casted.boundsInScreen.height(),
+                        appHasDedicatedRule = rule is AppRule,
+                    )
+                    if (reject != null) {
+                        if (META.debuggable) {
+                            Log.d("A11yRuleEngine", "bypass candidate rejected: ${candidate.name} reason=$reject")
+                        }
+                        BypassDiagnostics.record(
+                            FailureReason.GLOBAL_EXCLUDED,
+                            packageName = bypassContext.appId,
+                            activityName = bypassContext.activityId,
+                            detail = "CLOSE_CANDIDATE_REJECTED reason=$reject type=${candidate.name}",
+                        )
+                        BypassDetectionSessions.candidateRejected(
+                            bypassContext.appId,
+                            bypassContext.activityId,
+                            candidate.name,
+                            reject,
+                        )
+                        continue
+                    }
+                }
+                BypassDetectionSessions.targetFound(
+                    packageName = bypassContext.appId,
+                    activityName = bypassContext.activityId,
+                    ruleLabel = rule.statusText(),
+                    target = target,
+                )
+                BypassDetectionSessions.strategyApplied(
+                    bypassContext.appId,
+                    bypassContext.activityId,
+                    li.songe.gkd.bypass.BypassAdStrategyMode.from(storeFlow.value.bypassAdStrategyMode),
+                )
+            }
             if (rule.checkDelay() && rule.actionDelayJob.value == null) {
-                if (rule.subsItem.id == BYPASS_SPLASH_SUBS_ID) {
-                    BypassDiagnostics.record(FailureReason.ACTION_TOO_EARLY, detail = "rule_action_delay")
+                if (isBypassRule) {
+                    BypassDiagnostics.record(FailureReason.WAITING_FOR_DELAY, detail = "rule_action_delay")
+                    BypassDetectionSessions.waitingForDelay(bypassContext.appId, bypassContext.activityId)
                 }
                 rule.actionDelayJob.value = scope.launch(actionDispatcher) {
                     delay(rule.actionDelay)
@@ -458,8 +543,9 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
             if (rule.status != RuleStatus.StatusOk) break
             if (checkOutDate(activityRule, tempStateEvent)) break
             BypassPerfTrace.actionStarted(rule.statusText())
-            if (rule.subsItem.id == BYPASS_SPLASH_SUBS_ID && !target.isClickable) {
+            if (isBypassRule && !target.isClickable) {
                 BypassDiagnostics.record(FailureReason.TARGET_FOUND_NOT_CLICKABLE, detail = "matched_target_not_clickable")
+                BypassDetectionSessions.targetNotClickable(bypassContext.appId, bypassContext.activityId)
             }
             val actionResult = rule.performAction(target)
             BypassPerfTrace.actionFinished(rule.statusText())
@@ -471,7 +557,17 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
                     delay(300)
                     startQueryJob()
                 }
-                if (rule.subsItem.id == BYPASS_SPLASH_SUBS_ID) {
+                if (isBypassRule) {
+                    BypassDetectionSessions.actionSucceeded(
+                        bypassContext.appId,
+                        bypassContext.activityId,
+                        actionResult.action.toString(),
+                    )
+                    BypassTeachRules.markVerification(
+                        rule.g.appId,
+                        rule.g.group.key,
+                        success = true,
+                    )
                     // A successful accessibility action is not proof that an
                     // ad disappeared. This debug-only check reuses the exact
                     // matched node instead of adding a second scanner.
@@ -480,6 +576,20 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
                         val stillVisible = runCatching { target.refresh() && target.isVisibleToUser }.getOrDefault(false)
                         if (stillVisible) {
                             BypassDiagnostics.record(FailureReason.ACTION_NO_EFFECT, detail = "target_persisted_after_action")
+                            // Strategy-aware bounded retry: re-query a fresh
+                            // candidate and attempt a second exit. Only the
+                            // active mode's attempt budget may re-trigger.
+                            val mode = li.songe.gkd.bypass.BypassAdStrategyMode.from(storeFlow.value.bypassAdStrategyMode)
+                            val maxAttempts = mode.policy.maxExitAttempts
+                            val done = sessionExitAttempts.compute(bypassContext.appId) { _, v -> (v ?: 0) + 1 } ?: 1
+                            if (done < maxAttempts) {
+                                BypassDetectionSessions.exitRetry(bypassContext.appId, bypassContext.activityId, done + 1)
+                                startQueryJob(byForced = true)
+                            } else {
+                                sessionExitAttempts.remove(bypassContext.appId)
+                            }
+                        } else {
+                            sessionExitAttempts.remove(bypassContext.appId)
                         }
                     }
                 }
@@ -487,8 +597,18 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
                     showActionToast(rule)
                 }
                 addActionLog(rule, topActivity, target, actionResult)
-            } else if (rule.subsItem.id == BYPASS_SPLASH_SUBS_ID) {
+            } else if (isBypassRule) {
                 BypassDiagnostics.record(FailureReason.ACTION_FAILED, detail = "gkd_action_returned_false")
+                BypassDetectionSessions.actionFailed(
+                    bypassContext.appId,
+                    bypassContext.activityId,
+                    actionResult.action.toString(),
+                )
+                BypassTeachRules.markVerification(
+                    rule.g.appId,
+                    rule.g.group.key,
+                    success = false,
+                )
             }
         }
     }

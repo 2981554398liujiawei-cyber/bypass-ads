@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug-only manifest overlay.
+
+  createComposeRule() 的宿主 Activity（androidx.activity.ComponentActivity）
+  由测试框架以 MAIN/LAUNCHER Intent 启动，组件解析走主 APK 的 manifest。
+  HyperOS 对未声明的 Activity 一律拒绝（MIUILOG- Permission Denied Activity），
+  因此必须在这里为主 APK 显式声明该宿主，仪器测试才能进入前台并空闲。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application>
+        <activity
+            android:name="androidx.activity.ComponentActivity"
+            android:exported="true"
+            tools:ignore="UnusedAttribute">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

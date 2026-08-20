@@ -3,17 +3,20 @@ package li.songe.gkd.ui.component
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.google.accompanist.drawablepainter.rememberDrawablePainter
 import li.songe.gkd.util.appIconMapFlow
+import li.songe.gkd.util.requestAppIcon
 
 @Composable
 fun AppIcon(
     modifier: Modifier = Modifier,
     appId: String,
 ) {
+    LaunchedEffect(appId) { requestAppIcon(appId) }
     val icon = appIconMapFlow.collectAsState().value[appId]
     val iconModifier = modifier.size(32.dp)
     if (icon != null) {

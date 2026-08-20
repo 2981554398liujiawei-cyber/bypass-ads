@@ -214,23 +214,20 @@ object GkdBypassEngine : BypassEngine {
             .stateIn(appScope, SharingStarted.Eagerly, 0)
 
     override val failureRecords: StateFlow<List<BypassFailureRecord>> =
-        BypassDiagnostics.events.map { events ->
-            events.map {
-                BypassFailureRecord(
-                    id = it.id,
-                    time = it.time,
-                    packageName = it.packageName,
-                    activityName = it.activityName,
-                    reason = it.reason,
-                    detail = it.detail,
-                )
-            }
+        DbSet.bypassDetectionSessionDao.queryFailures().map { sessions ->
+            sessions.map { it.toFailureRecord() }
         }.stateIn(appScope, SharingStarted.Eagerly, emptyList())
 
     override val averageResponseMs: StateFlow<Int?> = BypassPerfTrace.averageActionLatencyMs
 
     override val genericFallbackEnabled: StateFlow<Boolean> =
         storeFlow.mapState(appScope) { it.enableGenericFallback }
+
+    override val strategyMode: StateFlow<BypassAdStrategyMode> =
+        storeFlow.mapState(appScope) { BypassAdStrategyMode.from(it.bypassAdStrategyMode) }
+
+    override val crazyModeAcknowledged: StateFlow<Boolean> =
+        storeFlow.mapState(appScope) { it.bypassCrazyModeAcknowledged }
 
     override val actionToastEnabled: StateFlow<Boolean> =
         storeFlow.mapState(appScope) { it.toastWhenClick }
@@ -290,6 +287,14 @@ object GkdBypassEngine : BypassEngine {
             }
             if (updates.isNotEmpty()) DbSet.subsConfigDao.insert(*updates.toTypedArray())
         }
+    }
+
+    override fun setStrategyMode(mode: BypassAdStrategyMode) {
+        storeFlow.value = storeFlow.value.copy(bypassAdStrategyMode = mode.ordinal)
+    }
+
+    override fun acknowledgeCrazyMode() {
+        storeFlow.value = storeFlow.value.copy(bypassCrazyModeAcknowledged = true)
     }
 
     override fun setActionToastEnabled(enabled: Boolean) {

@@ -75,6 +75,17 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+        <!-- Shizuku 通过该 provider 向本应用投递特权 binder。缺少此声明时
+             Shizuku 授权对话框不会弹出（HyperOS 日志:
+             No provider info for content provider <pkg>.shizuku）。 -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:enabled="true"
+            android:exported="true"
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL"
+            tools:ignore="ExportedProvider" />
 
         <service
             android:name="com.google.android.accessibility.selecttospeak.SelectToSpeakService"

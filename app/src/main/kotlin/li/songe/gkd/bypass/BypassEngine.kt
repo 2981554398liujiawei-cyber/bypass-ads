@@ -55,6 +55,12 @@ interface BypassEngine {
     /** Conservative generic splash fallback switch (default on). */
     val genericFallbackEnabled: StateFlow<Boolean>
 
+    /** Three-tier splash exit strategy (default CONSERVATIVE). */
+    val strategyMode: StateFlow<BypassAdStrategyMode>
+
+    /** Whether the one-time CRAZY confirmation has been shown and accepted. */
+    val crazyModeAcknowledged: StateFlow<Boolean>
+
     /** Whether a successful skip should show the branded toast. */
     val actionToastEnabled: StateFlow<Boolean>
 
@@ -66,6 +72,12 @@ interface BypassEngine {
     fun setAdCategoryEnabled(category: BypassAdCategory, enabled: Boolean)
 
     fun setGenericFallbackEnabled(enabled: Boolean)
+
+    /** Switch the splash exit strategy. */
+    fun setStrategyMode(mode: BypassAdStrategyMode)
+
+    /** Persist the one-time CRAZY confirmation. */
+    fun acknowledgeCrazyMode()
 
     fun setActionToastEnabled(enabled: Boolean)
 
@@ -240,12 +252,13 @@ data class BypassActionRecord(
 )
 
 data class BypassFailureRecord(
-    val id: Long,
+    val id: String,
     val time: Long,
     val packageName: String,
     val activityName: String?,
     val reason: FailureReason,
     val detail: String,
+    val candidates: List<BypassCandidateSnapshot> = emptyList(),
 ) {
     val explanation: String
         get() = when (reason) {
@@ -259,6 +272,7 @@ data class BypassFailureRecord(
             FailureReason.TARGET_FOUND_NOT_CLICKABLE -> "目标找到了，但当前不可点击。"
             FailureReason.ACTION_FAILED -> "点击动作没有成功执行。"
             FailureReason.ACTION_NO_EFFECT -> "动作执行后，目标仍然存在。"
+            FailureReason.WAITING_FOR_DELAY -> "规则正在等待动作延迟。"
             FailureReason.ACTION_TOO_EARLY -> "页面仍在加载，规则正在等待。"
             FailureReason.ACCESSIBILITY_NODE_MISSING -> "当前无法读取无障碍节点。"
             FailureReason.EVENT_MISSED -> "可能错过了页面变化事件。"

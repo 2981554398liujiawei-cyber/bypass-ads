@@ -224,6 +224,7 @@ fun updateTopActivity(
             ruleSummary.globalRules.forEach { it.resetState(t) }
             ruleSummary.appIdToRules[oldActivityRule.topActivity.appId]?.forEach { it.resetState(t) }
             newActivityRule.appRules.forEach { it.resetState(t) }
+            A11yRuleEngine.instance?.onAppChanged()
         } else {
             newActivityRule.currentRules.forEach { r ->
                 when (r.resetMatchType) {

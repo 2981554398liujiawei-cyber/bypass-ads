@@ -45,11 +45,14 @@ def test_source_global_filter_contract() -> None:
 
 def test_source_global_reinforcement_contract() -> None:
     groups = [{"key": 0, "name": "开屏广告-全局", "rules": [{"key": 0}]}]
-    assert builder.reinforce_source_global_groups(groups) == 2
+    assert builder.reinforce_source_global_groups(groups) == 4
     assert builder.reinforce_source_global_groups(groups) == 0
     serialized = json.dumps(groups[0], ensure_ascii=False)
     assert "Bypass Ads 可点击父节点补强" in serialized
     assert "Bypass Ads 安全手势补强" in serialized
+    # R6.2: strategy-gated close / X reinforcement rules.
+    assert "Bypass Ads 策略化关闭补强-Aggressive" in serialized
+    assert "Bypass Ads 策略化 X 补强-Aggressive" in serialized
     assert '"action": "clickCenter"' in serialized
     for unsafe in ("NEXT", "跳过片头", "跳过视频", "阅读并同意"):
         assert unsafe in serialized

@@ -7,7 +7,48 @@
         {
           "name": "开屏广告-通用测试",
           "ignoreGlobalGroupMatch": true,
-          "rules": []
+          "rules": [
+            {
+              "key": 100,
+              "name": "Bypass-Test-Close-Aggressive",
+              "matches": [
+                "[text=\"关闭\" || text=\"关闭广告\" || desc=\"关闭\" || desc=\"关闭广告\"][visibleToUser=true][clickable=true][width<300 && height<200]"
+              ],
+              "action": "clickCenter"
+            },
+            {
+              "key": 101,
+              "name": "Bypass-Test-ViewId-Aggressive",
+              "matches": [
+                "[vid~=\"(?is).*ad_close.*\"][visibleToUser=true]"
+              ],
+              "action": "clickCenter"
+            },
+            {
+              "key": 102,
+              "name": "Bypass-Test-X-Aggressive",
+              "matches": [
+                "[text=\"×\" || text=\"X\"][visibleToUser=true][clickable=true][width<120 && height<120]"
+              ],
+              "action": "clickCenter"
+            },
+            {
+              "key": 103,
+              "name": "Bypass-Test-Structural-Aggressive",
+              "matches": [
+                "[clickable=true][visibleToUser=true][width<160 && height<160][text=null][desc=null]"
+              ],
+              "action": "clickCenter"
+            },
+            {
+              "key": 104,
+              "name": "Bypass-Test-Coordinate-Crazy",
+              "matches": [
+                "[clickable=false][visibleToUser=true][width<200 && height<100][text=null][desc=null]"
+              ],
+              "action": "clickCenter"
+            }
+          ]
         }
       ]
     },
@@ -31,6 +72,27 @@
       ]
     },
     {
+      "id": "com.eg.android.AlipayGphone",
+      "name": "支付宝",
+      "groups": [
+        {
+          "name": "开屏广告-小程序开屏广告-补强",
+          "rules": [
+            {
+              "key": 210,
+              "name": "Bypass-Alipay-Close-Aggressive",
+              "actionDelay": 400,
+              "matches": [
+                "[desc=\"关闭\" || desc=\"关闭弹屏\" || desc=\"關閉\" || desc=\"close\"][visibleToUser=true]",
+                "[text=\"关闭\" || text=\"关闭弹屏\"][visibleToUser=true]",
+                "[vid~=\"(?is).*(ad_close|close_ad|splash_close|close_btn|close_icon)\"][visibleToUser=true]"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
       "id": "com.tencent.mm",
       "name": "微信",
       "groups": [
@@ -39,9 +101,28 @@
           "rules": [
             {
               "key": 200,
+              "name": "Bypass-WeChat-Skip",
               "actionDelay": 800,
               "matches": [
                 "[desc=\"跳过\" || desc=\"跳過\"][visibleToUser=true]"
+              ]
+            },
+            {
+              "key": 201,
+              "name": "Bypass-WeChat-Close-Aggressive",
+              "actionDelay": 500,
+              "matches": [
+                "[desc=\"关闭\" || desc=\"关闭广告\" || desc=\"關閉\" || desc=\"close\" || desc=\"Close\"][visibleToUser=true]",
+                "[text=\"关闭\" || text=\"关闭广告\" || text=\"關閉\" || text=\"Close\"][visibleToUser=true]",
+                "[vid~=\"(?is).*(ad_close|close_ad|splash_close|close_btn|close_icon)\"][visibleToUser=true]"
+              ]
+            },
+            {
+              "key": 202,
+              "name": "Bypass-WeChat-X-Crazy",
+              "actionDelay": 300,
+              "matches": [
+                "[text=\"X\" || text=\"×\" || text=\"✕\"][visibleToUser=true][width<120 && height<120]"
               ]
             }
           ]

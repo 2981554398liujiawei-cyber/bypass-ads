@@ -41,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -70,6 +71,7 @@ import li.songe.gkd.ui.SubsCategoryRoute
 import li.songe.gkd.ui.SubsGlobalGroupListRoute
 import li.songe.gkd.util.BackupUtils
 import li.songe.gkd.util.appIconMapFlow
+import li.songe.gkd.util.requestAppIcon
 import li.songe.gkd.util.saveFileToDownloads
 import li.songe.gkd.util.shareFile
 import java.text.SimpleDateFormat
@@ -239,11 +241,14 @@ fun BypassHomePage(
 fun BypassAdBlockingPage(
     engine: BypassEngine,
     onOpenApps: () -> Unit,
-    onOpenRules: () -> Unit,
+    onOpenRuleDetail: () -> Unit,
+    onOpenSubscriptions: () -> Unit,
+    onOpenAdvancedRules: () -> Unit,
     onOpenSplashStrategy: () -> Unit = {},
 ) {
     val categories by engine.adCategories.collectAsState()
     val stats by engine.stats.collectAsState()
+    val strategy by engine.strategyMode.collectAsState()
     val splash = categories.firstOrNull { it.category == BypassAdCategory.SPLASH }
     val inApp = categories.filter { it.category != BypassAdCategory.SPLASH }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
@@ -251,7 +256,7 @@ fun BypassAdBlockingPage(
             BypassSectionCard("开屏广告") {
                 BypassMutedText("由首页主开关控制", 13)
                 Spacer(Modifier.height(6.dp))
-                BypassMutedText("专用规则 ${it.groupCount} 组 · 覆盖应用 ${it.appCount} 个 · 通用识别已启用", 12)
+                BypassMutedText("专用规则 ${it.groupCount} 组 · 覆盖应用 ${it.appCount} 个 · 当前策略：${strategy.label}", 12)
                 Spacer(Modifier.height(10.dp))
                 BypassNavRow("开屏识别策略", onOpenSplashStrategy)
             }
@@ -268,9 +273,12 @@ fun BypassAdBlockingPage(
             BypassNavRow("${stats.appCount} 个应用", onOpenApps)
         }
         Spacer(Modifier.height(14.dp))
-        BypassSectionCard("规则与订阅") {
-            BypassNavRow("当前规则与订阅", onOpenRules)
-        }
+        BypassRulesAndSubscriptionsSection(
+            engine = engine,
+            onOpenDetail = onOpenRuleDetail,
+            onOpenSubscriptions = onOpenSubscriptions,
+            onOpenAdvanced = onOpenAdvancedRules,
+        )
     }
 }
 
@@ -320,6 +328,7 @@ fun BypassAppControlPage(
         Spacer(Modifier.height(4.dp))
         LazyColumn(Modifier.weight(1f), state = listState) {
             items(shown, key = { it.packageName }) { entry ->
+                LaunchedEffect(entry.packageName) { requestAppIcon(entry.packageName) }
                 val icon = icons[entry.packageName]?.toBypassImage()
                 BypassAppRow(entry.appName, entry.packageName, icon, entry.enabled, "${entry.groupCount} 组 · ${entry.ruleCount} 条规则", { onOpenApp(entry.packageName) }) { enabled ->
                     scope.launch { engine.setAppEnabled(entry.packageName, enabled) }
@@ -371,7 +380,7 @@ fun BypassAppDetailPage(engine: BypassEngine, packageName: String, onBack: () ->
 @Composable
 fun BypassRecordsPage(
     engine: BypassEngine,
-    onOpenFailure: (Long) -> Unit,
+    onOpenFailure: (String) -> Unit,
 ) {
     val actions by engine.recentActions.collectAsState()
     val failures by engine.failureRecords.collectAsState()
@@ -467,15 +476,16 @@ fun BypassRecordsPage(
 @Composable
 fun BypassFailureDetailPage(
     engine: BypassEngine,
-    eventId: Long,
+    eventId: String,
     onBack: () -> Unit,
-    onTeach: () -> Unit,
+    onTeach: (BypassFailureRecord) -> Unit,
 ) {
     val failures by engine.failureRecords.collectAsState()
     val metadata by engine.ruleMetadata.collectAsState()
     val protection by engine.runtimeProtection.collectAsState()
     val masterEnabled by engine.masterEnabled.collectAsState()
     val event = failures.firstOrNull { it.id == eventId }
+    val currentStrategy by engine.strategyMode.collectAsState()
     var result by rememberSaveable { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         BypassBackButton("未跳过原因", onBack)
@@ -489,7 +499,7 @@ fun BypassFailureDetailPage(
         BypassSectionCard("为什么没有跳过？") {
             Text(event.explanation, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = BypassPalette.Ink)
             Spacer(Modifier.height(10.dp))
-            BypassMutedText("App\n${event.packageName}\n\n页面\n${event.activityName ?: "Activity 未知"}\n\n识别\n${event.reason.name}\n\n操作\n${event.detail.ifBlank { "没有额外信息" }}", 12, 19)
+            BypassMutedText("App\n${event.packageName}\n\n页面\n${event.activityName ?: "Activity 未知"}\n\n识别\n${event.reason.name}\n\n策略\n${currentStrategy.label}\n\n操作\n${event.detail.ifBlank { "没有额外信息" }}", 12, 19)
         }
         Spacer(Modifier.height(14.dp))
         BypassSectionCard("处理") {
@@ -498,7 +508,7 @@ fun BypassFailureDetailPage(
                 result = "已请求重新检查当前界面"
             })
             Spacer(Modifier.height(8.dp))
-            BypassModeButton("教 Bypass Ads 跳过", false, onTeach)
+            BypassModeButton("教 Bypass Ads 跳过", false, onClick = { onTeach(event) })
             Spacer(Modifier.height(8.dp))
             BypassModeButton("生成诊断包", false, onClick = {
                 result = runCatching {
@@ -617,27 +627,89 @@ fun BypassAdvancedSettingsPage(engine: BypassEngine, onBack: () -> Unit) {
 @Composable
 fun BypassSplashStrategyPage(engine: BypassEngine, onBack: () -> Unit) {
     val fallback by engine.genericFallbackEnabled.collectAsState()
+    val strategy by engine.strategyMode.collectAsState()
+    val crazyAcknowledged by engine.crazyModeAcknowledged.collectAsState()
     val categories by engine.adCategories.collectAsState()
     val splash = categories.firstOrNull { it.category == BypassAdCategory.SPLASH }
+    var showCrazyConfirm by rememberSaveable { mutableStateOf(false) }
+    var pendingMode by rememberSaveable { mutableStateOf<BypassAdStrategyMode?>(null) }
+
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         BypassBackButton("开屏识别策略", onBack)
         Spacer(Modifier.height(12.dp))
         BypassSectionCard("开屏识别策略") {
             BypassMutedText("首页主开关关闭时，本页全部策略暂停。", 12)
             Spacer(Modifier.height(8.dp))
-            BypassMutedText("优先使用专用规则：${splash?.groupCount ?: 0} 组", 13)
+            BypassMutedText("跳过策略", 13)
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                BypassAdStrategyMode.entries.forEach { mode ->
+                    BypassModeButton(
+                        label = mode.label,
+                        selected = strategy == mode,
+                        onClick = {
+                            if (mode == BypassAdStrategyMode.CRAZY && !crazyAcknowledged) {
+                                pendingMode = mode
+                                showCrazyConfirm = true
+                            } else {
+                                engine.setStrategyMode(mode)
+                            }
+                        },
+                        modifier = Modifier.weight(1f).testTag("bypass-strategy-${mode.name}"),
+                    )
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Text(strategy.label, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = BypassPalette.Ink)
+            Spacer(Modifier.height(4.dp))
+            BypassMutedText(strategy.description, 13, 20)
+        }
+        Spacer(Modifier.height(14.dp))
+        BypassSectionCard("专用规则") {
+            BypassMutedText("成熟专用规则在任意策略下都优先执行，不受本页开关影响。", 12)
+            Spacer(Modifier.height(8.dp))
+            BypassMutedText("${splash?.groupCount ?: 0} 组 · 覆盖应用 ${splash?.appCount ?: 0} 个", 13)
+        }
+        Spacer(Modifier.height(14.dp))
+        BypassSectionCard("通用开屏识别") {
+            BypassMutedText("专用规则未覆盖时，使用受限全局 fallback。模式决定允许哪些候选与动作。", 12)
             Spacer(Modifier.height(8.dp))
             BypassSwitchRow("通用开屏识别", "专用规则未覆盖时使用受限全局 fallback。", fallback, engine::setGenericFallbackEnabled)
-            Spacer(Modifier.height(8.dp))
-            BypassMutedText("安全排除覆盖支付、银行、系统设置和小程序宿主。", 12)
         }
+        Spacer(Modifier.height(14.dp))
+        BypassSectionCard("安全保护") {
+            BypassMutedText("支付、银行、系统页面保持排除；NEXT、跳过片头、普通关闭按钮不会在无广告上下文时被点击。", 12)
+        }
+    }
+    if (showCrazyConfirm) {
+        AlertDialog(
+            onDismissRequest = { showCrazyConfirm = false; pendingMode = null },
+            title = { Text("彻底疯狂模式") },
+            text = {
+                Text(
+                    "该模式会放宽广告退出按钮的识别和动作条件，可能误点页面中的其它关闭类控件。",
+                    fontSize = 14.sp,
+                    color = BypassPalette.Muted,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showCrazyConfirm = false
+                    engine.acknowledgeCrazyMode()
+                    pendingMode?.let { engine.setStrategyMode(it) }
+                    pendingMode = null
+                }) { Text("继续开启") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCrazyConfirm = false; pendingMode = null }) { Text("取消") }
+            },
+        )
     }
 }
 
 @Composable
-fun BypassRulesPage(
+private fun BypassRulesAndSubscriptionsSection(
     engine: BypassEngine,
-    onBack: () -> Unit,
     onOpenDetail: () -> Unit,
     onOpenSubscriptions: () -> Unit,
     onOpenAdvanced: () -> Unit,
@@ -653,37 +725,35 @@ fun BypassRulesPage(
             result = if (text == null) "无法读取所选文件" else engine.importLocalRules(text, uri.lastPathSegment?.substringAfterLast('/')).message
         }
     }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        BypassBackButton("规则与订阅", onBack)
+    BypassSectionCard("规则与订阅") {
+        Text("当前规则", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = BypassPalette.Ink)
+        Spacer(Modifier.height(6.dp))
+        Text("Bypass Ads 广告规则", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = BypassPalette.Ink)
+        Spacer(Modifier.height(6.dp))
+        BypassStateLine("正在使用", true)
+        Spacer(Modifier.height(10.dp))
+        BypassMutedText("来源：${if (metadata.sourceType == BypassRuleSourceType.BUNDLED) "内置规则" else "本地导入"}\n规则版本：${metadata.bundleVersion?.toString() ?: "未标记版本"}\n覆盖应用：${metadata.appCount}\n专用规则组：${metadata.groupCount}\n规则：${metadata.ruleCount}\nSHA256：${metadata.sha256.ifBlank { "尚未加载" }}\n更新时间：${metadata.installedAt.takeIf { it > 0 }?.let(::formatBypassTime) ?: "尚未加载"}", 13, 20)
+        metadata.sourceFileName?.let { BypassMutedText("文件：$it", 12) }
+        Spacer(Modifier.height(10.dp))
+        BypassNavRow("当前规则", onOpenDetail)
         Spacer(Modifier.height(12.dp))
-        BypassSectionCard("当前广告规则包") {
-            Text("Bypass Ads 广告规则", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = BypassPalette.Ink)
-            Spacer(Modifier.height(6.dp))
-            BypassStateLine("正在使用", true)
-            Spacer(Modifier.height(10.dp))
-            BypassMutedText("来源：${if (metadata.sourceType == BypassRuleSourceType.BUNDLED) "内置规则" else "本地导入"}\n规则版本：${metadata.bundleVersion?.toString() ?: "未标记版本"}\n覆盖应用：${metadata.appCount}\n专用规则组：${metadata.groupCount}\n规则：${metadata.ruleCount}\nSHA256：${metadata.sha256.ifBlank { "尚未加载" }}\n更新时间：${metadata.installedAt.takeIf { it > 0 }?.let(::formatBypassTime) ?: "尚未加载"}", 13, 20)
-            metadata.sourceFileName?.let { BypassMutedText("文件：$it", 12) }
-            Spacer(Modifier.height(10.dp))
-            BypassModeButton("查看覆盖应用", false, onOpenDetail)
+        Text("分类覆盖", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = BypassPalette.Ink)
+        Spacer(Modifier.height(6.dp))
+        categories.forEach { state ->
+            BypassMutedText("${state.title} · ${state.appCount} 个应用 · ${state.ruleCount} 条规则", 13)
+            Spacer(Modifier.height(5.dp))
         }
-        Spacer(Modifier.height(14.dp))
-        BypassSectionCard("分类覆盖") {
-            categories.forEach { state ->
-                BypassMutedText("${state.title} · ${state.appCount} 个应用 · ${state.ruleCount} 条规则", 13)
-                Spacer(Modifier.height(5.dp))
-            }
-        }
-        Spacer(Modifier.height(14.dp))
-        BypassSectionCard("规则管理") {
-            BypassNavRow("订阅管理", onOpenSubscriptions)
-            Spacer(Modifier.height(8.dp))
-            BypassModeButton("导入本地规则", false, onClick = { choose.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) })
-            Spacer(Modifier.height(8.dp))
-            BypassModeButton("恢复内置规则", false, onClick = { scope.launch { result = engine.restoreBundledRules().message } })
-            Spacer(Modifier.height(8.dp))
-            BypassNavRow("进入高级规则管理", onOpenAdvanced)
-            result?.let { BypassMutedText(it, 12) }
-        }
+        Spacer(Modifier.height(12.dp))
+        Text("规则管理", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = BypassPalette.Ink)
+        Spacer(Modifier.height(6.dp))
+        BypassNavRow("订阅管理", onOpenSubscriptions)
+        Spacer(Modifier.height(8.dp))
+        BypassModeButton("导入本地规则", false, onClick = { choose.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) })
+        Spacer(Modifier.height(8.dp))
+        BypassModeButton("恢复内置规则", false, onClick = { scope.launch { result = engine.restoreBundledRules().message } })
+        Spacer(Modifier.height(8.dp))
+        BypassNavRow("高级规则管理", onOpenAdvanced)
+        result?.let { BypassMutedText(it, 12) }
     }
 }
 
@@ -828,21 +898,41 @@ fun BypassDiagnosticsPage(
 }
 
 @Composable
-fun BypassTeachModePage(engine: BypassEngine, onBack: () -> Unit) {
+fun BypassTeachModePage(
+    engine: BypassEngine,
+    eventId: String,
+    packageName: String,
+    activityName: String?,
+    onBack: () -> Unit,
+) {
     val scope = rememberCoroutineScope()
-    val activity by topActivityFlow.collectAsState()
-    var candidates by remember { mutableStateOf(emptyList<BypassTeachCandidate>()) }
+    val failures by engine.failureRecords.collectAsState()
+    val event = failures.firstOrNull { it.id == eventId }
+    val candidates = event?.candidates.orEmpty().mapNotNull { snapshot ->
+        val selector = when {
+            !snapshot.viewId.isNullOrBlank() -> "[vid=\"${snapshot.viewId.escapeTeachSelector()}\"]"
+            !snapshot.description.isNullOrBlank() -> "[desc=\"${snapshot.description.escapeTeachSelector()}\"]"
+            !snapshot.text.isNullOrBlank() -> "[text=\"${snapshot.text.escapeTeachSelector()}\"]"
+            else -> null
+        } ?: return@mapNotNull null
+        BypassTeachCandidate(
+            selector = selector,
+            label = snapshot.description ?: snapshot.text ?: snapshot.viewId ?: "跳过候选",
+            detail = buildString {
+                append(snapshot.className.substringAfterLast('.'))
+                append(if (snapshot.clickable) " · 可点击" else if (snapshot.parentClickable) " · 父级可点击" else " · 当前不可点击")
+            },
+        )
+    }.distinctBy { it.selector }
     var selector by rememberSaveable { mutableStateOf("") }
     var coordinateMode by rememberSaveable { mutableStateOf(false) }
     var coordinateX by rememberSaveable { mutableStateOf("0.5") }
     var coordinateY by rememberSaveable { mutableStateOf("0.5") }
     var feedback by remember { mutableStateOf<String?>(null) }
-    var testedSignature by remember { mutableStateOf<String?>(null) }
     var savedRules by remember { mutableStateOf(emptyList<BypassTeachRuleSummary>()) }
 
     fun currentDraft(): BypassTeachDraft? {
-        val packageName = activity.appId.takeIf { it.isNotBlank() } ?: return null
-        val activityName = activity.activityId?.takeIf { it.isNotBlank() } ?: return null
+        if (packageName.isBlank() || activityName.isNullOrBlank()) return null
         if (coordinateMode) {
             val x = coordinateX.toFloatOrNull() ?: return null
             val y = coordinateY.toFloatOrNull() ?: return null
@@ -853,42 +943,35 @@ fun BypassTeachModePage(engine: BypassEngine, onBack: () -> Unit) {
         }
     }
 
-    fun signature(draft: BypassTeachDraft) =
-        listOf(draft.packageName, draft.activityName, draft.selector, draft.coordinateX, draft.coordinateY).joinToString("|")
-
-    LaunchedEffect(activity.appId, activity.activityId) {
-        candidates = withContext(Dispatchers.Default) { BypassTeachRules.currentCandidates() }
-        testedSignature = null
+    LaunchedEffect(eventId) {
+        if (selector.isBlank()) selector = candidates.firstOrNull()?.selector.orEmpty()
     }
     LaunchedEffect(Unit) { savedRules = engine.getTeachRules() }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         BypassBackButton("教 Bypass Ads 跳过", onBack)
         Spacer(Modifier.height(12.dp))
-        BypassSectionCard("当前广告界面") {
-            BypassMutedText("应用：${activity.appId.ifBlank { "未识别" }}", 12)
-            BypassMutedText("Activity：${activity.activityId ?: "未识别"}", 12)
-            Spacer(Modifier.height(8.dp))
-            BypassModeButton("刷新布局候选", false, onClick = {
-                scope.launch {
-                    candidates = withContext(Dispatchers.Default) { BypassTeachRules.currentCandidates() }
-                    feedback = "已重新读取当前无障碍布局"
-                }
-            })
+        BypassSectionCard("失败会话") {
+            BypassMutedText("应用：$packageName", 12)
+            BypassMutedText("Activity：${activityName ?: "未识别"}", 12)
+            BypassMutedText("候选来自这次失败时保存的安全快照，不读取当前 Bypass Ads 页面。", 12)
+            if (event == null) {
+                Spacer(Modifier.height(8.dp))
+                BypassMutedText("这条失败记录已不在本机保留范围内，无法再提取候选。", 12)
+            }
         }
         Spacer(Modifier.height(14.dp))
         BypassSectionCard("优先控件规则") {
-            BypassMutedText("选择器按 vid、描述、文字和层级依次降级；控件规则只绑定当前包名与 Activity。", 12)
+            BypassMutedText("仅显示失败时捕获的跳过/关闭候选；规则只绑定该包名和 Activity。", 12)
             Spacer(Modifier.height(8.dp))
             if (candidates.isEmpty()) {
-                BypassMutedText("当前没有可用的跳过候选。确认广告仍在前台并已授予无障碍权限。", 12)
+                BypassMutedText("没有保存到可安全使用的跳过候选，可手动填写已知选择器。", 12)
             } else {
                 candidates.forEachIndexed { index, candidate ->
                     if (index > 0) Spacer(Modifier.height(6.dp))
                     BypassNavRow("${candidate.label} · ${candidate.detail}") {
                         selector = candidate.selector
                         coordinateMode = false
-                        testedSignature = null
                         feedback = "已选中 ${candidate.selector}"
                     }
                 }
@@ -896,7 +979,7 @@ fun BypassTeachModePage(engine: BypassEngine, onBack: () -> Unit) {
             Spacer(Modifier.height(8.dp))
             OutlinedTextField(
                 value = selector,
-                onValueChange = { selector = it; testedSignature = null },
+                onValueChange = { selector = it },
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("选择器") },
                 singleLine = true,
@@ -906,21 +989,21 @@ fun BypassTeachModePage(engine: BypassEngine, onBack: () -> Unit) {
         BypassSectionCard("无节点时的坐标回退") {
             BypassSwitchRow(
                 "启用坐标教学",
-                "仅当前应用、Activity，启动后 15 秒内，最多执行 1 次。默认高风险。",
+                "仅该应用、Activity，启动后 15 秒内，最多执行 1 次。默认高风险。",
                 coordinateMode,
-                onCheckedChange = { coordinateMode = it; testedSignature = null },
+                onCheckedChange = { coordinateMode = it },
             )
             if (coordinateMode) {
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(coordinateX, { coordinateX = it; testedSignature = null }, Modifier.weight(1f), label = { Text("相对 X 0~1") }, singleLine = true)
-                    OutlinedTextField(coordinateY, { coordinateY = it; testedSignature = null }, Modifier.weight(1f), label = { Text("相对 Y 0~1") }, singleLine = true)
+                    OutlinedTextField(coordinateX, { coordinateX = it }, Modifier.weight(1f), label = { Text("相对 X 0~1") }, singleLine = true)
+                    OutlinedTextField(coordinateY, { coordinateY = it }, Modifier.weight(1f), label = { Text("相对 Y 0~1") }, singleLine = true)
                 }
             }
         }
         Spacer(Modifier.height(14.dp))
-        BypassSectionCard("保存前验证") {
-            BypassMutedText("将匹配：${activity.appId.ifBlank { "当前应用" }} / ${activity.activityId ?: "当前 Activity"}", 12)
+        BypassSectionCard("保存与验证") {
+            BypassMutedText("将匹配：$packageName / ${activityName ?: "当前 Activity"}", 12)
             BypassMutedText("目标：跳过 · 预计规则：${currentDraft()?.selector ?: "尚未选择"}", 12)
             Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -932,20 +1015,18 @@ fun BypassTeachModePage(engine: BypassEngine, onBack: () -> Unit) {
                         scope.launch {
                             val result = engine.testTeachRule(draft)
                             feedback = result.message
-                            testedSignature = if (result.success) signature(draft) else null
                         }
                     }
                 })
-                BypassModeButton("保存规则", false, onClick = {
+                BypassModeButton("保存为待验证", false, onClick = {
                     val draft = currentDraft()
                     when {
                         draft == null -> feedback = "请先完成规则选择"
-                        testedSignature != signature(draft) -> feedback = "必须先测试成功，再保存规则"
                         else -> scope.launch {
                             runCatching { engine.saveTeachRule(draft) }
                                 .onSuccess {
                                     savedRules = engine.getTeachRules()
-                                    feedback = "已保存本地教学规则"
+                                    feedback = "已保存为待验证；下次目标应用和 Activity 出现时会自动验证"
                                 }
                                 .onFailure { feedback = "保存失败：${it.message ?: "未知错误"}" }
                         }
@@ -961,7 +1042,7 @@ fun BypassTeachModePage(engine: BypassEngine, onBack: () -> Unit) {
             } else {
                 savedRules.forEachIndexed { index, rule ->
                     if (index > 0) Spacer(Modifier.height(8.dp))
-                    BypassMutedText("${rule.packageName}\n${rule.activityName}\n${rule.selector}${if (rule.coordinateFallback) " · 坐标回退" else ""}", 12)
+                    BypassMutedText("${rule.packageName}\n${rule.activityName}\n${rule.selector}${if (rule.coordinateFallback) " · 坐标回退" else ""}\n${rule.verification.label}", 12)
                     BypassModeButton("删除", false, onClick = {
                         scope.launch {
                             engine.deleteTeachRule(rule.key)
@@ -987,6 +1068,15 @@ fun BypassTeachModePage(engine: BypassEngine, onBack: () -> Unit) {
         }
     }
 }
+
+private val BypassTeachVerification.label: String
+    get() = when (this) {
+        BypassTeachVerification.PENDING_VERIFICATION -> "待验证"
+        BypassTeachVerification.VERIFIED -> "已验证"
+        BypassTeachVerification.TEST_FAILED -> "验证失败"
+    }
+
+private fun String.escapeTeachSelector() = replace("\\", "\\\\").replace("\"", "\\\"")
 
 @Composable
 fun BypassFullToolsPage(

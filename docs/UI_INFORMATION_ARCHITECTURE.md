@@ -25,7 +25,7 @@ and retained GKD pages share `MainViewModel.backStack`.
 | Accessibility service | Home -> Accessibility service switch | Home runtime state | `GkdTileService.setA11yServiceEnabled`, Shizuku, and retained authorization route |
 | Notification management | Home -> Notification management | Home protection status | `StatusService` and Android notification settings |
 | Battery and background protection | Home -> Battery optimization / Background protection | Home protection status | `fixRestartAutomatorService`, battery settings, and autostart guidance |
-| Splash strategy | Ads -> Splash ads -> Splash recognition strategy | Ads splash summary | Global splash group and constrained generic fallback |
+| Splash strategy | Ads -> Splash ads -> Splash recognition strategy | Ads splash summary | `BypassAdStrategyMode` (保守/激进/彻底疯狂) + `BypassStrategyPolicy`; runtime gate over Bypass-owned close/X/coordinate candidates; dedicated rules are never gated |
 | Generic splash recognition | Ads -> Splash recognition strategy -> Generic splash recognition | None | `GkdBypassEngine.genericFallbackEnabled` |
 | Ad-category switches | Ads -> In-app advertising | Ads category counts | Per-group `SubsConfig` |
 | Application protection control | Ads -> Application control | Rule coverage list is informational navigation | Bypass subscription `AppConfig` |

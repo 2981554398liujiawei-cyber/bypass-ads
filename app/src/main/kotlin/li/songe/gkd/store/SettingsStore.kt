@@ -16,6 +16,10 @@ data class SettingsStore(
     val enableShizuku: Boolean = false,
     val enableMatch: Boolean = true,
     val enableGenericFallback: Boolean = true,
+    /** Bypass Ads splash exit strategy. 0=CONSERVATIVE 1=AGGRESSIVE 2=CRAZY. */
+    val bypassAdStrategyMode: Int = 0,
+    /** True once the user has acknowledged the CRAZY-mode confirmation. */
+    val bypassCrazyModeAcknowledged: Boolean = false,
     val enableStatusService: Boolean = false,
     val excludeFromRecents: Boolean = false,
     val captureScreenshot: Boolean = false,

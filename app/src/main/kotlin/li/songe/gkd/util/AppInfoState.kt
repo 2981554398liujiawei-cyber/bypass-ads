@@ -26,7 +26,6 @@ import li.songe.gkd.appScope
 import li.songe.gkd.data.AppInfo
 import li.songe.gkd.data.otherUserMapFlow
 import li.songe.gkd.data.toAppInfo
-import li.songe.gkd.data.toAppInfoAndIcon
 import li.songe.gkd.permission.canQueryPkgState
 import li.songe.gkd.shizuku.currentUserId
 import li.songe.gkd.shizuku.shizukuContextFlow
@@ -137,22 +136,18 @@ private fun updateOtherUserAppInfo(userAppInfoMap: Map<String, AppInfo>? = null)
             user.id
         ).filterNot { actualUserAppInfoMap.contains(it.packageName) }
     }
-    val newIconMap = HashMap<String, Drawable>()
     val newAppMap = HashMap<String, AppInfo>()
     userPackageInfoMap.forEach { (userId, pkgInfoList) ->
         pkgInfoList.forEach { pkgInfo ->
             if (!newAppMap.contains(pkgInfo.packageName)) {
-                val (appInfo, appIcon) = pkgInfo.toAppInfoAndIcon(userId)
+                val appInfo = pkgInfo.toAppInfo(userId)
                 newAppMap[pkgInfo.packageName] = appInfo
-                if (appIcon != null) {
-                    newIconMap[pkgInfo.packageName] = appIcon
-                }
             }
         }
     }
     otherUserMapFlow.value = otherUsers.associateBy { it.id }
     otherUserAppInfoMapFlow.value = newAppMap
-    otherUserAppIconMapFlow.value = newIconMap
+    otherUserAppIconMapFlow.value = emptyMap()
 }
 
 private fun updatePartAppInfo(
@@ -160,7 +155,6 @@ private fun updatePartAppInfo(
 ) = updateAppMutex.launchTry(appScope, Dispatchers.IO) {
     willUpdateAppIds.update { it - appIds }
     val newAppMap = HashMap(userAppInfoMapFlow.value)
-    val newIconMap = HashMap(userAppIconMapFlow.value)
     val oldMapSize = newAppMap.size
     appIds.forEach { appId ->
         val info = app.getPkgInfo(appId)
@@ -169,16 +163,10 @@ private fun updatePartAppInfo(
         } else {
             newAppMap.remove(appId)
         }
-        val icon = info?.pkgIcon
-        if (icon != null) {
-            newIconMap[appId] = icon
-        } else {
-            newIconMap.remove(appId)
-        }
     }
     updateOtherUserAppInfo(newAppMap)
     userAppInfoMapFlow.value = newAppMap
-    userAppIconMapFlow.value = newIconMap
+    userAppIconMapFlow.value = userAppIconMapFlow.value.filterKeys { newAppMap.containsKey(it) }
     LogUtils.d(
         "updatePartAppInfo",
         "change=${appIds.map { (if (newAppMap.contains(it)) "+" else "-") + it }}",
@@ -190,15 +178,11 @@ val appListAuthAbnormalFlow = MutableStateFlow(false)
 
 fun updateAllAppInfo(): Unit = updateAppMutex.launchTry(appScope, Dispatchers.IO) {
     val newAppMap = HashMap<String, AppInfo>()
-    val newIconMap = HashMap<String, Drawable>()
     // see #1169 DeadObjectException BadParcelableException
     val pkgList = app.packageManager.getInstalledPackages(PKG_FLAGS)
     pkgList.forEach { pkgInfo ->
-        val (appInfo, appIcon) = pkgInfo.toAppInfoAndIcon()
+        val appInfo = pkgInfo.toAppInfo()
         newAppMap[pkgInfo.packageName] = appInfo
-        if (appIcon != null) {
-            newIconMap[pkgInfo.packageName] = appIcon
-        }
     }
     val mayAuthDenied = newAppMap.count { !it.value.isSystem } <= 4
     canQueryPkgState.updateAndGet()
@@ -211,11 +195,8 @@ fun updateAllAppInfo(): Unit = updateAppMutex.launchTry(appScope, Dispatchers.IO
         val pkgList2 = shizukuContextFlow.value.packageManager?.getInstalledPackages(PKG_FLAGS)
         if (!pkgList2.isNullOrEmpty()) {
             pkgList2.forEach { pkgInfo ->
-                val (appInfo, appIcon) = pkgInfo.toAppInfoAndIcon()
+                val appInfo = pkgInfo.toAppInfo()
                 newAppMap[pkgInfo.packageName] = appInfo
-                if (appIcon != null) {
-                    newIconMap[pkgInfo.packageName] = appIcon
-                }
             }
         } else {
             val visiblePkgList =
@@ -233,17 +214,14 @@ fun updateAllAppInfo(): Unit = updateAppMutex.launchTry(appScope, Dispatchers.IO
                     .map { it.activityInfo.packageName }.toSet()
                     .filter { !newAppMap.contains(it) }.mapNotNull { app.getPkgInfo(it) }.toList()
             visiblePkgList.forEach { pkgInfo ->
-                val (appInfo, appIcon) = pkgInfo.toAppInfoAndIcon(hidden = false)
+                val appInfo = pkgInfo.toAppInfo(hidden = false)
                 newAppMap[pkgInfo.packageName] = appInfo
-                if (appIcon != null) {
-                    newIconMap[pkgInfo.packageName] = appIcon
-                }
             }
         }
     }
     updateOtherUserAppInfo(newAppMap)
     userAppInfoMapFlow.value = newAppMap
-    userAppIconMapFlow.value = newIconMap
+    userAppIconMapFlow.value = userAppIconMapFlow.value.filterKeys { newAppMap.containsKey(it) }
     if (!app.justStarted) {
         toast("应用列表更新成功")
     }
@@ -270,5 +248,18 @@ fun initAppState() {
         willUpdateAppIds.debounce(3000)
             .filter { it.isNotEmpty() }
             .collect { updatePartAppInfo(it) }
+    }
+}
+
+/** Icons are expensive to decode on some OEM builds. Views request only their
+ * visible rows, after app metadata has already been loaded. */
+fun requestAppIcon(appId: String) {
+    if (appId.isBlank() || userAppIconMapFlow.value.containsKey(appId)) return
+    appScope.launchTry(Dispatchers.IO) {
+        if (userAppIconMapFlow.value.containsKey(appId)) return@launchTry
+        val icon = app.getPkgInfo(appId)?.pkgIcon ?: return@launchTry
+        userAppIconMapFlow.update { current ->
+            if (current.containsKey(appId)) current else current + (appId to icon)
+        }
     }
 }

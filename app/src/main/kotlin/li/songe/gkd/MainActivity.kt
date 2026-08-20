@@ -9,6 +9,9 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -89,7 +92,6 @@ import li.songe.gkd.bypass.BypassDiagnosticsRoute
 import li.songe.gkd.bypass.BypassNotificationManagementRoute
 import li.songe.gkd.bypass.BypassPromptSettingsRoute
 import li.songe.gkd.bypass.BypassRuleDetailRoute
-import li.songe.gkd.bypass.BypassRulesSubscriptionRoute
 import li.songe.gkd.bypass.BypassRuntimeProtectionRoute
 import li.songe.gkd.bypass.BypassSettingsRoute
 import li.songe.gkd.bypass.BypassSplashStrategyRoute
@@ -101,7 +103,6 @@ import li.songe.gkd.bypass.BypassRecordsPage
 import li.songe.gkd.bypass.BypassRecordsRoute
 import li.songe.gkd.bypass.BypassRootTab
 import li.songe.gkd.bypass.BypassRuleDetailPage
-import li.songe.gkd.bypass.BypassRulesPage
 import li.songe.gkd.bypass.BypassServicePermissionsPage
 import li.songe.gkd.bypass.BypassSettingsPage
 import li.songe.gkd.bypass.BypassSplashStrategyPage
@@ -394,6 +395,9 @@ private fun UnifiedRouteHost(
     }
     NavDisplay(
         modifier = modifier,
+        transitionSpec = { EnterTransition.None togetherWith ExitTransition.None },
+        popTransitionSpec = { EnterTransition.None togetherWith ExitTransition.None },
+        predictivePopTransitionSpec = { _ -> EnterTransition.None togetherWith ExitTransition.None },
         entryDecorators = listOf(
             rememberSaveableStateHolderNavEntryDecorator(),
             rememberViewModelStoreNavEntryDecorator(),
@@ -418,7 +422,9 @@ private fun UnifiedRouteHost(
                         BypassRootTab.ADS -> BypassAdBlockingPage(
                             engine = GkdBypassEngine,
                             onOpenApps = { mainVm.navigatePage(BypassAppControlRoute) },
-                            onOpenRules = { mainVm.navigatePage(BypassRulesSubscriptionRoute) },
+                            onOpenRuleDetail = { mainVm.navigatePage(BypassRuleDetailRoute) },
+                            onOpenSubscriptions = { mainVm.navigatePage(LegacySubscriptionToolsRoute) },
+                            onOpenAdvancedRules = { mainVm.navigatePage(BypassAdvancedRulesRoute) },
                             onOpenSplashStrategy = { mainVm.navigatePage(BypassSplashStrategyRoute) },
                         )
                         BypassRootTab.RECORDS -> BypassRecordsPage(
@@ -458,15 +464,6 @@ private fun UnifiedRouteHost(
                     onOpenApp = { mainVm.navigatePage(BypassAppDetailRoute(it)) },
                 )
             }
-            entry<BypassRulesSubscriptionRoute> {
-                BypassRulesPage(
-                    engine = GkdBypassEngine,
-                    onBack = mainVm::popPage,
-                    onOpenDetail = { mainVm.navigatePage(BypassRuleDetailRoute) },
-                    onOpenSubscriptions = { mainVm.navigatePage(LegacySubscriptionToolsRoute) },
-                    onOpenAdvanced = { mainVm.navigatePage(BypassAdvancedRulesRoute) },
-                )
-            }
             entry<BypassRuleDetailRoute> {
                 BypassRuleDetailPage(GkdBypassEngine, mainVm::popPage) { mainVm.navigatePage(BypassAppDetailRoute(it)) }
             }
@@ -476,7 +473,11 @@ private fun UnifiedRouteHost(
                     engine = GkdBypassEngine,
                     eventId = route.eventId,
                     onBack = mainVm::popPage,
-                    onTeach = { mainVm.navigatePage(BypassTeachRoute) },
+                    onTeach = { event ->
+                        mainVm.navigatePage(
+                            BypassTeachRoute(event.id, event.packageName, event.activityName),
+                        )
+                    },
                 )
             }
             entry<BypassBackupRoute> { BypassBackupPage(mainVm::popPage) }
@@ -494,7 +495,15 @@ private fun UnifiedRouteHost(
             entry<BypassDiagnosticsRoute> {
                 BypassDiagnosticsPage(GkdBypassEngine, mainVm::popPage)
             }
-            entry<BypassTeachRoute> { BypassTeachModePage(GkdBypassEngine, mainVm::popPage) }
+            entry<BypassTeachRoute> { route ->
+                BypassTeachModePage(
+                    engine = GkdBypassEngine,
+                    eventId = route.eventId,
+                    packageName = route.packageName,
+                    activityName = route.activityName,
+                    onBack = mainVm::popPage,
+                )
+            }
             entry<BypassFullToolsRoute> {
                 BypassFullToolsPage(
                     onBack = mainVm::popPage,

@@ -32,9 +32,16 @@ data class BypassTeachRuleSummary(
     val activityName: String,
     val selector: String,
     val coordinateFallback: Boolean,
+    val verification: BypassTeachVerification,
 )
 
 data class BypassTeachTestResult(val success: Boolean, val message: String)
+
+enum class BypassTeachVerification {
+    PENDING_VERIFICATION,
+    VERIFIED,
+    TEST_FAILED,
+}
 
 /**
  * Owns the local teaching rules. The third-party/source bundle is never
@@ -42,11 +49,13 @@ data class BypassTeachTestResult(val success: Boolean, val message: String)
  */
 object BypassTeachRules {
     private const val FILE_NAME = "bypass-teach-overrides.json"
+    private const val VERIFICATION_PREFS = "bypass_teach_verification"
     private const val MAX_TREE_DEPTH = 24
     private const val MAX_CANDIDATES = 24
     private const val MATCH_WINDOW_MS = 15_000L
 
     private val file: File by lazy { File(app.filesDir, FILE_NAME) }
+    private val verificationPrefs by lazy { app.getSharedPreferences(VERIFICATION_PREFS, 0) }
 
     private fun emptySubscription() = RawSubscription(
         id = BYPASS_SPLASH_SUBS_ID,
@@ -81,16 +90,26 @@ object BypassTeachRules {
         if (index >= 0) apps[index] = nextApp else apps += nextApp
         val updated = current.copy(version = current.version + 1, apps = apps)
         file.writeText(json.encodeToString(RawSubscription.serializer(), updated))
+        verificationPrefs.edit().putString(
+            verificationKey(draft.packageName, group.key),
+            BypassTeachVerification.PENDING_VERIFICATION.name,
+        ).apply()
         summaryOf(draft.packageName, group)
     }
 
     suspend fun delete(key: Int) = withContext(Dispatchers.IO) {
         val current = read()
+        val removedPackages = current.apps.flatMap { appRule ->
+            appRule.groups.filter { it.key == key }.map { appRule.id }
+        }
         val apps = current.apps.mapNotNull { appRule ->
             val groups = appRule.groups.filterNot { it.key == key }
             appRule.takeIf { groups.isNotEmpty() }?.copy(groups = groups)
         }
         file.writeText(json.encodeToString(RawSubscription.serializer(), current.copy(version = current.version + 1, apps = apps)))
+        verificationPrefs.edit().apply {
+            removedPackages.forEach { remove(verificationKey(it, key)) }
+        }.apply()
     }
 
     suspend fun list(): List<BypassTeachRuleSummary> = withContext(Dispatchers.IO) {
@@ -118,6 +137,19 @@ object BypassTeachRules {
     }
 
     suspend fun apply(base: RawSubscription): RawSubscription = merge(base, read())
+
+    fun isPendingVerification(packageName: String?, groupKey: Int): Boolean {
+        if (packageName.isNullOrBlank()) return false
+        return verificationFor(packageName, groupKey) == BypassTeachVerification.PENDING_VERIFICATION
+    }
+
+    fun markVerification(packageName: String?, groupKey: Int, success: Boolean) {
+        if (!isPendingVerification(packageName, groupKey)) return
+        verificationPrefs.edit().putString(
+            verificationKey(packageName!!, groupKey),
+            if (success) BypassTeachVerification.VERIFIED.name else BypassTeachVerification.TEST_FAILED.name,
+        ).apply()
+    }
 
     fun currentCandidates(): List<BypassTeachCandidate> {
         val service = A11yRuleEngine.service ?: return emptyList()
@@ -276,7 +308,19 @@ object BypassTeachRules {
             activityName = group.activityIds?.firstOrNull().orEmpty(),
             selector = group.rules.firstOrNull()?.matches?.firstOrNull().orEmpty(),
             coordinateFallback = group.rules.firstOrNull()?.action == "clickCenter",
+            verification = verificationFor(packageName, group.key),
         )
+
+    private fun verificationFor(packageName: String, groupKey: Int): BypassTeachVerification = runCatching {
+        BypassTeachVerification.valueOf(
+            verificationPrefs.getString(
+                verificationKey(packageName, groupKey),
+                BypassTeachVerification.PENDING_VERIFICATION.name,
+            )!!,
+        )
+    }.getOrDefault(BypassTeachVerification.PENDING_VERIFICATION)
+
+    private fun verificationKey(packageName: String, groupKey: Int) = "$packageName:$groupKey"
 
     private fun clickableAncestor(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         var current: AccessibilityNodeInfo? = node

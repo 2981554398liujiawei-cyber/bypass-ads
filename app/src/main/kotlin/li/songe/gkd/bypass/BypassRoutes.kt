@@ -12,16 +12,19 @@ import kotlinx.serialization.Serializable
 @Serializable data object BypassNotificationManagementRoute : NavKey
 @Serializable data object BypassSplashStrategyRoute : NavKey
 @Serializable data object BypassAppControlRoute : NavKey
-@Serializable data object BypassRulesSubscriptionRoute : NavKey
 @Serializable data object BypassRuleDetailRoute : NavKey
 @Serializable data class BypassAppDetailRoute(val packageName: String) : NavKey
-@Serializable data class BypassFailureDetailRoute(val eventId: Long) : NavKey
+@Serializable data class BypassFailureDetailRoute(val eventId: String) : NavKey
 @Serializable data object BypassPromptSettingsRoute : NavKey
 @Serializable data object BypassBackupRoute : NavKey
 @Serializable data object BypassAdvancedToolsRoute : NavKey
 @Serializable data object BypassAdvancedRulesRoute : NavKey
 @Serializable data object BypassDiagnosticsRoute : NavKey
-@Serializable data object BypassTeachRoute : NavKey
+@Serializable data class BypassTeachRoute(
+    val eventId: String,
+    val packageName: String,
+    val activityName: String?,
+) : NavKey
 @Serializable data object BypassFullToolsRoute : NavKey
 @Serializable data object BypassAboutRoute : NavKey
 @Serializable data object BypassLicensesRoute : NavKey

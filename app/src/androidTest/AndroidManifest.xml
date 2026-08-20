@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Bypass Ads 仪器测试清单。
+
+  createComposeRule() 默认宿主是 androidx.activity.ComponentActivity，
+  测试框架会以 MAIN/LAUNCHER Intent 启动它。HyperOS 对未在清单中声明的
+  Activity 启动一律拒绝（logcat: MIUILOG- Permission Denied Activity），
+  导致 Compose 测试等待 idleness 永不返回。这里显式声明宿主并标记
+  exported=true，使仪器测试宿主可以正常激活。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <activity
+            android:name="androidx.activity.ComponentActivity"
+            android:exported="true" >
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>
