@@ -80,8 +80,13 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
         AutomatorModeOption.AutomationMode -> A11yService.instance != null
     }
 
+    /** Per-top-app exit-attempt counters for strategy-aware bounded retries. */
+    @Volatile
+    private var observedTopApp = ""
+
     fun onAppChanged() {
         BypassActionBudget.clear()
+        observedTopApp = ""
     }
 
     fun onA11yConnected() {
@@ -445,6 +450,14 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
                 continue
             }
             val rightAppId = nodeVal.packageName?.toString() ?: break
+            // Anchor the ad window to an observed top-app change. OEMs
+            // sometimes swallow the launch event; a fresh active-window read
+            // that reveals a new top app is a real app change, not a service
+            // reconnect. Repeated reads of the same app never refresh it.
+            if (rightAppId != observedTopApp) {
+                observedTopApp = rightAppId
+                BypassAdContextTracker.onAppObserved(rightAppId, System.currentTimeMillis())
+            }
             val matchApp = rule.matchActivity(rightAppId)
             if (topActivityFlow.value.appId != rightAppId || (!matchApp && rule is AppRule)) {
                 scope.launch(eventDispatcher) { fixAppId(rightAppId) }
@@ -495,14 +508,14 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
                 }
                 // B. Classify the matched control.
                 val candidate = BypassExitClassifier.classifyNode(target)
-                if (BypassExitClassifier.hasAdLabel(
-                        target.text?.toString(),
-                        target.contentDescription?.toString(),
-                        target.viewIdResourceName,
-                    )
-                ) {
-                    BypassAdContextTracker.noteAdLabel(bypassContext.appId, bypassContext.activityId)
-                }
+                // Ad-label evidence: a window-level 广告/ad label makes the
+                // context STRONG even when the matched control itself has no
+                // label (bounded scan over the already-fetched root).
+                BypassAdContextTracker.noteAdLabelFromWindow(
+                    nodeVal,
+                    bypassContext.appId,
+                    bypassContext.activityId,
+                )
                 val isDedicated = rulePolicy.trust == BypassRuleTrust.BUNDLED_DEDICATED
                 if (!isDedicated && candidate == null) {
                     // A matched control with no exit semantics (or with
@@ -704,6 +717,9 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
      * second scanner); bounded to keep the check cheap.
      */
     private fun hasFreshAdCandidate(root: AccessibilityNodeInfo): Boolean {
+        // The window changed after the action; drop the stale node cache so
+        // the fresh queries see the new window, not the old nodes.
+        runCatching { a11yContext.clearOldAppNodeCache() }
         val activityRule = synchronized(topActivityFlow) { activityRuleFlow.value }
         var queries = 0
         for (rule in activityRule.priorityRules) {

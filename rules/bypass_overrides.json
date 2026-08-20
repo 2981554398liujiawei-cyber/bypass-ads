@@ -40,7 +40,7 @@
               "name": "Bypass-Test-Structural-Crazy",
               "bypassMode": "CRAZY",
               "matches": [
-                "[clickable=true][visibleToUser=true][width<160 && height<160][text=null][desc=null][vid=null]"
+                "[clickable=true][visibleToUser=true][width<160 && height<160][name=\"android.view.View\" || name=\"android.widget.ImageView\"]"
               ],
               "action": "clickCenter"
             },
@@ -49,7 +49,7 @@
               "name": "Bypass-Test-Coordinate-Crazy",
               "bypassMode": "CRAZY",
               "matches": [
-                "[clickable=false][visibleToUser=true][width<200 && height<100][text=null][desc=null][vid=null]"
+                "[clickable=false][childCount=0][visibleToUser=true][width<200 && height<100][name=\"android.view.View\" || name=\"android.widget.ImageView\"]"
               ],
               "action": "clickCenter"
             },
@@ -156,8 +156,8 @@
               "bypassMode": "CRAZY",
               "actionDelay": 300,
               "matches": [
-                "[clickable=true][visibleToUser=true][width<160 && height<160][text=null][desc=null][vid=null]",
-                "[clickable=false][childCount=0][visibleToUser=true][width<160 && height<160][text=null][desc=null][vid=null]"
+                "[clickable=true][visibleToUser=true][width<160 && height<160][name=\"android.view.View\" || name=\"android.widget.ImageView\"]",
+                "[clickable=false][childCount=0][visibleToUser=true][width<160 && height<160][name=\"android.view.View\" || name=\"android.widget.ImageView\"]"
               ]
             }
           ]

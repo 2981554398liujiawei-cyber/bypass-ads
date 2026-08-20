@@ -1,6 +1,8 @@
 package li.songe.gkd.bypass
 
+import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
+import li.songe.gkd.META
 import li.songe.gkd.a11y.topActivityFlow
 import li.songe.gkd.store.storeFlow
 
@@ -97,13 +99,15 @@ object BypassStrategyGate {
         val topApp = topActivityFlow.value.appId
         if (topApp != packageName) return false
         val now = System.currentTimeMillis()
-        val activityTime = BypassAdContextTracker.activityEntryTime(
-            packageName,
-            topActivityFlow.value.activityId,
-        )
+        val activityName = topActivityFlow.value.activityId
+        val activityTime = BypassAdContextTracker.activityEntryTime(packageName, activityName)
         if (activityTime > 0 && now - activityTime <= startupWindowMs) return true
         val packageTime = BypassAdContextTracker.packageEntryTime(packageName)
-        return packageTime > 0 && now - packageTime <= startupWindowMs
+        val inWindow = packageTime > 0 && now - packageTime <= startupWindowMs
+        if (META.debuggable && !inWindow) {
+            Log.d("BypassStrategyGate", "window miss pkg=$packageName act=$activityName activityTime=$activityTime packageTime=$packageTime now=$now")
+        }
+        return inWindow
     }
 
     /** Whether an activity is a known mini-program / webview splash host. */

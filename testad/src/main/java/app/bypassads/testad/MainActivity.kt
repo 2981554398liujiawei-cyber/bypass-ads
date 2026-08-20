@@ -98,7 +98,7 @@ class MainActivity : Activity() {
                             addAdLabeled(scene) {
                                 addView(skipTarget(text = "关闭") { showResult(mode) }, topEndParams())
                             }
-                        }, topEndParams())
+                        }, tinyParams())
                     }
                 }, topEndParams())
             }

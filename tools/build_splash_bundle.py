@@ -217,8 +217,8 @@ SOURCE_GLOBAL_REINFORCEMENT_RULES = (
         "action": "clickCenter",
         "excludeMatches": '[text="NEXT" || text="下一步" || text="完成" || text="设置" || text="搜索" || text="历史记录" || text*="阅读并同意" || text*="跳过片头" || text*="跳过片尾" || text*="跳过视频" || text="取消" || text*="退出" || text="帮助"][visibleToUser=true]',
         "anyMatches": [
-            '[clickable=true][visibleToUser=true][width<160 && height<160][text=null][desc=null][vid=null]',
-            '[clickable=false][childCount=0][visibleToUser=true][width<160 && height<160][text=null][desc=null][vid=null]'
+            '[clickable=true][visibleToUser=true][width<160 && height<160][name="android.view.View" || name="android.widget.ImageView"]',
+            '[clickable=false][childCount=0][visibleToUser=true][width<160 && height<160][name="android.view.View" || name="android.widget.ImageView"]'
         ],
     },
 )

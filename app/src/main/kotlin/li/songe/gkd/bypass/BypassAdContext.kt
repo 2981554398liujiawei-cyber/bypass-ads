@@ -1,5 +1,6 @@
 package li.songe.gkd.bypass
 
+import android.view.accessibility.AccessibilityNodeInfo
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -46,6 +47,17 @@ object BypassAdContextTracker {
         packageEntryTimes[packageName] = time
     }
 
+    /**
+     * Engine-side observation: the matcher saw [packageName] as the top app
+     * (from a fresh active-window read). This anchors the ad window even when
+     * the OEM swallows the launch accessibility event. It is NOT a service
+     * reconnect shortcut: it only fires when the observed top app actually
+     * changes, and it never re-opens a window for an app that stays foreground.
+     */
+    fun onAppObserved(packageName: String, time: Long) {
+        packageEntryTimes[packageName] = time
+    }
+
     fun packageEntryTime(packageName: String): Long = packageEntryTimes[packageName] ?: 0L
 
     fun activityEntryTime(packageName: String, activityName: String?): Long =
@@ -65,6 +77,36 @@ object BypassAdContextTracker {
     /** Record that an explicit ad label (广告 / ad / ads) was seen. */
     fun noteAdLabel(packageName: String, activityName: String?) {
         windowAdLabelSeen[windowKey(packageName, activityName)] = true
+    }
+
+    /**
+     * Bounded window scan for ad-label evidence (广告 / ad / sponsored). This
+     * is context evidence only: it walks at most [MAX_SCAN_NODES] nodes of
+     * the already-fetched root, never a second scanner.
+     */
+    fun noteAdLabelFromWindow(root: AccessibilityNodeInfo, packageName: String, activityName: String?) {
+        var visited = 0
+        val MAX_SCAN_NODES = 80
+        fun visit(node: AccessibilityNodeInfo): Boolean {
+            if (visited++ >= MAX_SCAN_NODES) return false
+            if (BypassExitClassifier.hasAdLabel(
+                    node.text?.toString(),
+                    node.contentDescription?.toString(),
+                    node.viewIdResourceName,
+                )
+            ) {
+                noteAdLabel(packageName, activityName)
+                return true
+            }
+            val childCount = runCatching { node.childCount }.getOrDefault(0)
+            repeat(childCount.coerceAtMost(24)) { index ->
+                runCatching { node.getChild(index) }.getOrNull()?.let {
+                    if (visit(it)) return true
+                }
+            }
+            return false
+        }
+        runCatching { visit(root) }
     }
 
     fun resetWindow(packageName: String, activityName: String?) {
