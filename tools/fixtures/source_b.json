@@ -1,0 +1,9 @@
+{
+  "name": "Source B",
+  "version": 2,
+  "apps": [
+    {"id": "fixture.shared", "groups": [{"key": 8, "name": "开屏广告-Shared", "rules": [{"key": 8, "matches": ["[vid=\"skip_b\"]"]}]}]},
+    {"id": "fixture.app3", "groups": [{"key": 3, "name": "全屏广告-B", "rules": [{"key": 1, "matches": ["[text=\"关闭\"]"]}]}]}
+  ],
+  "globalGroups": []
+}

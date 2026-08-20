@@ -37,6 +37,12 @@ class StatusService : Service(), OnSimpleLife by DefaultSimpleLifeImpl() {
     override fun onBind(intent: Intent?) = null
     override fun onCreate() = onCreated()
     override fun onDestroy() = onDestroyed()
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // The user opted into an ongoing foreground status notification. When
+        // Android reclaims its process, sticky recreation is appropriate and
+        // does not attempt to revive a force-stopped package.
+        return if (storeFlow.value.enableStatusService) START_STICKY else START_NOT_STICKY
+    }
 
     val shizukuWarnFlow = combine(
         shizukuGrantedState.stateFlow,

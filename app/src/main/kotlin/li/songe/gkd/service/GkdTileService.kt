@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -26,6 +27,8 @@ import li.songe.gkd.shizuku.uiAutomationFlow
 import li.songe.gkd.store.actualA11yScopeAppList
 import li.songe.gkd.store.actualBlockA11yAppList
 import li.songe.gkd.store.storeFlow
+import li.songe.gkd.store.updateEnableAutomator
+import li.songe.gkd.util.AutomatorModeOption
 import li.songe.gkd.util.launchTry
 import li.songe.gkd.util.mapState
 import li.songe.gkd.util.runMainPost
@@ -96,6 +99,31 @@ fun switchAutomatorService() = modifyA11yRun {
     } else {
         switchAutomationService()
     }
+}
+
+/** Shared enhanced-control path for the product home screen and the tile. */
+fun setA11yServiceEnabled(enabled: Boolean) = modifyA11yRun {
+    if (!writeSecureSettingsState.updateAndGet()) {
+        toast("请先授予「写入安全设置权限」")
+        return@modifyA11yRun
+    }
+    if (!enabled) {
+        updateEnableAutomator(false)
+        val names = app.getSecureA11yServices()
+        if (names.remove(A11yService.a11yCn)) {
+            app.putSecureA11yServices(names)
+        }
+        A11yService.instance?.disableSelf()
+        return@modifyA11yRun
+    }
+
+    storeFlow.update {
+        it.copy(
+            automatorMode = AutomatorModeOption.A11yMode.value,
+            enableAutomator = true,
+        )
+    }
+    fixA11yService()
 }
 
 private fun skipBlockApp(): Boolean {

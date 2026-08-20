@@ -13,12 +13,22 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import li.songe.gkd.a11y.useA11yServiceEnabledFlow
 import li.songe.gkd.a11y.useEnabledA11yServicesFlow
+import li.songe.gkd.bypass.BypassHomeRoute
+import li.songe.gkd.bypass.BypassAdsRoute
+import li.songe.gkd.bypass.BypassPerfTrace
+import li.songe.gkd.bypass.BypassRecordsRoute
+import li.songe.gkd.bypass.BypassRootTab
+import li.songe.gkd.bypass.BypassSettingsRoute
+import li.songe.gkd.bypass.GkdBypassEngine
 import li.songe.gkd.data.CrashData
 import li.songe.gkd.data.RawSubscription
 import li.songe.gkd.data.SubsItem
@@ -41,7 +51,6 @@ import li.songe.gkd.ui.component.InputSubsLinkOption
 import li.songe.gkd.ui.component.RuleGroupState
 import li.songe.gkd.ui.component.UploadOptions
 import li.songe.gkd.ui.home.BottomNavItem
-import li.songe.gkd.ui.home.HomeRoute
 import li.songe.gkd.ui.share.BaseViewModel
 import li.songe.gkd.util.AutomatorModeOption
 import li.songe.gkd.util.BackupUtils
@@ -94,14 +103,20 @@ class MainViewModel : BaseViewModel(), OnSimpleLife by DefaultSimpleLifeImpl() {
 
     override val scope get() = viewModelScope
 
-    val backStack: NavBackStack<NavKey> = NavBackStack(HomeRoute)
+    // Bypass details and retained GKD tooling intentionally share one stack.
+    // Root selection stays out of this stack so Back never walks across tabs.
+    val backStack: NavBackStack<NavKey> = NavBackStack(BypassHomeRoute)
     val topRoute get() = backStack.last()
+    private val _bypassRootTab = MutableStateFlow(BypassRootTab.HOME)
+    val bypassRootTab = _bypassRootTab
 
     private val backThrottleTimer = ThrottleTimer()
 
     fun popPage(@Loc loc: String = "") = runMainPost {
         if (backThrottleTimer.expired() && backStack.size > 1) {
             val old = backStack.last()
+            val destination = backStack[backStack.lastIndex - 1]
+            BypassPerfTrace.detailNavigationStart(destination::class.simpleName.orEmpty())
             backStack.removeAt(backStack.lastIndex)
             LogUtils.d("popPage", "$old -> ${backStack.last()}", loc = loc)
         }
@@ -113,6 +128,7 @@ class MainViewModel : BaseViewModel(), OnSimpleLife by DefaultSimpleLifeImpl() {
         @Loc loc: String = "",
     ) = runMainPost {
         if (navKey != backStack.last()) {
+            BypassPerfTrace.detailNavigationStart(navKey::class.simpleName.orEmpty())
             val old = backStack.last()
             if (replaced) {
                 backStack[backStack.lastIndex] = navKey
@@ -120,6 +136,55 @@ class MainViewModel : BaseViewModel(), OnSimpleLife by DefaultSimpleLifeImpl() {
                 backStack.add(navKey)
             }
             LogUtils.d("navigatePage", "$old -> ${backStack.last()}", loc = loc)
+        }
+    }
+
+    /** Root tabs are parallel state. Selecting one clears an open detail but
+     * never adds a synthetic history item for the previous tab. */
+    fun selectBypassRootTab(tab: BypassRootTab, @Loc loc: String = "") = runMainPost {
+        while (backStack.size > 1) {
+            backStack.removeAt(backStack.lastIndex)
+        }
+        if (backStack[0] != BypassHomeRoute) {
+            backStack[0] = BypassHomeRoute
+        }
+        if (_bypassRootTab.value != tab) {
+            val old = _bypassRootTab.value
+            BypassPerfTrace.tabSwitchStart(tab.name)
+            _bypassRootTab.value = tab
+            LogUtils.d("selectBypassRootTab", "$old -> $tab", loc = loc)
+        }
+    }
+
+    /** Compatibility bridge for retained callers that address a product root
+     * as a route. New product code uses [selectBypassRootTab] directly. */
+    fun navigateProductRoot(navKey: NavKey, @Loc loc: String = "") = runMainPost {
+        val tab = when (navKey) {
+            BypassHomeRoute -> BypassRootTab.HOME
+            BypassAdsRoute -> BypassRootTab.ADS
+            BypassRecordsRoute -> BypassRootTab.RECORDS
+            BypassSettingsRoute -> BypassRootTab.SETTINGS
+            else -> null
+        }
+        if (tab != null) {
+            while (backStack.size > 1) {
+                backStack.removeAt(backStack.lastIndex)
+            }
+            backStack[0] = BypassHomeRoute
+            if (_bypassRootTab.value != tab) {
+                BypassPerfTrace.tabSwitchStart(tab.name)
+                _bypassRootTab.value = tab
+            }
+            LogUtils.d("navigateProductRoot", "selected $tab", loc = loc)
+            return@runMainPost
+        }
+        while (backStack.size > 1) {
+            backStack.removeAt(backStack.lastIndex)
+        }
+        if (backStack.last() != navKey) {
+            val old = backStack.last()
+            backStack[0] = navKey
+            LogUtils.d("navigateProductRoot", "$old -> $navKey", loc = loc)
         }
     }
 
@@ -306,6 +371,28 @@ class MainViewModel : BaseViewModel(), OnSimpleLife by DefaultSimpleLifeImpl() {
             Shizuku.requestPermission(Activity.RESULT_OK)
         } catch (e: Throwable) {
             shizukuErrorFlow.value = e
+        }
+    }
+
+    /** The user tapped the product's one-tap accessibility authorization. Once
+     * Shizuku replies, complete the originally requested enable action. */
+    fun requestBypassAccessibilityViaShizuku() {
+        viewModelScope.launch(Dispatchers.IO) {
+            if (GkdBypassEngine.tryGrantAccessibilityControlWithShizuku()) {
+                GkdBypassEngine.setAccessibilityEnabled(true)
+                return@launch
+            }
+            storeFlow.update { it.copy(enableShizuku = true) }
+            withContext(Dispatchers.Main) { requestShizuku() }
+            val connected = withTimeoutOrNull(30_000L) {
+                shizukuGrantedState.stateFlow.filter { it }.first()
+                shizukuContextFlow.filter { it.ok }.first()
+            }
+            if (connected == null || !GkdBypassEngine.tryGrantAccessibilityControlWithShizuku()) {
+                toast("Shizuku 未能授予增强控制权限")
+                return@launch
+            }
+            GkdBypassEngine.setAccessibilityEnabled(true)
         }
     }
 

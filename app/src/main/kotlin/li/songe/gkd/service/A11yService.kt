@@ -3,6 +3,7 @@ package li.songe.gkd.service
 import android.accessibilityservice.AccessibilityService
 import android.annotation.SuppressLint
 import android.content.Context.WINDOW_SERVICE
+import android.provider.Settings
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.view.Display
@@ -116,6 +117,11 @@ abstract class A11yService : AccessibilityService(), OnA11yLife by DefaultA11yLi
         onDestroyed {
             if (tempShutdownFlag) {
                 toast("无障碍局部关闭")
+            } else if (isStillAuthorized()) {
+                // onDestroy is also delivered for system reclaim/rebind. Do
+                // not overwrite the user's persisted enabled intent in that
+                // case; onServiceConnected will publish the new connection.
+                LogUtils.d("A11yService destroyed while still authorized; awaiting system rebind")
             } else {
                 toast("无障碍已关闭")
                 updateEnableAutomator(false)
@@ -136,6 +142,7 @@ abstract class A11yService : AccessibilityService(), OnA11yLife by DefaultA11yLi
         onDestroyed { destroyed = true }
         onA11yConnected {
             connected = true
+            lastConnectedAt.value = System.currentTimeMillis()
             toast("无障碍已启动")
             if (currentAppUseA11y) {
                 ruleEngine.onA11yConnected()
@@ -153,10 +160,19 @@ abstract class A11yService : AccessibilityService(), OnA11yLife by DefaultA11yLi
     companion object {
         val a11yCn by lazy { SelectToSpeakService::class.componentName }
         val isRunning = MutableStateFlow(false)
+        val lastConnectedAt = MutableStateFlow(0L)
 
         @Volatile
         var instance: A11yService? = null
             private set
+    }
+
+    private fun isStillAuthorized(): Boolean {
+        val enabled = Settings.Secure.getString(
+            contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+        ) ?: return false
+        return enabled.split(':').any { it == a11yCn.flattenToString() }
     }
 }
 

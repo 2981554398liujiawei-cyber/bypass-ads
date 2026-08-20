@@ -24,6 +24,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -50,7 +52,7 @@ fun BypassSectionCard(title: String, content: @Composable () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .background(Color.White, RoundedCornerShape(8.dp))
-            .padding(20.dp),
+            .padding(18.dp),
     ) {
         Text(title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = BypassPalette.Ink)
         Spacer(Modifier.height(10.dp))
@@ -78,7 +80,7 @@ fun BypassModeButton(label: String, selected: Boolean, onClick: () -> Unit, modi
             containerColor = if (selected) BypassPalette.Ink else BypassPalette.SoftGray,
             contentColor = if (selected) Color.White else BypassPalette.Ink,
         ),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(8.dp),
         modifier = modifier,
     ) { Text(label, maxLines = 1) }
 }
@@ -97,6 +99,7 @@ fun BypassSwitchRow(
             // A settings row is a single affordance. The full row target also
             // avoids a tiny hit area on large-screen and accessibility setups.
             .clickable { onCheckedChange(!checked) }
+            .testTag("bypass-switch-$title")
             .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -113,9 +116,11 @@ fun BypassSwitchRow(
             }
         }
         Spacer(Modifier.size(12.dp))
+        // The row owns the one semantic action. Giving Switch a second
+        // callback causes some accessibility/pointer paths to toggle twice.
         Switch(
             checked = checked,
-            onCheckedChange = onCheckedChange,
+            onCheckedChange = null,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = Color.White,
                 checkedTrackColor = BypassPalette.Accent,
@@ -138,7 +143,7 @@ fun BypassStatusCard(
         modifier = Modifier
             .fillMaxWidth()
             .background(if (healthy) BypassPalette.SoftGreen else Color.White, RoundedCornerShape(8.dp))
-            .padding(22.dp),
+            .padding(18.dp),
     ) {
         Column {
             Text("运行状态", fontSize = 13.sp, color = BypassPalette.Muted)
@@ -164,7 +169,7 @@ fun BypassStatusCard(
                         containerColor = BypassPalette.Ink,
                         contentColor = Color.White,
                     ),
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(8.dp),
                 ) { Text(actionLabel) }
             }
         }
@@ -205,41 +210,49 @@ fun BypassAppRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .run { if (onClick != null) clickable(onClick = onClick) else this }
             .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
+        Row(
             modifier = Modifier
-                .size(40.dp)
-                .background(BypassPalette.SoftGray, RoundedCornerShape(12.dp)),
-            contentAlignment = Alignment.Center,
+                .weight(1f)
+                .run { if (onClick != null) clickable(onClick = onClick) else this }
+                .testTag("bypass-app-body-$packageName"),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (icon != null) {
-                Image(
-                    bitmap = icon,
-                    contentDescription = null,
-                    modifier = Modifier.size(28.dp),
-                )
-            } else {
-                Text(
-                    appName.take(1).ifEmpty { "?" },
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = BypassPalette.Muted,
-                )
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(BypassPalette.SoftGray, RoundedCornerShape(8.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (icon != null) {
+                    Image(
+                        bitmap = icon,
+                        contentDescription = null,
+                        modifier = Modifier.size(28.dp),
+                    )
+                } else {
+                    Text(
+                        appName.take(1).ifEmpty { "?" },
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = BypassPalette.Muted,
+                    )
+                }
             }
-        }
-        Spacer(Modifier.size(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(appName, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = BypassPalette.Ink)
-            Text(subtitle, modifier = Modifier.padding(top = 1.dp), fontSize = 11.sp, color = BypassPalette.Faint)
-            Text(packageName, modifier = Modifier.padding(top = 1.dp), fontSize = 10.sp, color = BypassPalette.Faint)
+            Spacer(Modifier.size(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(appName, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = BypassPalette.Ink)
+                Text(subtitle, modifier = Modifier.padding(top = 1.dp), fontSize = 11.sp, color = BypassPalette.Faint)
+                Text(packageName, modifier = Modifier.padding(top = 1.dp), fontSize = 10.sp, color = BypassPalette.Faint)
+            }
         }
         Spacer(Modifier.size(10.dp))
         Switch(
             checked = enabled,
             onCheckedChange = onToggle,
+            modifier = Modifier.testTag("bypass-app-switch-$packageName"),
             colors = SwitchDefaults.colors(
                 checkedThumbColor = Color.White,
                 checkedTrackColor = BypassPalette.Accent,
@@ -275,18 +288,35 @@ fun BypassTitleBar(subtitle: String) {
 
 @Composable
 fun BypassTabBar(
-    tabs: List<Pair<String, Int>>,
-    selected: Int,
-    onSelect: (Int) -> Unit,
+    tabs: List<Pair<String, BypassRootTab>>,
+    selected: BypassRootTab,
+    onSelect: (BypassRootTab) -> Unit,
 ) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        tabs.forEach { (label, index) ->
-            BypassModeButton(
-                label = label,
-                selected = selected == index,
-                onClick = { onSelect(index) },
-                modifier = Modifier.weight(1f),
-            )
+    Row {
+        tabs.forEach { (label, tab) ->
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable { onSelect(tab) }
+                    .testTag("bypass-root-tab-$tab")
+                    .padding(vertical = 10.dp),
+            ) {
+                Text(
+                    text = label,
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Center,
+                    fontSize = 14.sp,
+                    fontWeight = if (selected == tab) FontWeight.SemiBold else FontWeight.Medium,
+                    color = if (selected == tab) BypassPalette.Ink else BypassPalette.Muted,
+                )
+                Spacer(Modifier.height(6.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(2.dp)
+                        .background(if (selected == tab) BypassPalette.Accent else Color.Transparent),
+                )
+            }
         }
     }
 }

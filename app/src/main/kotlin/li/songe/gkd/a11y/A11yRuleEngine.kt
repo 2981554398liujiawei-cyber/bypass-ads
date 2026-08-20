@@ -21,6 +21,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 import li.songe.gkd.BYPASS_SPLASH_SUBS_ID
 import li.songe.gkd.META
 import li.songe.gkd.bypass.BypassPerfTrace
+import li.songe.gkd.bypass.BypassDiagnostics
+import li.songe.gkd.bypass.FailureReason
 import li.songe.gkd.data.ActionPerformer
 import li.songe.gkd.data.ActionResult
 import li.songe.gkd.data.AppRule
@@ -200,7 +202,11 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
             }
         }
         val activityRule = activityRuleFlow.value
-        if (evAppId != rightAppId || activityRule.skipConsumeEvent || !storeFlow.value.enableMatch) {
+        if (!storeFlow.value.enableMatch) {
+            BypassDiagnostics.record(FailureReason.MASTER_DISABLED, evAppId, evActivityId, "matching_disabled")
+            return
+        }
+        if (evAppId != rightAppId || activityRule.skipConsumeEvent) {
             return
         }
         synchronized(queryEvents) { queryEvents.addAll(consumedEvents) }
@@ -250,8 +256,14 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
         byDelayRule: ResolvedRule? = null,
     ) {
         if (!effective) return
-        if (!storeFlow.value.enableMatch) return
-        if (activityRuleFlow.value.currentRules.isEmpty()) return
+        if (!storeFlow.value.enableMatch) {
+            BypassDiagnostics.record(FailureReason.MASTER_DISABLED, detail = "matching_disabled")
+            return
+        }
+        if (activityRuleFlow.value.currentRules.isEmpty()) {
+            BypassDiagnostics.record(FailureReason.NO_RULE_FOR_APP, detail = "no_resolved_rules")
+            return
+        }
         if (querying) return
         // 无障碍从零启动时获取 safeActiveWindow 非常耗时
         if (byEvent == null && service.justStarted && !hasOthersService) return checkFutureStartJob()
@@ -345,8 +357,10 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
             }
         }
         val activityRule = synchronized(topActivityFlow) { activityRuleFlow.value }
+        BypassPerfTrace.matcherStarted(topActivityFlow.value.appId, activityRule.priorityRules.size)
         activityRule.currentRules.forEach { rule ->
             if (rule.subsItem.id == BYPASS_SPLASH_SUBS_ID && !isBypassAppEnabled(topActivityFlow.value.appId)) {
+                BypassDiagnostics.record(FailureReason.APP_DISABLED, detail = "bypass_app_opt_out")
                 return@forEach
             }
             if (rule.status == RuleStatus.Status3 && rule.matchDelayJob.value == null) {
@@ -359,6 +373,7 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
         }
         if (activityRule.skipMatch) {
             // 如果当前应用没有规则/暂停匹配, 则不去调用获取事件节点避免阻塞
+            BypassDiagnostics.record(FailureReason.NO_RULE_FOR_APP, detail = "resolved_rules_not_runnable")
             return
         }
         var lastNode = if (newEvents == null || newEvents.size <= 1) {
@@ -384,7 +399,10 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
             if (!effective) return
             if (checkOutDate(activityRule, tempStateEvent)) break
             if (delayRule != null && delayRule !== rule) continue
-            if (rule.subsItem.id == BYPASS_SPLASH_SUBS_ID && !isBypassAppEnabled(topActivityFlow.value.appId)) continue
+            if (rule.subsItem.id == BYPASS_SPLASH_SUBS_ID && !isBypassAppEnabled(topActivityFlow.value.appId)) {
+                BypassDiagnostics.record(FailureReason.APP_DISABLED, detail = "bypass_app_opt_out")
+                continue
+            }
             if (rule.status != RuleStatus.StatusOk) continue
             if (byForced && !rule.checkForced()) continue
             lastNode?.let { n ->
@@ -402,17 +420,34 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
                     lastNode = null
                 }
             }
-            val nodeVal = (lastNode ?: getTimeoutActiveWindow()) ?: continue
+            val nodeVal = (lastNode ?: getTimeoutActiveWindow()) ?: run {
+                BypassDiagnostics.record(FailureReason.ACCESSIBILITY_NODE_MISSING, detail = "active_window_unavailable")
+                continue
+            }
             val rightAppId = nodeVal.packageName?.toString() ?: break
             val matchApp = rule.matchActivity(rightAppId)
             if (topActivityFlow.value.appId != rightAppId || (!matchApp && rule is AppRule)) {
                 scope.launch(eventDispatcher) { fixAppId(rightAppId) }
                 return
             }
-            if (!matchApp) continue
-            val target = a11yContext.queryRule(rule, nodeVal) ?: continue
+            if (!matchApp) {
+                if (rule.subsItem.id == BYPASS_SPLASH_SUBS_ID) {
+                    BypassDiagnostics.record(FailureReason.ACTIVITY_MISMATCH, detail = "rule_activity_mismatch")
+                }
+                continue
+            }
+            BypassPerfTrace.selectorQueried()
+            val target = a11yContext.queryRule(rule, nodeVal) ?: run {
+                if (rule.subsItem.id == BYPASS_SPLASH_SUBS_ID) {
+                    BypassDiagnostics.record(FailureReason.SELECTOR_NO_MATCH, detail = "gkd_selector_no_match")
+                }
+                continue
+            }
             BypassPerfTrace.matched(rule.statusText())
             if (rule.checkDelay() && rule.actionDelayJob.value == null) {
+                if (rule.subsItem.id == BYPASS_SPLASH_SUBS_ID) {
+                    BypassDiagnostics.record(FailureReason.ACTION_TOO_EARLY, detail = "rule_action_delay")
+                }
                 rule.actionDelayJob.value = scope.launch(actionDispatcher) {
                     delay(rule.actionDelay)
                     rule.actionDelayJob.value = null
@@ -423,19 +458,37 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
             if (rule.status != RuleStatus.StatusOk) break
             if (checkOutDate(activityRule, tempStateEvent)) break
             BypassPerfTrace.actionStarted(rule.statusText())
+            if (rule.subsItem.id == BYPASS_SPLASH_SUBS_ID && !target.isClickable) {
+                BypassDiagnostics.record(FailureReason.TARGET_FOUND_NOT_CLICKABLE, detail = "matched_target_not_clickable")
+            }
             val actionResult = rule.performAction(target)
             BypassPerfTrace.actionFinished(rule.statusText())
             if (actionResult.result) {
+                BypassPerfTrace.actionSucceeded()
                 val topActivity = topActivityFlow.value
                 rule.trigger()
                 scope.launch(actionDispatcher) {
                     delay(300)
                     startQueryJob()
                 }
+                if (rule.subsItem.id == BYPASS_SPLASH_SUBS_ID) {
+                    // A successful accessibility action is not proof that an
+                    // ad disappeared. This debug-only check reuses the exact
+                    // matched node instead of adding a second scanner.
+                    scope.launch(actionDispatcher) {
+                        delay(350)
+                        val stillVisible = runCatching { target.refresh() && target.isVisibleToUser }.getOrDefault(false)
+                        if (stillVisible) {
+                            BypassDiagnostics.record(FailureReason.ACTION_NO_EFFECT, detail = "target_persisted_after_action")
+                        }
+                    }
+                }
                 if (actionResult.action != ActionPerformer.None.action) {
                     showActionToast(rule)
                 }
                 addActionLog(rule, topActivity, target, actionResult)
+            } else if (rule.subsItem.id == BYPASS_SPLASH_SUBS_ID) {
+                BypassDiagnostics.record(FailureReason.ACTION_FAILED, detail = "gkd_action_returned_false")
             }
         }
     }

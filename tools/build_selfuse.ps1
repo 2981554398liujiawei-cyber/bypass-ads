@@ -5,9 +5,12 @@
 #
 # Usage:
 #   .\tools\build_selfuse.ps1 -SubscriptionPath "D:\rules\gkd.json5"
+#   .\tools\build_selfuse.ps1 -SubscriptionPath "D:\rules\primary.json5" -AdditionalSubscriptionPath "D:\rules\secondary.json5"
+#   .\tools\build_selfuse.ps1 -SubscriptionPaths "D:\rules\primary.json5","D:\rules\secondary.json5"
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$SubscriptionPath
+    [string]$SubscriptionPath,
+    [string[]]$AdditionalSubscriptionPath = @(),
+    [string[]]$SubscriptionPaths = @()
 )
 
 $ErrorActionPreference = "Stop"
@@ -21,16 +24,39 @@ function Write-Step($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
 
 Write-Step "Bypass Ads 0.1.0 self-use build"
 
-# 1. validate input
-if (-not (Test-Path $SubscriptionPath)) {
-    Write-Error "Input subscription not found: $SubscriptionPath"
+# 1. validate inputs. The first source is primary; later sources add only
+# non-conflicting coverage. The Python generator reports conflicts instead of
+# concatenating incompatible same-name groups.
+$ruleSources = @()
+if ($SubscriptionPaths.Count -gt 0) {
+    $ruleSources += $SubscriptionPaths
+} elseif ($SubscriptionPath) {
+    $ruleSources += $SubscriptionPath
+    $ruleSources += $AdditionalSubscriptionPath
+}
+if ($ruleSources.Count -eq 0) {
+    Write-Error "Provide -SubscriptionPath or -SubscriptionPaths."
     exit 1
 }
-Write-Step "Input subscription: $SubscriptionPath"
+foreach ($ruleSource in $ruleSources) {
+    if (-not (Test-Path $ruleSource)) {
+        Write-Error "Input subscription not found: $ruleSource"
+        exit 1
+    }
+}
+Write-Step "Primary subscription: $($ruleSources[0])"
+if ($ruleSources.Count -gt 1) { Write-Step "Secondary subscriptions: $($ruleSources[1..($ruleSources.Count - 1)] -join ', ')" }
 
 # 2. generate full bundle (filter + overrides + host rules + generic fallback + validate)
-Write-Step "Generating full splash bundle (validator runs inside generator)"
-python $generator $SubscriptionPath
+Write-Step "Generating full splash bundle (validator and coverage diff run inside generator)"
+$generatorArgs = @($generator, $ruleSources[0])
+if ($ruleSources.Count -gt 1) {
+    foreach ($secondary in $ruleSources[1..($ruleSources.Count - 1)]) {
+        $generatorArgs += "--additional"
+        $generatorArgs += $secondary
+    }
+}
+python @generatorArgs
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Bundle generation FAILED - complete build aborted (no fixture fallback)."
     exit 1

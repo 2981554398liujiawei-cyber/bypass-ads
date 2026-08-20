@@ -248,6 +248,7 @@ dependencies {
     implementation(libs.compose.icons)
     implementation(libs.compose.preview)
     debugImplementation(libs.compose.tooling)
+    debugImplementation("androidx.compose.ui:ui-test-manifest:${libs.versions.compose.get()}")
     androidTestImplementation(libs.compose.junit4)
 
     implementation(libs.compose.activity)

@@ -29,6 +29,12 @@ import li.songe.gkd.db.DbSet
 import li.songe.gkd.service.fixRestartAutomatorService
 import li.songe.gkd.service.A11yService
 import li.songe.gkd.service.StatusService
+import li.songe.gkd.service.setA11yServiceEnabled
+import li.songe.gkd.permission.shizukuGrantedState
+import li.songe.gkd.permission.updatePermissionState
+import li.songe.gkd.permission.writeSecureSettingsState
+import li.songe.gkd.shizuku.shizukuContextFlow
+import li.songe.gkd.a11y.A11yRuleEngine
 import li.songe.gkd.store.storeFlow
 import li.songe.gkd.util.appInfoMapFlow
 import li.songe.gkd.util.launchTry
@@ -53,6 +59,8 @@ object GkdBypassEngine : BypassEngine {
     private val metadataFlow = MutableStateFlow(readMetadata())
     private val permissionStateFlow = MutableStateFlow(readPermissionState())
     private val categoryVersion = MutableStateFlow(0)
+    private val protectedAppsCache = MutableStateFlow<List<BypassAppInfo>>(emptyList())
+    private val lastRecoveryAttemptAt = MutableStateFlow(0L)
     private val categoryMap by lazy { readCategoryMap() }
 
     init {
@@ -61,11 +69,16 @@ object GkdBypassEngine : BypassEngine {
         // an invented rule-import time.
         appScope.launchTry(Dispatchers.IO) {
             val bundle = subsMapFlow.map { it[BYPASS_SPLASH_SUBS_ID] }.filterNotNull().first()
-            if (metadataFlow.value.bundleVersion == null) {
-                saveMetadata(metadataFor(bundle, BypassRuleSourceType.BUNDLED, null, app.packageManager
+            val localOverrides = BypassTeachRules.read()
+            val effective = BypassTeachRules.merge(bundle, localOverrides)
+            if (localOverrides.apps.isNotEmpty()) {
+                updateSubscription(effective)
+            }
+            if (metadataFlow.value.bundleVersion == null || localOverrides.apps.isNotEmpty()) {
+                saveMetadata(metadataFor(effective, BypassRuleSourceType.BUNDLED, null, app.packageManager
                     .getPackageInfo(app.packageName, 0).lastUpdateTime))
             }
-            ensureCategoryDefaults(bundle)
+            ensureCategoryDefaults(effective)
         }
     }
 
@@ -122,6 +135,47 @@ object GkdBypassEngine : BypassEngine {
 
     override val permissionState: StateFlow<BypassPermissionState> = permissionStateFlow
 
+    override val accessibilityControl: StateFlow<BypassAccessibilityControl> = combine(
+        A11yService.isRunning,
+        permissionStateFlow,
+        writeSecureSettingsState.stateFlow,
+        shizukuGrantedState.stateFlow,
+    ) { running, _, hasWriteSecureSettings, hasShizuku ->
+        val authorized = checkA11yAuthorized()
+        BypassAccessibilityControl(
+            status = when {
+                running -> BypassAccessibilityStatus.ENABLED
+                authorized && hasWriteSecureSettings -> BypassAccessibilityStatus.RECOVERING
+                hasWriteSecureSettings -> BypassAccessibilityStatus.DISABLED
+                else -> BypassAccessibilityStatus.NEED_AUTHORIZATION
+            },
+            hasWriteSecureSettings = hasWriteSecureSettings,
+            hasShizuku = hasShizuku,
+        )
+    }.stateIn(
+        appScope,
+        SharingStarted.Eagerly,
+        BypassAccessibilityControl(),
+    )
+
+    override val runtimeProtection: StateFlow<BypassRuntimeProtection> = combine(
+        A11yService.isRunning,
+        StatusService.isRunning,
+        permissionStateFlow,
+        A11yService.lastConnectedAt,
+    ) { accessibilityRunning, notificationRunning, permission, connectedAt ->
+        BypassRuntimeProtection(
+            accessibilityConnected = accessibilityRunning,
+            statusServiceRunning = notificationRunning,
+            notificationGranted = permission.notificationGranted,
+            ignoringBatteryOptimizations = permission.ignoringBatteryOptimizations,
+            accessibilityConnectedAt = connectedAt,
+            autostartNeedsUserConfirmation = permission.hyperOsAutostartNeedsConfirmation,
+        )
+    }.combine(lastRecoveryAttemptAt) { protection, recoveryAttempt ->
+        protection.copy(lastRecoveryAttemptAt = recoveryAttempt)
+    }.stateIn(appScope, SharingStarted.Eagerly, BypassRuntimeProtection())
+
     override val recentActions: StateFlow<List<BypassActionRecord>> =
         combine(
             DbSet.actionLogDao.query(),
@@ -142,6 +196,7 @@ object GkdBypassEngine : BypassEngine {
                             ?.find { it.key == r.groupKey }?.name
                     }
                 BypassActionRecord(
+                    id = r.id,
                     appId = r.appId,
                     appName = appMap[r.appId]?.name,
                     groupName = groupName,
@@ -157,6 +212,22 @@ object GkdBypassEngine : BypassEngine {
     override val skipCount: StateFlow<Int> =
         DbSet.actionLogDao.query().map { actions -> actions.count { it.subsId == BYPASS_SPLASH_SUBS_ID } }
             .stateIn(appScope, SharingStarted.Eagerly, 0)
+
+    override val failureRecords: StateFlow<List<BypassFailureRecord>> =
+        BypassDiagnostics.events.map { events ->
+            events.map {
+                BypassFailureRecord(
+                    id = it.id,
+                    time = it.time,
+                    packageName = it.packageName,
+                    activityName = it.activityName,
+                    reason = it.reason,
+                    detail = it.detail,
+                )
+            }
+        }.stateIn(appScope, SharingStarted.Eagerly, emptyList())
+
+    override val averageResponseMs: StateFlow<Int?> = BypassPerfTrace.averageActionLatencyMs
 
     override val genericFallbackEnabled: StateFlow<Boolean> =
         storeFlow.mapState(appScope) { it.enableGenericFallback }
@@ -227,7 +298,7 @@ object GkdBypassEngine : BypassEngine {
 
     override fun setPersistentNotificationEnabled(enabled: Boolean) {
         storeFlow.value = storeFlow.value.copy(enableStatusService = enabled)
-        if (enabled) StatusService.autoStart()
+        if (enabled) StatusService.autoStart() else StatusService.stop()
     }
 
     override fun refreshPermissionState() {
@@ -235,7 +306,30 @@ object GkdBypassEngine : BypassEngine {
     }
 
     override fun requestServiceRecovery() {
+        lastRecoveryAttemptAt.value = System.currentTimeMillis()
         appScope.launchTry(Dispatchers.IO) { fixRestartAutomatorService() }
+    }
+
+    override fun setAccessibilityEnabled(enabled: Boolean) {
+        appScope.launchTry(Dispatchers.IO) {
+            if (enabled && !writeSecureSettingsState.updateAndGet()) {
+                if (!tryGrantAccessibilityControlWithShizuku()) return@launchTry
+            }
+            setA11yServiceEnabled(enabled)
+            refreshPermissionState()
+        }
+    }
+
+    override suspend fun tryGrantAccessibilityControlWithShizuku(): Boolean {
+        if (!shizukuGrantedState.updateAndGet()) return false
+        shizukuContextFlow.value.grantSelf()
+        updatePermissionState()
+        refreshPermissionState()
+        return writeSecureSettingsState.updateAndGet()
+    }
+
+    override fun retryCurrentMatch() {
+        A11yRuleEngine.onScreenForcedActive()
     }
 
     override suspend fun importLocalRules(source: String, sourceFileName: String?): BypassImportResult {
@@ -261,9 +355,10 @@ object GkdBypassEngine : BypassEngine {
             globalGroups = sourceGlobals.ifEmpty { current?.globalGroups ?: emptyList() },
             categories = parsed.categories.filter { it.name in advertisingCategoryNames },
         )
-        updateSubscription(imported)
-        saveMetadata(metadataFor(imported, BypassRuleSourceType.LOCAL_IMPORT, sourceFileName))
-        ensureCategoryDefaults(imported)
+        val effective = BypassTeachRules.apply(imported)
+        updateSubscription(effective)
+        saveMetadata(metadataFor(effective, BypassRuleSourceType.LOCAL_IMPORT, sourceFileName))
+        ensureCategoryDefaults(effective)
         return BypassImportResult(true, "已导入 ${advertisingApps.size} 个应用的广告规则")
     }
 
@@ -277,15 +372,19 @@ object GkdBypassEngine : BypassEngine {
             return BypassImportResult(false, "内置规则包无效")
         }
         val bundled = restored.copy(id = BYPASS_SPLASH_SUBS_ID)
-        updateSubscription(bundled)
-        ensureCategoryDefaults(bundled)
-        saveMetadata(metadataFor(bundled, BypassRuleSourceType.BUNDLED, null))
+        val effective = BypassTeachRules.apply(bundled)
+        updateSubscription(effective)
+        ensureCategoryDefaults(effective)
+        saveMetadata(metadataFor(effective, BypassRuleSourceType.BUNDLED, null))
         return BypassImportResult(true, "已恢复内置开屏规则")
     }
 
     override suspend fun clearRecentActions() {
         DbSet.actionLogDao.deleteBySubsId(BYPASS_SPLASH_SUBS_ID)
+        BypassDiagnostics.clear()
     }
+
+    override val protectedApps: StateFlow<List<BypassAppInfo>> = protectedAppsCache
 
     override suspend fun getProtectedApps(): List<BypassAppInfo> {
         val subs = li.songe.gkd.util.subsMapFlow.value[BYPASS_SPLASH_SUBS_ID] ?: return emptyList()
@@ -300,7 +399,7 @@ object GkdBypassEngine : BypassEngine {
                 groupCount = app.groups.size,
                 ruleCount = app.groups.sumOf { it.rules.size },
             )
-        }
+        }.also { protectedAppsCache.value = it }
     }
 
     override suspend fun getAppEnabled(packageName: String): Boolean {
@@ -386,6 +485,54 @@ object GkdBypassEngine : BypassEngine {
         )
     }
 
+    override suspend fun getTeachRules(): List<BypassTeachRuleSummary> = BypassTeachRules.list()
+
+    override suspend fun testTeachRule(draft: BypassTeachDraft): BypassTeachTestResult =
+        BypassTeachRules.test(draft)
+
+    override suspend fun saveTeachRule(draft: BypassTeachDraft): BypassTeachRuleSummary {
+        val summary = BypassTeachRules.save(draft)
+        val current = subsMapFlow.value[BYPASS_SPLASH_SUBS_ID]
+        if (current != null) {
+            val effective = BypassTeachRules.apply(current)
+            updateSubscription(effective)
+            ensureCategoryDefaults(effective)
+            saveMetadata(
+                metadataFor(
+                    effective,
+                    metadataFlow.value.sourceType,
+                    metadataFlow.value.sourceFileName,
+                ),
+            )
+        }
+        return summary
+    }
+
+    override suspend fun deleteTeachRule(key: Int) {
+        val oldOverrides = BypassTeachRules.read()
+        BypassTeachRules.delete(key)
+        val current = subsMapFlow.value[BYPASS_SPLASH_SUBS_ID] ?: return
+        val overrideKeys = oldOverrides.apps.flatMap { it.groups }.map { it.key }.toSet()
+        val sourceOnly = current.copy(
+            apps = current.apps.mapNotNull { appRule ->
+                val groups = appRule.groups.filterNot { it.key in overrideKeys }
+                appRule.takeIf { groups.isNotEmpty() }?.copy(groups = groups)
+            },
+        )
+        val effective = BypassTeachRules.apply(sourceOnly)
+        updateSubscription(effective)
+        ensureCategoryDefaults(effective)
+        saveMetadata(
+            metadataFor(
+                effective,
+                metadataFlow.value.sourceType,
+                metadataFlow.value.sourceFileName,
+            ),
+        )
+    }
+
+    override suspend fun exportTeachRules(): java.io.File = BypassTeachRules.export()
+
     private fun readPermissionState(): BypassPermissionState {
         val notifications = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
             ContextCompat.checkSelfPermission(app, Manifest.permission.POST_NOTIFICATIONS) ==
@@ -394,6 +541,11 @@ object GkdBypassEngine : BypassEngine {
         return BypassPermissionState(
             notificationGranted = notifications,
             ignoringBatteryOptimizations = power?.isIgnoringBatteryOptimizations(app.packageName) == true,
+            statusServiceRunning = StatusService.isRunning.value,
+            accessibilityConnectedAt = A11yService.lastConnectedAt.value,
+            // HyperOS exposes no stable public API for normal apps to query
+            // its autostart switch. Never manufacture an "enabled" result.
+            hyperOsAutostartNeedsConfirmation = Build.MANUFACTURER.equals("Xiaomi", ignoreCase = true),
         )
     }
 

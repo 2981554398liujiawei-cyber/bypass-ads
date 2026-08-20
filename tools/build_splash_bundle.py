@@ -22,9 +22,10 @@ generator, the validator, the small self-owned fixture
 (app/src/main/assets/bypass_splash_rules.json) and rules/bypass_overrides.json.
 
 Usage:
-    python tools/build_splash_bundle.py <input.json5> [output.json]
+    python tools/build_splash_bundle.py <primary.json5> [output.json] [--additional secondary.json5]
 """
 
+import argparse
 import hashlib
 import json
 import re
@@ -45,6 +46,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUTPUT = REPO_ROOT / "app/src/main/assets/bypass_splash_rules.local.json"
 OVERRIDES_PATH = REPO_ROOT / "rules/bypass_overrides.json"
 CATEGORY_MAP_PATH = REPO_ROOT / "rules/category_map.json"
+CONFLICT_REPORT_DEFAULT = REPO_ROOT / "build/bypass-rule-conflicts.json"
 
 # ---------------------------------------------------------------------------
 # Conservative generic splash fallback (global group). The mature source
@@ -330,6 +332,126 @@ def load_subscription(raw: str):
     return json.loads(strip_json5(raw))
 
 
+def source_provenance(data: dict, path: Path) -> dict:
+    return {
+        "sourceName": data.get("name") or path.stem,
+        "sourceVersion": data.get("version"),
+        "sourceSha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+    }
+
+
+def normalized_group(group: dict) -> str:
+    """Compare content without generated keys/provenance.
+
+    A same-named group with different selectors is deliberately a conflict,
+    not an invitation to concatenate rule bodies. The primary source wins and
+    the report gives a human reviewer the evidence needed to choose later.
+    """
+    body = {k: v for k, v in group.items() if k not in {"key", "bypassProvenance"}}
+    return json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def prepare_source(data: dict, provenance: dict) -> tuple[list, list]:
+    apps = []
+    for app in data.get("apps", []):
+        groups = []
+        for group in app.get("groups", []):
+            if is_ad_group(group.get("name", "")):
+                groups.append({**group, "bypassProvenance": [provenance]})
+        if groups:
+            apps.append({**app, "groups": groups})
+    globals_ = [
+        {**group, "bypassProvenance": [provenance]}
+        for group in data.get("globalGroups", [])
+        if is_splash_global_group(group.get("name", ""))
+    ]
+    return apps, globals_
+
+
+def merge_sources(sources: list[tuple[dict, Path]]) -> tuple[dict, dict]:
+    """Merge coverage by source priority without merging incompatible groups.
+
+    The first tuple is primary, later tuples are secondary. Bypass-owned
+    overrides are still applied after this function, therefore outrank every
+    third-party source. Only group identity and provenance leave this builder;
+    no third-party rule body is placed in the report.
+    """
+    app_map: dict[str, dict] = {}
+    app_group_content: dict[tuple[str, str], str] = {}
+    global_map: dict[str, dict] = {}
+    global_content: dict[str, str] = {}
+    source_app_sets: list[set[str]] = []
+    source_splash_groups: list[set[str]] = []
+    conflicts = []
+    duplicates = 0
+
+    for source_index, (data, path) in enumerate(sources):
+        provenance = source_provenance(data, path)
+        apps, globals_ = prepare_source(data, provenance)
+        source_app_sets.append({app["id"] for app in apps})
+        source_splash_groups.append({group.get("name", "") for group in globals_})
+        for app in apps:
+            target = app_map.setdefault(
+                app["id"],
+                {key: value for key, value in app.items() if key != "groups"} | {"groups": []},
+            )
+            for group in app["groups"]:
+                group_key = (app["id"], group.get("name", ""))
+                content = normalized_group(group)
+                previous = app_group_content.get(group_key)
+                if previous is None:
+                    target["groups"].append(group)
+                    app_group_content[group_key] = content
+                elif previous == content:
+                    duplicates += 1
+                else:
+                    conflicts.append({
+                        "kind": "appGroup",
+                        "appId": app["id"],
+                        "groupName": group.get("name", ""),
+                        "keptSource": sources[0][1].name if source_index else path.name,
+                        "rejectedSource": path.name,
+                    })
+        for group in globals_:
+            name = group.get("name", "")
+            content = normalized_group(group)
+            previous = global_content.get(name)
+            if previous is None:
+                global_map[name] = group
+                global_content[name] = content
+            elif previous == content:
+                duplicates += 1
+            else:
+                conflicts.append({
+                    "kind": "globalGroup",
+                    "groupName": name,
+                    "keptSource": sources[0][1].name if source_index else path.name,
+                    "rejectedSource": path.name,
+                })
+
+    primary_apps = source_app_sets[0] if source_app_sets else set()
+    secondary_apps = set().union(*source_app_sets[1:]) if len(source_app_sets) > 1 else set()
+    primary_splash = source_splash_groups[0] if source_splash_groups else set()
+    secondary_splash = set().union(*source_splash_groups[1:]) if len(source_splash_groups) > 1 else set()
+    report = {
+        "sources": [source_provenance(data, path) for data, path in sources],
+        "coverageDiff": {
+            "primaryOnlyApps": sorted(primary_apps - secondary_apps),
+            "secondaryOnlyApps": sorted(secondary_apps - primary_apps),
+            "sharedApps": sorted(primary_apps & secondary_apps),
+            "uniquePrimarySplashGroups": sorted(primary_splash - secondary_splash),
+            "uniqueSecondarySplashGroups": sorted(secondary_splash - primary_splash),
+        },
+        "conflicts": conflicts,
+        "deduplicatedGroups": duplicates,
+    }
+    return {
+        "apps": list(app_map.values()),
+        "globalGroups": list(global_map.values()),
+        "primary": sources[0][0],
+    }, report
+
+
 def _same_rule(a: dict, b: dict) -> bool:
     """Rules are considered duplicates when their key match strings (and the
     delay that gates the action) are identical — this is what makes override
@@ -367,6 +489,11 @@ def apply_overrides(apps: list, overrides: dict) -> int:
                 group["key"] = max((g.get("key", 0) for g in app["groups"]), default=-1) + 1
                 group.setdefault("matchTime", 10000)
                 group["rules"] = []
+                group["bypassProvenance"] = [{
+                    "sourceName": "Bypass override",
+                    "sourceVersion": 1,
+                    "sourceSha256": sha256_of(OVERRIDES_PATH),
+                }]
                 app["groups"].append(group)
             existing = group.get("rules", [])
             for rule in ov_group.get("rules", []):
@@ -380,6 +507,14 @@ def apply_overrides(apps: list, overrides: dict) -> int:
                     key = max(used_keys, default=-1) + 1
                 new_rule["key"] = key
                 existing.append(new_rule)
+                provenance = group.setdefault("bypassProvenance", [])
+                override_source = {
+                    "sourceName": "Bypass override",
+                    "sourceVersion": 1,
+                    "sourceSha256": sha256_of(OVERRIDES_PATH),
+                }
+                if override_source not in provenance:
+                    provenance.append(override_source)
                 used_keys.add(key)
                 added += 1
     return added
@@ -460,40 +595,51 @@ def sha256_of(path: Path) -> str:
 
 
 def main() -> int:
-    if len(sys.argv) < 2:
-        print(__doc__)
+    parser = argparse.ArgumentParser(description="Build a local Bypass Ads advertising bundle")
+    parser.add_argument("subscription_path", nargs="?", help="Primary JSON/JSON5 subscription")
+    parser.add_argument("output", nargs="?", default=str(DEFAULT_OUTPUT), help="Generated local bundle path")
+    parser.add_argument(
+        "--additional",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="Secondary JSON/JSON5 subscription; repeat for more sources",
+    )
+    parser.add_argument(
+        "--conflict-report",
+        default=str(CONFLICT_REPORT_DEFAULT),
+        metavar="PATH",
+        help="Local report path containing coverage diff and conflicts only",
+    )
+    args = parser.parse_args()
+    if not args.subscription_path:
+        parser.print_help()
         return 2
-    src = Path(sys.argv[1])
-    dst = Path(sys.argv[2]) if len(sys.argv) > 2 else DEFAULT_OUTPUT
-    if not src.exists():
-        print(f"ERROR: input subscription not found: {src}", file=sys.stderr)
-        return 1
-    try:
-        data = load_subscription(src.read_text(encoding="utf-8"))
-    except Exception as e:
-        print(f"ERROR: failed to parse {src}: {e}", file=sys.stderr)
-        print("Note: strings must use double quotes; comments/trailing commas are OK.", file=sys.stderr)
-        return 1
+    source_paths = [Path(args.subscription_path), *(Path(value) for value in args.additional)]
+    dst = Path(args.output)
+    parsed_sources = []
+    for source_path in source_paths:
+        if not source_path.exists():
+            print(f"ERROR: input subscription not found: {source_path}", file=sys.stderr)
+            return 1
+        try:
+            parsed_sources.append((load_subscription(source_path.read_text(encoding="utf-8")), source_path))
+        except Exception as e:
+            print(f"ERROR: failed to parse {source_path}: {e}", file=sys.stderr)
+            print("Note: strings must use double quotes; comments/trailing commas are OK.", file=sys.stderr)
+            return 1
     try:
         category_map = load_category_map()
     except Exception as e:
         print(f"ERROR: failed to load category map: {e}", file=sys.stderr)
         return 1
 
+    merged, report = merge_sources(parsed_sources)
+    data = merged["primary"]
     apps_in = data.get("apps", [])
-    total_groups = 0
-    kept_apps = []
-    kept_groups = 0
-    kept_rules = 0
-    for app in apps_in:
-        groups = app.get("groups", [])
-        total_groups += len(groups)
-        ad_groups = [g for g in groups if is_ad_group(g.get("name", ""))]
-        if not ad_groups:
-            continue
-        kept_groups += len(ad_groups)
-        kept_rules += sum(len(g.get("rules", [])) for g in ad_groups)
-        kept_apps.append({**app, "groups": ad_groups})
+    kept_apps = merged["apps"]
+    kept_groups = sum(len(app["groups"]) for app in kept_apps)
+    kept_rules = sum(len(group.get("rules", [])) for app in kept_apps for group in app["groups"])
 
     # Bypass-owned overrides (tracked in git)
     overrides_added = 0
@@ -512,9 +658,16 @@ def main() -> int:
         "name": "Bypass Ads 广告规则",
         "version": data.get("version", 1),
         "author": data.get("author", "bypass-ads"),
-        "globalGroups": [g for g in data.get("globalGroups", []) if is_splash_global_group(g.get("name", ""))],
+        "globalGroups": merged["globalGroups"],
         "categories": product_categories(data.get("categories", [])),
         "apps": kept_apps,
+        "bypassSourcePriority": [
+            "Bypass own override",
+            "primary subscription",
+            "secondary subscription",
+            "source global",
+            "Bypass fallback",
+        ],
     }
     source_globals_kept = len(bundle["globalGroups"])
     source_global_reinforcements = reinforce_source_global_groups(bundle["globalGroups"])
@@ -523,21 +676,29 @@ def main() -> int:
     errors = validate_bundle(bundle) + validate_category_map(bundle, category_map)
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text(json.dumps(bundle, ensure_ascii=False, indent=2), encoding="utf-8")
+    report_path = Path(args.conflict_report)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
     summary = summarize(bundle)
-    print(f"input subscription : {src}")
+    print(f"primary subscription: {source_paths[0]}")
+    for index, path in enumerate(source_paths[1:], start=1):
+        print(f"secondary source {index}: {path}")
     print(f"  total apps       : {len(apps_in)}")
-    print(f"  total rule groups: {total_groups}")
     print("filtered advertising groups:")
     print(f"  kept apps        : {len(kept_apps)}")
     print(f"  kept groups      : {kept_groups}")
     print(f"  kept rules       : {kept_rules}")
     print(f"overrides added    : {overrides_added}")
-    source_splash_globals = [g for g in data.get("globalGroups", []) if is_splash_global_group(g.get("name", ""))]
+    source_splash_globals = [g for g in merged["globalGroups"] if is_splash_global_group(g.get("name", ""))]
     print(f"source global groups input: {len(source_splash_globals)}")
     print(f"source global groups kept : {source_globals_kept}")
     print(f"source global reinforcements: {source_global_reinforcements}")
     print(f"generic fallback          : {'added' if fallback_added else 'not used'}")
+    diff = report["coverageDiff"]
+    print(f"coverage A-only/shared/B-only apps: {len(diff['primaryOnlyApps'])}/{len(diff['sharedApps'])}/{len(diff['secondaryOnlyApps'])}")
+    print(f"source conflicts           : {len(report['conflicts'])} (report: {report_path})")
+    print(f"deduplicated groups        : {report['deduplicatedGroups']}")
     print(f"final apps/groups/rules: {summary['apps']}/{summary['groups']}/{summary['rules']}")
     category_counts = {}
     for app_rule in kept_apps:

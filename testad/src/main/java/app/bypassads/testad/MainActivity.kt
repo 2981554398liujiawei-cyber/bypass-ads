@@ -64,6 +64,14 @@ class MainActivity : Activity() {
             "g" -> scene.addView(skipTarget(text = "跳过片头") { showUnexpectedAction(mode) }, topEndParams())
             "h", "i" -> scene.addView(skipTarget(text = "跳过") { showUnexpectedAction(mode) }, topEndParams())
             "j" -> scene.addView(skipTarget(desc = "跳过") { showUnexpectedAction(mode) }, topEndParams())
+            "k" -> addClickableParent(scene, mode)
+            "l" -> scene.addView(skipTarget(text = "跳过") { /* Action succeeds but the ad stays visible. */ }, topEndParams())
+            "m" -> addDelayedClickableTarget(scene, mode)
+            "n" -> scene.addView(skipTarget(text = "跳过", clickable = false).apply {
+                // The visual target intentionally has no accessibility node.
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }, topEndParams())
+            "o" -> scene.addView(skipTarget(text = "跳过") { showResult(mode) }, topEndParams())
         }
         setScene(scene)
     }
@@ -90,6 +98,16 @@ class MainActivity : Activity() {
             true
         }
         scene.addView(target, topEndParams())
+    }
+
+    private fun addDelayedClickableTarget(scene: FrameLayout, mode: String) {
+        val target = skipTarget(text = "跳过", clickable = false)
+        scene.addView(target, topEndParams())
+        target.postDelayed({
+            target.isClickable = true
+            target.isFocusable = true
+            target.setOnClickListener { showResult(mode) }
+        }, 900)
     }
 
     private fun skipTarget(
@@ -139,11 +157,16 @@ class MainActivity : Activity() {
         "h" -> "H 总开关关闭"
         "i" -> "I 本应用关闭"
         "j" -> "J 通用开屏保护关闭"
+        "k" -> "K 不可点击目标 + 可点击父节点"
+        "l" -> "L 动作返回成功但目标仍存在"
+        "m" -> "M 延迟后才可点击"
+        "n" -> "N 无 Accessibility 节点"
+        "o" -> "O 导航栈验证 Hook"
         else -> mode
     }
 
     companion object {
         const val EXTRA_SCENARIO = "scenario"
-        private val scenarioNames = ('a'..'j').map(Char::toString).toSet()
+        private val scenarioNames = ('a'..'o').map(Char::toString).toSet()
     }
 }

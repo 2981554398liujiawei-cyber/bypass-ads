@@ -8,6 +8,7 @@ checks make the Bypass build policy auditable before an APK reaches a device.
 
 import importlib.util
 import json
+import tempfile
 from pathlib import Path
 
 
@@ -80,9 +81,39 @@ def test_override_group_policy_is_preserved() -> None:
     assert group["ignoreGlobalGroupMatch"] is True
 
 
+def test_multi_source_union_dedupe_and_conflict_report() -> None:
+    source_a = ROOT / "tools" / "fixtures" / "source_a.json"
+    source_b = ROOT / "tools" / "fixtures" / "source_b.json"
+    parsed = [
+        (builder.load_subscription(source_a.read_text(encoding="utf-8")), source_a),
+        (builder.load_subscription(source_b.read_text(encoding="utf-8")), source_b),
+    ]
+    merged, report = builder.merge_sources(parsed)
+    assert {app["id"] for app in merged["apps"]} == {"fixture.app1", "fixture.shared", "fixture.app3"}
+    assert report["coverageDiff"]["primaryOnlyApps"] == ["fixture.app1"]
+    assert report["coverageDiff"]["secondaryOnlyApps"] == ["fixture.app3"]
+    assert report["coverageDiff"]["sharedApps"] == ["fixture.shared"]
+    assert len(report["conflicts"]) == 1
+    shared = next(app for app in merged["apps"] if app["id"] == "fixture.shared")
+    assert shared["groups"][0]["rules"][0]["matches"] == ['[vid="skip_a"]']
+
+
+def test_multi_source_identical_group_is_deduplicated() -> None:
+    source_a = ROOT / "tools" / "fixtures" / "source_a.json"
+    data_a = builder.load_subscription(source_a.read_text(encoding="utf-8"))
+    with tempfile.TemporaryDirectory() as temp:
+        second = Path(temp) / "source-a-copy.json"
+        second.write_text(source_a.read_text(encoding="utf-8"), encoding="utf-8")
+        merged, report = builder.merge_sources([(data_a, source_a), (data_a, second)])
+    assert len(merged["apps"]) == 2
+    assert report["deduplicatedGroups"] == 2
+
+
 if __name__ == "__main__":
     test_fallback_selector_contract()
     test_source_global_filter_contract()
     test_source_global_reinforcement_contract()
     test_override_group_policy_is_preserved()
+    test_multi_source_union_dedupe_and_conflict_report()
+    test_multi_source_identical_group_is_deduplicated()
     print("splash policy: PASS")

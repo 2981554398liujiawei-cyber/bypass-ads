@@ -30,6 +30,13 @@ interface BypassEngine {
     /** Android permission and background-execution state shown in product UI. */
     val permissionState: StateFlow<BypassPermissionState>
 
+    /** Actual accessibility control state and available enhanced-control paths. */
+    val accessibilityControl: StateFlow<BypassAccessibilityControl>
+
+    /** Runtime health shown from Home. This does not claim to bypass Android's
+     * lifecycle restrictions; it exposes the states users can actually fix. */
+    val runtimeProtection: StateFlow<BypassRuntimeProtection>
+
     /** Most recent skip action (null when nothing skipped yet). */
     val latestAction: StateFlow<BypassActionRecord?>
 
@@ -38,6 +45,12 @@ interface BypassEngine {
 
     /** Number of successful actions kept in the Bypass Ads local history. */
     val skipCount: StateFlow<Int>
+
+    /** Recent product-facing failure records, distinct from raw debug logs. */
+    val failureRecords: StateFlow<List<BypassFailureRecord>>
+
+    /** Current-process average matcher-to-action response time. */
+    val averageResponseMs: StateFlow<Int?>
 
     /** Conservative generic splash fallback switch (default on). */
     val genericFallbackEnabled: StateFlow<Boolean>
@@ -65,6 +78,12 @@ interface BypassEngine {
      * system accessibility screen when Android requires user consent. */
     fun requestServiceRecovery()
 
+    fun setAccessibilityEnabled(enabled: Boolean)
+
+    suspend fun tryGrantAccessibilityControlWithShizuku(): Boolean
+
+    fun retryCurrentMatch()
+
     suspend fun importLocalRules(source: String, sourceFileName: String? = null): BypassImportResult
 
     suspend fun restoreBundledRules(): BypassImportResult
@@ -72,6 +91,8 @@ interface BypassEngine {
     suspend fun clearRecentActions()
 
     /** Apps that currently have at least one splash rule in the bundled set. */
+    val protectedApps: StateFlow<List<BypassAppInfo>>
+
     suspend fun getProtectedApps(): List<BypassAppInfo>
 
     suspend fun getAppEnabled(packageName: String): Boolean
@@ -83,6 +104,16 @@ interface BypassEngine {
     suspend fun setRuleGroupEnabled(packageName: String, groupKey: Int, enabled: Boolean)
 
     suspend fun getSubscriptions(): List<BypassSubscriptionInfo>
+
+    suspend fun getTeachRules(): List<BypassTeachRuleSummary>
+
+    suspend fun testTeachRule(draft: BypassTeachDraft): BypassTeachTestResult
+
+    suspend fun saveTeachRule(draft: BypassTeachDraft): BypassTeachRuleSummary
+
+    suspend fun deleteTeachRule(key: Int)
+
+    suspend fun exportTeachRules(): java.io.File
 }
 
 enum class BypassAdCategory {
@@ -163,14 +194,77 @@ data class BypassRuleMetadata(
 data class BypassPermissionState(
     val notificationGranted: Boolean = false,
     val ignoringBatteryOptimizations: Boolean = false,
+    val statusServiceRunning: Boolean = false,
+    val accessibilityConnectedAt: Long = 0L,
+    val hyperOsAutostartNeedsConfirmation: Boolean = false,
 )
 
+data class BypassRuntimeProtection(
+    val accessibilityConnected: Boolean = false,
+    val statusServiceRunning: Boolean = false,
+    val notificationGranted: Boolean = false,
+    val ignoringBatteryOptimizations: Boolean = false,
+    val accessibilityConnectedAt: Long = 0L,
+    val lastRecoveryAttemptAt: Long = 0L,
+    /** OEM autostart settings are not queryable through a reliable public API. */
+    val autostartNeedsUserConfirmation: Boolean = false,
+)
+
+enum class BypassAccessibilityStatus {
+    ENABLED,
+    DISABLED,
+    NEED_AUTHORIZATION,
+    RECOVERING,
+}
+
+data class BypassAccessibilityControl(
+    val status: BypassAccessibilityStatus = BypassAccessibilityStatus.NEED_AUTHORIZATION,
+    val hasWriteSecureSettings: Boolean = false,
+    val hasShizuku: Boolean = false,
+) {
+    val label: String
+        get() = when (status) {
+            BypassAccessibilityStatus.ENABLED -> "正常"
+            BypassAccessibilityStatus.DISABLED -> "已关闭"
+            BypassAccessibilityStatus.NEED_AUTHORIZATION -> "需要首次授权"
+            BypassAccessibilityStatus.RECOVERING -> "服务异常"
+        }
+}
+
 data class BypassActionRecord(
+    val id: Int,
     val appId: String,
     val appName: String?,
     val groupName: String?,
     val time: Long,
 )
+
+data class BypassFailureRecord(
+    val id: Long,
+    val time: Long,
+    val packageName: String,
+    val activityName: String?,
+    val reason: FailureReason,
+    val detail: String,
+) {
+    val explanation: String
+        get() = when (reason) {
+            FailureReason.NO_RULE_FOR_APP -> "当前应用没有可用的广告规则。"
+            FailureReason.CATEGORY_DISABLED -> "对应广告类别已关闭。"
+            FailureReason.MASTER_DISABLED -> "首页的自动跳过广告已暂停。"
+            FailureReason.APP_DISABLED -> "此应用的广告保护已关闭。"
+            FailureReason.GLOBAL_EXCLUDED -> "安全排除规则阻止了这次操作。"
+            FailureReason.ACTIVITY_MISMATCH -> "规则与当前页面不匹配。"
+            FailureReason.SELECTOR_NO_MATCH -> "已有规则，但没有找到对应控件。"
+            FailureReason.TARGET_FOUND_NOT_CLICKABLE -> "目标找到了，但当前不可点击。"
+            FailureReason.ACTION_FAILED -> "点击动作没有成功执行。"
+            FailureReason.ACTION_NO_EFFECT -> "动作执行后，目标仍然存在。"
+            FailureReason.ACTION_TOO_EARLY -> "页面仍在加载，规则正在等待。"
+            FailureReason.ACCESSIBILITY_NODE_MISSING -> "当前无法读取无障碍节点。"
+            FailureReason.EVENT_MISSED -> "可能错过了页面变化事件。"
+            FailureReason.UNKNOWN -> "暂时无法确定原因。"
+        }
+}
 
 data class BypassAppInfo(
     val packageName: String,
