@@ -24,7 +24,7 @@ import li.songe.gkd.util.dbFolder
 import li.songe.gkd.util.json
 
 @Database(
-    version = 15,
+    version = 16,
     entities = [
         SubsItem::class,
         Snapshot::class,
@@ -52,6 +52,10 @@ import li.songe.gkd.util.json
         AutoMigration(from = 12, to = 13),
         AutoMigration(from = 13, to = 14),
         AutoMigration(from = 14, to = 15),
+        // schema 16: BypassDetectionSession product outcome fields
+        // (strategy_mode, result, action_attempts, candidate_type,
+        //  confirmed_latency_ms, rule_origin) - all added with defaults.
+        AutoMigration(from = 15, to = 16),
     ]
 )
 @TypeConverters(DbConverters::class)

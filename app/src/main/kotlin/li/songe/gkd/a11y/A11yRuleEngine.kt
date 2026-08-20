@@ -20,12 +20,19 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import li.songe.gkd.BYPASS_SPLASH_SUBS_ID
 import li.songe.gkd.META
+import li.songe.gkd.bypass.BypassActionBudget
+import li.songe.gkd.bypass.BypassAdContextLevel
+import li.songe.gkd.bypass.BypassAdContextTracker
+import li.songe.gkd.bypass.BypassOutcome
+import li.songe.gkd.bypass.BypassOutcomeVerifier
 import li.songe.gkd.bypass.BypassPerfTrace
 import li.songe.gkd.bypass.BypassDiagnostics
 import li.songe.gkd.bypass.BypassDetectionSessions
 import li.songe.gkd.bypass.BypassRejectReason
 import li.songe.gkd.bypass.BypassExitCandidateType
 import li.songe.gkd.bypass.BypassExitClassifier
+import li.songe.gkd.bypass.BypassRulePolicyResolver
+import li.songe.gkd.bypass.BypassRuleTrust
 import li.songe.gkd.bypass.BypassStrategyGate
 import li.songe.gkd.bypass.BypassTeachRules
 import li.songe.gkd.bypass.FailureReason
@@ -73,11 +80,8 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
         AutomatorModeOption.AutomationMode -> A11yService.instance != null
     }
 
-    /** Per-top-app exit-attempt counters for strategy-aware bounded retries. */
-    private val sessionExitAttempts = java.util.concurrent.ConcurrentHashMap<String, Int>()
-
     fun onAppChanged() {
-        sessionExitAttempts.clear()
+        BypassActionBudget.clear()
     }
 
     fun onA11yConnected() {
@@ -466,67 +470,121 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
             if (META.debuggable && isBypassRule) {
                 Log.d("A11yRuleEngine", "bypass rule matched: ${rule.g.group.name}/${rule.rule.name} status=${rule.status}")
             }
+            var bypassSessionId: String? = null
+            var bypassMaxAttempts = 0
             if (isBypassRule) {
-                // Bypass-owned rules can carry an explicit strategy marker in
-                // their rule name ("...-Aggressive", "...-Crazy"). A rule the
-                // active mode does not reach is skipped before classification.
-                if (!BypassStrategyGate.isRuleAllowedByStrategy(rule.rule.name)) {
+                val mode = BypassStrategyGate.currentStrategyMode()
+                val rulePolicy = BypassRulePolicyResolver.resolve(rule)
+                // A. Identity-derived minimum mode. Rule names are log
+                // readability only; the boundary is trust + bypassMode.
+                if (mode.ordinal < rulePolicy.minimumMode.ordinal) {
                     if (META.debuggable) {
-                        Log.d("A11yRuleEngine", "bypass rule rejected by strategy level: ${rule.rule.name}")
+                        Log.d("A11yRuleEngine", "bypass rule below minimum mode: ${rule.g.group.name}/${rule.rule.name} trust=${rulePolicy.trust}")
                     }
                     BypassDiagnostics.record(
                         FailureReason.GLOBAL_EXCLUDED,
                         packageName = bypassContext.appId,
                         activityName = bypassContext.activityId,
-                        detail = "CLOSE_CANDIDATE_REJECTED reason=STRATEGY_GATE type=RULE_LEVEL",
+                        detail = "CLOSE_CANDIDATE_REJECTED reason=RULE_LEVEL trust=${rulePolicy.trust}",
                     )
                     continue
                 }
-                // Strategy gate: classify the matched control and let the
-                // active strategy mode decide whether this candidate may act.
-                // Skip semantics are always allowed; close / X / structural
-                // candidates are gated per mode. Rejections are debug-only
-                // timeline events, never user failure records.
+                // B. Classify the matched control.
                 val candidate = BypassExitClassifier.classifyNode(target)
-                if (candidate != null) {
-                    val reject = BypassStrategyGate.rejectReason(
-                        candidate = candidate,
+                if (BypassExitClassifier.hasAdLabel(
+                        target.text?.toString(),
+                        target.contentDescription?.toString(),
+                        target.viewIdResourceName,
+                    )
+                ) {
+                    BypassAdContextTracker.noteAdLabel(bypassContext.appId, bypassContext.activityId)
+                }
+                val isDedicated = rulePolicy.trust == BypassRuleTrust.BUNDLED_DEDICATED
+                if (!isDedicated && candidate == null) {
+                    // A matched control with no exit semantics (or with
+                    // negative/sensitive semantics) never acts.
+                    BypassDiagnostics.record(
+                        FailureReason.GLOBAL_EXCLUDED,
                         packageName = bypassContext.appId,
                         activityName = bypassContext.activityId,
-                        nodeWidth = target.casted.boundsInScreen.width(),
-                        nodeHeight = target.casted.boundsInScreen.height(),
-                        appHasDedicatedRule = rule is AppRule,
+                        detail = "CLOSE_CANDIDATE_REJECTED reason=NEGATIVE_SEMANTIC type=null",
                     )
-                    if (reject != null) {
-                        if (META.debuggable) {
-                            Log.d("A11yRuleEngine", "bypass candidate rejected: ${candidate.name} reason=$reject")
-                        }
-                        BypassDiagnostics.record(
-                            FailureReason.GLOBAL_EXCLUDED,
-                            packageName = bypassContext.appId,
-                            activityName = bypassContext.activityId,
-                            detail = "CLOSE_CANDIDATE_REJECTED reason=$reject type=${candidate.name}",
-                        )
-                        BypassDetectionSessions.candidateRejected(
-                            bypassContext.appId,
-                            bypassContext.activityId,
-                            candidate.name,
-                            reject,
-                        )
-                        continue
-                    }
+                    BypassDetectionSessions.candidateRejected(
+                        bypassContext.appId,
+                        bypassContext.activityId,
+                        "?",
+                        BypassRejectReason.NEGATIVE_SEMANTIC,
+                    )
+                    continue
                 }
-                BypassDetectionSessions.targetFound(
+                // C. Candidate gate: curated dedicated rules run un-gated;
+                // every other candidate is gated per mode + trust + context.
+                val reject = if (isDedicated) null else BypassStrategyGate.rejectReason(
+                    candidate = candidate ?: BypassExitCandidateType.SKIP_TEXT,
                     packageName = bypassContext.appId,
                     activityName = bypassContext.activityId,
-                    ruleLabel = rule.statusText(),
-                    target = target,
+                    nodeWidth = target.casted.boundsInScreen.width(),
+                    nodeHeight = target.casted.boundsInScreen.height(),
+                    policy = mode.policy,
+                    rulePolicy = rulePolicy,
+                    contextLevel = BypassAdContextTracker.evaluate(bypassContext.appId, bypassContext.activityId),
+                    inWindow = BypassStrategyGate.inStartupWindow(bypassContext.appId),
                 )
-                BypassDetectionSessions.strategyApplied(
+                if (reject != null) {
+                    if (META.debuggable) {
+                        Log.d("A11yRuleEngine", "bypass candidate rejected: ${candidate?.name} reason=$reject")
+                    }
+                    BypassDiagnostics.record(
+                        FailureReason.GLOBAL_EXCLUDED,
+                        packageName = bypassContext.appId,
+                        activityName = bypassContext.activityId,
+                        detail = "CLOSE_CANDIDATE_REJECTED reason=$reject type=${candidate?.name ?: "?"}",
+                    )
+                    BypassDetectionSessions.candidateRejected(
+                        bypassContext.appId,
+                        bypassContext.activityId,
+                        candidate?.name ?: "?",
+                        reject,
+                    )
+                    continue
+                }
+                // D. One ad = one session: attach evidence to the window
+                // session and keep the strategy recorded at session start.
+                val sessionId = BypassDetectionSessions.ensureSession(
                     bypassContext.appId,
                     bypassContext.activityId,
-                    li.songe.gkd.bypass.BypassAdStrategyMode.from(storeFlow.value.bypassAdStrategyMode),
-                )
+                    mode,
+                    rulePolicy.trust,
+                ) ?: continue
+                candidate?.let {
+                    BypassAdContextTracker.noteCandidate(bypassContext.appId, bypassContext.activityId, it)
+                    BypassDetectionSessions.noteCandidate(
+                        sessionId,
+                        bypassContext.appId,
+                        bypassContext.activityId,
+                        it,
+                        rule.statusText(),
+                        target,
+                    )
+                }
+                BypassDetectionSessions.strategyApplied(bypassContext.appId, bypassContext.activityId, mode)
+                // E. Action budget: reserve BEFORE acting so a failed action
+                // still consumes an attempt (no infinite retry).
+                bypassMaxAttempts = mode.policy.maxExitAttempts.coerceAtMost(3)
+                if (!BypassActionBudget.reserveAttempt(sessionId, bypassMaxAttempts)) {
+                    if (META.debuggable) {
+                        Log.d("A11yRuleEngine", "bypass budget exhausted for session $sessionId")
+                    }
+                    BypassDiagnostics.record(
+                        FailureReason.ACTION_NO_EFFECT,
+                        packageName = bypassContext.appId,
+                        activityName = bypassContext.activityId,
+                        detail = "BUDGET_EXHAUSTED attempts=$bypassMaxAttempts",
+                    )
+                    BypassDetectionSessions.confirmedFailure(sessionId, FailureReason.ACTION_NO_EFFECT)
+                    continue
+                }
+                bypassSessionId = sessionId
             }
             if (rule.checkDelay() && rule.actionDelayJob.value == null) {
                 if (isBypassRule) {
@@ -549,66 +607,76 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
             }
             val actionResult = rule.performAction(target)
             BypassPerfTrace.actionFinished(rule.statusText())
+            BypassPerfTrace.actionFinishedT3(rule.statusText())
+            bypassSessionId?.let { BypassDetectionSessions.actionAttempted(it, actionResult.action.toString()) }
             if (actionResult.result) {
                 BypassPerfTrace.actionSucceeded()
                 val topActivity = topActivityFlow.value
                 rule.trigger()
-                scope.launch(actionDispatcher) {
-                    delay(300)
-                    startQueryJob()
-                }
-                if (isBypassRule) {
-                    BypassDetectionSessions.actionSucceeded(
-                        bypassContext.appId,
-                        bypassContext.activityId,
-                        actionResult.action.toString(),
-                    )
-                    BypassTeachRules.markVerification(
-                        rule.g.appId,
-                        rule.g.group.key,
-                        success = true,
-                    )
-                    // A successful accessibility action is not proof that an
-                    // ad disappeared. This debug-only check reuses the exact
-                    // matched node instead of adding a second scanner.
+                if (isBypassRule && bypassSessionId != null) {
+                    val sid = bypassSessionId
+                    // OutcomeVerifier is the only retry scheduler for bypass:
+                    // Action -> fresh-state verify -> ad still there + budget ->
+                    // fresh query for the next exit candidate.
                     scope.launch(actionDispatcher) {
-                        delay(350)
-                        val stillVisible = runCatching { target.refresh() && target.isVisibleToUser }.getOrDefault(false)
-                        if (stillVisible) {
-                            BypassDiagnostics.record(FailureReason.ACTION_NO_EFFECT, detail = "target_persisted_after_action")
-                            // Strategy-aware bounded retry: re-query a fresh
-                            // candidate and attempt a second exit. Only the
-                            // active mode's attempt budget may re-trigger.
-                            val mode = li.songe.gkd.bypass.BypassAdStrategyMode.from(storeFlow.value.bypassAdStrategyMode)
-                            val maxAttempts = mode.policy.maxExitAttempts
-                            val done = sessionExitAttempts.compute(bypassContext.appId) { _, v -> (v ?: 0) + 1 } ?: 1
-                            if (done < maxAttempts) {
-                                BypassDetectionSessions.exitRetry(bypassContext.appId, bypassContext.activityId, done + 1)
-                                startQueryJob(byForced = true)
-                            } else {
-                                sessionExitAttempts.remove(bypassContext.appId)
+                        val actionStart = System.currentTimeMillis()
+                        val outcome = BypassOutcomeVerifier.verify(
+                            rule = rule,
+                            target = target,
+                            packageName = bypassContext.appId,
+                            activityName = bypassContext.activityId,
+                            a11yContext = a11yContext,
+                            freshWindowProvider = { getTimeoutActiveWindow() },
+                        )
+                        val latency = System.currentTimeMillis() - actionStart
+                        BypassPerfTrace.outcomeConfirmed(rule.statusText(), outcome.name)
+                        BypassDetectionSessions.outcomeConfirmed(sid, outcome, latency)
+                        when (outcome) {
+                            BypassOutcome.SUCCESS_CONFIRMED -> {
+                                BypassTeachRules.markVerification(rule.g.appId, rule.g.group.key, success = true)
+                                if (actionResult.action != ActionPerformer.None.action) {
+                                    showActionToast(rule)
+                                }
                             }
-                        } else {
-                            sessionExitAttempts.remove(bypassContext.appId)
+                            BypassOutcome.MISCLICK_SUSPECTED -> {
+                                BypassDiagnostics.record(
+                                    FailureReason.MISCLICK_SUSPECTED,
+                                    packageName = bypassContext.appId,
+                                    activityName = bypassContext.activityId,
+                                    detail = "external_landing",
+                                )
+                            }
+                            BypassOutcome.ACTION_NO_EFFECT,
+                            BypassOutcome.UNRESOLVED,
+                            -> {
+                                if (BypassActionBudget.attemptsUsed(sid) < bypassMaxAttempts) {
+                                    BypassDiagnostics.record(FailureReason.ACTION_NO_EFFECT, detail = "outcome=$outcome requery")
+                                    startQueryJob(byForced = true)
+                                } else {
+                                    BypassDetectionSessions.confirmedFailure(sid, FailureReason.ACTION_NO_EFFECT)
+                                }
+                            }
                         }
                     }
-                }
-                if (actionResult.action != ActionPerformer.None.action) {
-                    showActionToast(rule)
+                } else {
+                    scope.launch(actionDispatcher) {
+                        delay(300)
+                        startQueryJob()
+                    }
+                    if (actionResult.action != ActionPerformer.None.action) {
+                        showActionToast(rule)
+                    }
                 }
                 addActionLog(rule, topActivity, target, actionResult)
             } else if (isBypassRule) {
                 BypassDiagnostics.record(FailureReason.ACTION_FAILED, detail = "gkd_action_returned_false")
-                BypassDetectionSessions.actionFailed(
-                    bypassContext.appId,
-                    bypassContext.activityId,
-                    actionResult.action.toString(),
-                )
-                BypassTeachRules.markVerification(
-                    rule.g.appId,
-                    rule.g.group.key,
-                    success = false,
-                )
+                bypassSessionId?.let { sid ->
+                    if (BypassActionBudget.attemptsUsed(sid) < bypassMaxAttempts) {
+                        startQueryJob(byForced = true)
+                    } else {
+                        BypassDetectionSessions.confirmedFailure(sid, FailureReason.ACTION_FAILED)
+                    }
+                }
             }
         }
     }

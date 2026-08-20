@@ -122,38 +122,47 @@ val usedSubsEntriesFlow by lazy {
 
 fun updateSubscription(subscription: RawSubscription) {
     appScope.launchTry {
-        updateSubsMutex.withStateLock {
-            val subsId = subscription.id
-            val subsName = subscription.name
-            val newMap = subsMapFlow.value.toMutableMap()
-            val nextSubsRaw = if (subsId < 0 && newMap[subsId]?.version == subscription.version) {
-                subscription.run {
-                    copy(
-                        version = version + 1,
-                        apps = apps.filterIfNotAll { it.groups.isNotEmpty() }
-                            .distinctByIfAny { it.id },
-                    )
-                }
-            } else {
-                subscription
+        updateSubscriptionNow(subscription)
+    }
+}
+
+/**
+ * Awaitable subscription apply. Product flows (import / restore / teach)
+ * call this so "success" is only returned after the engine actually holds
+ * the new rules (atomic update contract).
+ */
+suspend fun updateSubscriptionNow(subscription: RawSubscription) {
+    updateSubsMutex.withStateLock {
+        val subsId = subscription.id
+        val subsName = subscription.name
+        val newMap = subsMapFlow.value.toMutableMap()
+        val nextSubsRaw = if (subsId < 0 && newMap[subsId]?.version == subscription.version) {
+            subscription.run {
+                copy(
+                    version = version + 1,
+                    apps = apps.filterIfNotAll { it.groups.isNotEmpty() }
+                        .distinctByIfAny { it.id },
+                )
             }
-            newMap[subsId] = nextSubsRaw
-            subsMapFlow.value = newMap
-            if (subsLoadErrorsFlow.value.contains(subsId)) {
-                subsLoadErrorsFlow.update {
-                    it.toMutableMap().apply {
-                        remove(subsId)
-                    }
-                }
-            }
-            withContext(Dispatchers.IO) {
-                cleanupSubsConfig(subsId, nextSubsRaw)
-                DbSet.subsItemDao.updateMtime(subsId, System.currentTimeMillis())
-                subsFolder.resolve("${subsId}.json")
-                    .writeText(json.encodeToString(nextSubsRaw))
-            }
-            LogUtils.d("更新订阅文件:id=${subsId},name=${subsName}")
+        } else {
+            subscription
         }
+        newMap[subsId] = nextSubsRaw
+        subsMapFlow.value = newMap
+        if (subsLoadErrorsFlow.value.contains(subsId)) {
+            subsLoadErrorsFlow.update {
+                it.toMutableMap().apply {
+                    remove(subsId)
+                }
+            }
+        }
+        withContext(Dispatchers.IO) {
+            cleanupSubsConfig(subsId, nextSubsRaw)
+            DbSet.subsItemDao.updateMtime(subsId, System.currentTimeMillis())
+            subsFolder.resolve("${subsId}.json")
+                .writeText(json.encodeToString(nextSubsRaw))
+        }
+        LogUtils.d("更新订阅文件:id=${subsId},name=${subsName}")
     }
 }
 

@@ -6,23 +6,44 @@ import org.junit.Assert.assertNotNull
 import org.junit.Test
 
 /**
- * Strategy-gate matrix on pure logic. Mirrors the testad scene matrix so the
- * same expectations run in both JVM tests and on-device ad scenes.
+ * Strategy-gate matrix V2 on pure logic. Mirrors the testad scene matrix so
+ * the same expectations run in both JVM tests and on-device ad scenes.
  *
- * Scene mapping (testad):
- *  A text=跳过        -> skip
- *  B desc=跳过        -> skip
- *  D text=关闭        -> close text
- *  E desc=关闭广告     -> close desc
- *  F vid=ad_close     -> close view id
- *  G text=×           -> close icon
- *  H structural X     -> structural close
- *  I coordinate-only  -> coordinate fallback
- *  W ordinary close   -> not an exit (too large / non-ad)
+ * V2 differences from R6.2:
+ *  - AGGRESSIVE allows glyph X but NOT structural no-semantic close.
+ *  - Only CRAZY allows structural close and coordinate fallback.
+ *  - Generic close/glyph/structural candidates need STRONG ad context.
  */
 class BypassStrategyMatrixTest {
 
     private fun policyFor(ordinal: Int) = BypassAdStrategyMode.from(ordinal).policy
+
+    /** Generic fallback gate with STRONG context (post-entry window). */
+    private fun gate(
+        candidate: BypassExitCandidateType?,
+        p: BypassStrategyPolicy,
+        w: Int,
+        h: Int,
+        context: BypassAdContextLevel = BypassAdContextLevel.STRONG,
+        trust: BypassRuleTrust = BypassRuleTrust.BUNDLED_GLOBAL,
+        inWindow: Boolean = true,
+    ): String? = BypassStrategyGate.rejectReason(
+        candidate = candidate ?: BypassExitCandidateType.SKIP_TEXT,
+        packageName = "com.example.app",
+        activityName = "com.example.MainActivity",
+        nodeWidth = w,
+        nodeHeight = h,
+        policy = p,
+        rulePolicy = BypassRulePolicy(
+            trust = trust,
+            minimumMode = BypassAdStrategyMode.CONSERVATIVE,
+            requiresStrongAdContext = true,
+            coordinate = false,
+            maxAttempts = 3,
+        ),
+        contextLevel = context,
+        inWindow = inWindow,
+    )
 
     @Test
     fun conservative_only_allows_skip() {
@@ -30,40 +51,95 @@ class BypassStrategyMatrixTest {
         assertNull("skip should be allowed", gate(null, p, 80, 40))
         assertNotNull("close text rejected in conservative", gateCloseText(p))
         assertNotNull("close view id rejected in conservative", gateCloseViewId(p))
-        assertNotNull("X rejected in conservative", gateCloseIcon(p))
+        assertNotNull("glyph X rejected in conservative", gateCloseIcon(p))
+        assertNotNull("structural rejected in conservative", gateStructural(p))
+        assertNotNull("coordinate rejected in conservative", gateCoordinate(p))
     }
 
     @Test
-    fun aggressive_allows_close_text_viewid_and_icon() {
+    fun aggressive_allows_close_viewid_and_glyph_but_not_structural_or_coordinate() {
         val p = policyFor(1)
         assertNull(gateCloseText(p))
         assertNull(gateCloseViewId(p))
-        assertNull(gateCloseIcon(p))
+        assertNull("glyph X allowed in aggressive", gateCloseIcon(p))
+        assertNotNull("structural no-semantic still rejected in aggressive", gateStructural(p))
         assertNotNull("coordinate still rejected in aggressive", gateCoordinate(p))
     }
 
     @Test
-    fun crazy_allows_everything_within_window() {
+    fun crazy_allows_everything_within_strong_context() {
         val p = policyFor(2)
         assertNull(gateCloseText(p))
         assertNull(gateCloseViewId(p))
         assertNull(gateCloseIcon(p))
-        assertNull(gateCoordinate(p))
+        assertNull("structural allowed in crazy", gateStructural(p))
+        assertNull("coordinate allowed in crazy", gateCoordinate(p))
+    }
+
+    @Test
+    fun generic_close_requires_strong_ad_context_in_aggressive_and_crazy() {
+        for (ordinal in 1..2) {
+            val p = policyFor(ordinal)
+            assertEquals(
+                BypassRejectReason.NO_AD_CONTEXT,
+                gate(BypassExitCandidateType.CLOSE_TEXT, p, 80, 40, context = BypassAdContextLevel.WEAK),
+            )
+            assertEquals(
+                BypassRejectReason.NO_AD_CONTEXT,
+                gate(BypassExitCandidateType.CLOSE_ICON, p, 40, 40, context = BypassAdContextLevel.NONE),
+            )
+        }
+    }
+
+    @Test
+    fun out_of_window_rejects_generic_close() {
+        val p = policyFor(1)
+        assertEquals(
+            BypassRejectReason.OUTSIDE_WINDOW,
+            gate(BypassExitCandidateType.CLOSE_TEXT, p, 80, 40, inWindow = false),
+        )
     }
 
     @Test
     fun oversized_candidate_rejected_in_every_mode() {
         for (ordinal in 0..2) {
             val p = policyFor(ordinal)
-            // 520x320 control is never a close button.
             assertEquals(BypassRejectReason.TOO_LARGE, gate(null, p, 520, 320))
         }
     }
 
     @Test
-    fun high_risk_app_blocks_generic_fallback_but_allows_dedicated() {
+    fun mature_dedicated_rules_run_ungated_in_every_mode() {
+        // A mature dedicated close rule is curated: conservative runs it too.
         for (ordinal in 0..2) {
             val p = policyFor(ordinal)
+            assertNull(
+                BypassStrategyGate.rejectReason(
+                    candidate = BypassExitCandidateType.CLOSE_TEXT,
+                    packageName = "com.example.app",
+                    activityName = "com.example.MainActivity",
+                    nodeWidth = 80,
+                    nodeHeight = 40,
+                    policy = p,
+                    rulePolicy = BypassRulePolicy(
+                        trust = BypassRuleTrust.BUNDLED_DEDICATED,
+                        minimumMode = BypassAdStrategyMode.CONSERVATIVE,
+                        requiresStrongAdContext = false,
+                        coordinate = false,
+                        maxAttempts = 3,
+                    ),
+                    contextLevel = BypassAdContextLevel.NONE,
+                    inWindow = false,
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun high_risk_app_blocks_generic_fallback_but_allows_dedicated_and_override() {
+        for (ordinal in 0..2) {
+            val p = policyFor(ordinal)
+            // Generic fallback is always off on a high-risk host.
             assertEquals(
                 BypassRejectReason.SENSITIVE_ACTIVITY,
                 BypassStrategyGate.rejectReason(
@@ -72,12 +148,19 @@ class BypassStrategyMatrixTest {
                     activityName = "com.alipay.XRiverActivity",
                     nodeWidth = 80,
                     nodeHeight = 40,
-                    appHasDedicatedRule = false,
-                    inWindow = true,
                     policy = p,
+                    rulePolicy = BypassRulePolicy(
+                        trust = BypassRuleTrust.LOCAL_IMPORT_GLOBAL,
+                        minimumMode = BypassAdStrategyMode.AGGRESSIVE,
+                        requiresStrongAdContext = true,
+                        coordinate = false,
+                        maxAttempts = 3,
+                    ),
+                    contextLevel = BypassAdContextLevel.STRONG,
+                    inWindow = true,
                 ),
             )
-            // Dedicated precise rule on the same host is still allowed.
+            // Curated dedicated rule on the same host is still allowed.
             assertNull(
                 BypassStrategyGate.rejectReason(
                     candidate = BypassExitCandidateType.CLOSE_TEXT,
@@ -85,24 +168,20 @@ class BypassStrategyMatrixTest {
                     activityName = "com.alipay.XRiverActivity",
                     nodeWidth = 80,
                     nodeHeight = 40,
-                    appHasDedicatedRule = true,
-                    inWindow = true,
                     policy = p,
+                    rulePolicy = BypassRulePolicy(
+                        trust = BypassRuleTrust.BUNDLED_DEDICATED,
+                        minimumMode = BypassAdStrategyMode.CONSERVATIVE,
+                        requiresStrongAdContext = false,
+                        coordinate = false,
+                        maxAttempts = 3,
+                    ),
+                    contextLevel = BypassAdContextLevel.NONE,
+                    inWindow = false,
                 ),
             )
         }
     }
-
-    private fun gate(candidate: BypassExitCandidateType?, p: BypassStrategyPolicy, w: Int, h: Int): String? =
-        BypassStrategyGate.rejectReason(
-            candidate = candidate ?: BypassExitCandidateType.SKIP_TEXT,
-            packageName = "com.example.app",
-            activityName = "com.example.MainActivity",
-            nodeWidth = w,
-            nodeHeight = h,
-            inWindow = true,
-            policy = p,
-        )
 
     private fun gateCloseText(p: BypassStrategyPolicy): String? =
         gate(BypassExitCandidateType.CLOSE_TEXT, p, 80, 40)
@@ -112,6 +191,9 @@ class BypassStrategyMatrixTest {
 
     private fun gateCloseIcon(p: BypassStrategyPolicy): String? =
         gate(BypassExitCandidateType.CLOSE_ICON, p, 40, 40)
+
+    private fun gateStructural(p: BypassStrategyPolicy): String? =
+        gate(BypassExitCandidateType.STRUCTURAL_CLOSE, p, 60, 60)
 
     private fun gateCoordinate(p: BypassStrategyPolicy): String? =
         gate(BypassExitCandidateType.COORDINATE_FALLBACK, p, 40, 40)

@@ -25,6 +25,7 @@ enum class FailureReason {
     ACTION_TOO_EARLY,
     ACCESSIBILITY_NODE_MISSING,
     EVENT_MISSED,
+    MISCLICK_SUSPECTED,
     UNKNOWN,
 }
 

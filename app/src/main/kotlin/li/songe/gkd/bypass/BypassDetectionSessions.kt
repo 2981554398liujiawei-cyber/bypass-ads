@@ -34,9 +34,9 @@ data class BypassCandidateSnapshot(
 )
 
 /**
- * Turns matcher evidence into one durable result per app/activity window. Raw
- * matcher diagnostics remain in [BypassDiagnostics]; they never create a user
- * record on their own.
+ * One ad session is one ad. Matcher evidence is accumulated into the active
+ * window session; multiple actions (skip -> X -> close) stay in ONE session
+ * and produce exactly one [BypassSessionResult].
  */
 object BypassDetectionSessions {
     private const val SESSION_WINDOW_MS = 8_000L
@@ -58,21 +58,113 @@ object BypassDetectionSessions {
     private val scheduledFinalizers = ConcurrentHashMap<String, Job>()
     private var active: ActiveSession? = null
 
-    fun targetFound(
+    /**
+     * Get (or create) the active session for the current window. The session
+     * carries the strategy mode at session start and the rule trust origin.
+     * Returns null only when a session cannot be established (no window).
+     */
+    fun ensureSession(
         packageName: String,
         activityName: String?,
+        mode: BypassAdStrategyMode,
+        ruleOrigin: BypassRuleTrust,
+    ): String? {
+        val session = update(packageName, activityName, "SESSION_OPEN", create = true) { record ->
+            if (record.result == BypassSessionResult.OPEN.name) {
+                record.copy(
+                    strategyMode = record.strategyMode.takeIf { it != BypassDetectionSession.BypassStrategyModeDefault } ?: mode.name,
+                    ruleOrigin = record.ruleOrigin ?: ruleOrigin.name,
+                )
+            } else {
+                record
+            }
+        }
+        return session?.sessionId
+    }
+
+    fun noteCandidate(
+        sessionId: String,
+        packageName: String,
+        activityName: String?,
+        candidateType: BypassExitCandidateType,
         ruleLabel: String,
         target: AccessibilityNodeInfo,
     ) {
-        val snapshot = BypassCandidateSanitizer.snapshot(target, packageName, activityName)
-        update(packageName, activityName, "TARGET_FOUND", create = true) { record ->
+        val snapshot = BypassCandidateSanitizer.snapshot(target, packageName, activityName, structural = true)
+        updateById(sessionId, "TARGET_FOUND:${candidateType.name}") { record ->
             record.copy(
                 candidateSeen = true,
+                candidateType = candidateType.name,
                 matchedRules = append(record.matchedRules, ruleLabel, MAX_RULES),
                 candidateSnapshots = snapshot?.let {
                     encodeSnapshots(decodeSnapshots(record.candidateSnapshots) + it)
                 } ?: record.candidateSnapshots,
             )
+        }
+    }
+
+    /** Record that one action attempt was reserved/performed. */
+    fun actionAttempted(sessionId: String, action: String) {
+        updateById(sessionId, "ACTION_ATTEMPT:${action.take(48)}") { record ->
+            record.copy(
+                actions = append(record.actions, action, MAX_ACTIONS),
+                actionAttempts = record.actionAttempts + 1,
+            )
+        }
+    }
+
+    /** Record the verified outcome of the session's actions. */
+    fun outcomeConfirmed(sessionId: String, outcome: BypassOutcome, latencyMs: Long) {
+        val result = when (outcome) {
+            BypassOutcome.SUCCESS_CONFIRMED -> BypassSessionResult.SUCCESS_CONFIRMED
+            BypassOutcome.ACTION_NO_EFFECT -> BypassSessionResult.UNRESOLVED
+            BypassOutcome.UNRESOLVED -> BypassSessionResult.UNRESOLVED
+            BypassOutcome.MISCLICK_SUSPECTED -> BypassSessionResult.MISCLICK_SUSPECTED
+        }
+        val now = System.currentTimeMillis()
+        updateById(sessionId, "OUTCOME:${result.name}:${latencyMs}ms") { record ->
+            record.copy(
+                result = result.name,
+                success = result == BypassSessionResult.SUCCESS_CONFIRMED,
+                endTime = now,
+                confirmedLatencyMs = latencyMs,
+                finalFailureReason = when (result) {
+                    BypassSessionResult.MISCLICK_SUSPECTED -> FailureReason.MISCLICK_SUSPECTED.name
+                    else -> record.finalFailureReason
+                },
+            )
+        }?.let {
+            scheduledFinalizers.remove(sessionId)?.cancel()
+            if (result == BypassSessionResult.SUCCESS_CONFIRMED || result == BypassSessionResult.MISCLICK_SUSPECTED) {
+                finalizeNow(sessionId)
+            }
+        }
+    }
+
+    /** The active session could not be resolved within the window. */
+    fun unresolved(sessionId: String, detail: String) {
+        val now = System.currentTimeMillis()
+        updateById(sessionId, "UNRESOLVED:$detail") { record ->
+            record.copy(
+                result = BypassSessionResult.UNRESOLVED.name,
+                endTime = now,
+            )
+        }
+    }
+
+    /** Finalize a session as a confirmed failure (budget exhausted). */
+    fun confirmedFailure(sessionId: String, reason: FailureReason) {
+        val now = System.currentTimeMillis()
+        updateById(sessionId, "FINAL:$reason") { record ->
+            record.copy(
+                result = BypassSessionResult.FAILURE_CONFIRMED.name,
+                success = false,
+                endTime = now,
+                finalFailureReason = reason.name,
+            )
+        }?.let {
+            scheduledFinalizers.remove(sessionId)?.cancel()
+            finalizeNow(sessionId)
         }
     }
 
@@ -96,30 +188,27 @@ object BypassDetectionSessions {
         update(packageName, activityName, "STRATEGY:${mode.name}", create = false)
     }
 
-    /** Record a bounded exit retry (second/third attempt). */
-    fun exitRetry(packageName: String, activityName: String?, attempt: Int) {
-        update(packageName, activityName, "EXIT_RETRY:$attempt", create = false)
+    private fun finalizeNow(sessionId: String) {
+        synchronized(lock) {
+            val current = active?.takeIf { it.record.sessionId == sessionId } ?: return
+            persist(current.record, cleanup = true)
+            active = null
+        }
+        BypassActionBudget.reset(sessionId)
     }
 
-    fun actionSucceeded(packageName: String, activityName: String?, action: String) {
-        val session = update(packageName, activityName, "ACTION_SUCCEEDED:$action", create = false) { record ->
-            record.copy(
-                actions = append(record.actions, action, MAX_ACTIONS),
-                success = true,
-                endTime = System.currentTimeMillis(),
-                // A successful accessibility action resolves any provisional
-                // failure, including a prior not-clickable observation.
-                finalFailureReason = null,
-            )
-        }
-        session?.let { scheduledFinalizers.remove(it.sessionId)?.cancel() }
-    }
-
-    fun actionFailed(packageName: String, activityName: String?, action: String) {
-        val session = update(packageName, activityName, "ACTION_FAILED:$action", create = false) { record ->
-            record.copy(actions = append(record.actions, action, MAX_ACTIONS))
-        }
-        session?.let { scheduleFinalization(it.sessionId, FailureReason.ACTION_FAILED) }
+    private fun updateById(
+        sessionId: String,
+        event: String,
+        transform: (BypassDetectionSession) -> BypassDetectionSession = { it },
+    ): BypassDetectionSession? = synchronized(lock) {
+        val current = active?.takeIf { it.record.sessionId == sessionId } ?: return null
+        val next = transform(current.record).copy(
+            diagnosticTimeline = append(current.record.diagnosticTimeline, event, MAX_TIMELINE_ITEMS),
+        )
+        active = ActiveSession(next, System.currentTimeMillis())
+        persist(next)
+        next
     }
 
     private fun update(
@@ -136,13 +225,14 @@ object BypassDetectionSessions {
                 it.record.activityName == activityName &&
                 now - it.lastTouched <= SESSION_WINDOW_MS &&
                 // Hard ceiling: a window that outlives the opening period is
-                // closed instead of being kept alive forever (task 104).
+                // closed instead of being kept alive forever.
                 now - it.record.startTime <= SESSION_HARD_TIMEOUT_MS
         }
         if (matching == null && current != null) {
-            // A context change ends a partial session without presenting it as a
-            // failure. Evidence alone is not enough to accuse a missed ad.
+            // A context change ends a partial session without presenting it as
+            // a failure. Evidence alone is not enough to accuse a missed ad.
             persist(current.record.copy(endTime = now))
+            BypassActionBudget.reset(current.record.sessionId)
             active = null
         }
         val base = matching ?: if (create) {
@@ -179,6 +269,7 @@ object BypassDetectionSessions {
                 if (current.record.success || !current.record.candidateSeen) return@synchronized
                 val finalized = current.record.copy(
                     endTime = System.currentTimeMillis(),
+                    result = BypassSessionResult.FAILURE_CONFIRMED.name,
                     finalFailureReason = reason.name,
                     diagnosticTimeline = append(current.record.diagnosticTimeline, "FINAL:$reason", MAX_TIMELINE_ITEMS),
                 )
@@ -186,6 +277,7 @@ object BypassDetectionSessions {
                 persist(finalized, cleanup = true)
             }
             scheduledFinalizers.remove(sessionId)
+            BypassActionBudget.reset(sessionId)
         }
     }
 
@@ -213,6 +305,30 @@ object BypassDetectionSessions {
         json.encodeToString(snapshots.distinct().takeLast(MAX_SNAPSHOTS))
 }
 
+/** Converts a session into a product record (success or failure row). */
+internal fun BypassDetectionSession.toSessionRecord(): BypassSessionRecord {
+    val reason = runCatching { FailureReason.valueOf(finalFailureReason.orEmpty()) }
+        .getOrDefault(FailureReason.UNKNOWN)
+    val snapshots = runCatching {
+        json.decodeFromString<List<BypassCandidateSnapshot>>(candidateSnapshots)
+    }.getOrDefault(emptyList())
+    return BypassSessionRecord(
+        id = sessionId,
+        time = endTime.takeIf { it > 0 } ?: startTime,
+        packageName = packageName,
+        activityName = activityName,
+        strategyMode = runCatching { BypassAdStrategyMode.valueOf(strategyMode) }.getOrDefault(BypassAdStrategyMode.CONSERVATIVE),
+        result = sessionResult,
+        actionAttempts = actionAttempts,
+        confirmedLatencyMs = confirmedLatencyMs,
+        candidateType = candidateType?.let { runCatching { BypassExitCandidateType.valueOf(it) }.getOrNull() },
+        reason = reason,
+        actions = actions.lines().filter { it.isNotBlank() },
+        candidates = snapshots,
+        ruleOrigin = ruleOrigin,
+    )
+}
+
 private object BypassCandidateSanitizer {
     private val closeTokens = listOf(
         "skip", "close", "dismiss", "cancel", "ignore", "ad_close",
@@ -224,10 +340,16 @@ private object BypassCandidateSanitizer {
     )
     private val phoneOrCard = Regex("(?<!\\d)(?:\\d[ -]?){11,19}(?!\\d)")
 
+    /**
+     * Snapshot a candidate. With [structural] a text-less small node inside
+     * an ad window is also snapshotted (class/bounds/clickable only) so
+     * CRAZY structural failures can be taught without page content.
+     */
     fun snapshot(
         node: AccessibilityNodeInfo,
         packageName: String,
         activityName: String?,
+        structural: Boolean,
     ): BypassCandidateSnapshot? {
         val className = node.className?.toString().orEmpty()
         if (className.contains("edittext", ignoreCase = true) || node.isEditable || node.inputType != InputType.TYPE_NULL) {
@@ -237,8 +359,12 @@ private object BypassCandidateSanitizer {
         val description = clean(node.contentDescription?.toString())
         val viewId = clean(node.viewIdResourceName)
         val values = listOfNotNull(text, description, viewId)
-        if (values.isEmpty() || values.any(::isSensitive) || values.none(::isCloseLike)) return null
+        val sensitive = values.any(::isSensitive)
+        if (sensitive) return null
         val bounds = Rect().also { node.getBoundsInScreen(it) }
+        val small = bounds.width() in 1..220 && bounds.height() in 1..160
+        val looksLikeClose = values.any(::isCloseLike) || (structural && small && !node.isEditable)
+        if (!looksLikeClose) return null
         return BypassCandidateSnapshot(
             text = text?.takeIf(::isCloseLike),
             description = description?.takeIf(::isCloseLike),
@@ -272,28 +398,4 @@ private object BypassCandidateSanitizer {
         }
         return false
     }
-}
-
-internal fun BypassDetectionSession.toFailureRecord(): BypassFailureRecord {
-    val reason = runCatching { FailureReason.valueOf(finalFailureReason.orEmpty()) }
-        .getOrDefault(FailureReason.UNKNOWN)
-    val snapshots = runCatching {
-        json.decodeFromString<List<BypassCandidateSnapshot>>(candidateSnapshots)
-    }.getOrDefault(emptyList())
-    val lines = diagnosticTimeline.lines().filter { it.isNotBlank() }
-    val strategyLine = lines.lastOrNull { it.startsWith("STRATEGY:") }
-    val candidateLines = lines.filter { it.startsWith("CLOSE_CANDIDATE_REJECTED:") || it.startsWith("ACTION_SUCCEEDED:") }
-    val detail = buildString {
-        strategyLine?.let { append(it.substringAfter("STRATEGY:")).append(" · ") }
-        append(lines.takeLast(3).joinToString(" · "))
-    }
-    return BypassFailureRecord(
-        id = sessionId,
-        time = endTime.takeIf { it > 0 } ?: startTime,
-        packageName = packageName,
-        activityName = activityName,
-        reason = reason,
-        detail = detail.ifBlank { diagnosticTimeline.lines().takeLast(4).joinToString(" · ") },
-        candidates = snapshots,
-    )
 }

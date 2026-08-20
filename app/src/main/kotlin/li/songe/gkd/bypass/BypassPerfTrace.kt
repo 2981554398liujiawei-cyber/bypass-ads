@@ -64,6 +64,20 @@ object BypassPerfTrace {
             averageActionLatencyMs.value = (totalActionLatencyMs / completedActionSamples).toInt()
         }
     }
+    /** T3 -> T4: action finished to outcome confirmed (OutcomeVerifier). */
+    fun outcomeConfirmed(rule: String, outcome: String) {
+        if (META.debuggable) {
+            val t4 = SystemClock.elapsedRealtime()
+            Log.d(TAG, "T4=$t4 T3→T4=${t4 - t3Value}ms outcome=$outcome rule=${rule.take(160)}")
+        }
+    }
+
+    private var t3Value = 0L
+    fun actionFinishedT3(rule: String) {
+        if (META.debuggable) {
+            t3Value = SystemClock.elapsedRealtime()
+        }
+    }
     fun tabSwitchStart(tab: String) {
         if (META.debuggable) {
             tabStartedAt = SystemClock.elapsedRealtime()

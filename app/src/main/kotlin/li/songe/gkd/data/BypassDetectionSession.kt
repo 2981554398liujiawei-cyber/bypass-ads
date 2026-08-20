@@ -9,17 +9,20 @@ import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
+import li.songe.gkd.bypass.BypassSessionResult
 
 /**
- * One bounded matcher window for a possible ad. This is deliberately separate
- * from debug diagnostics: only finalized, unsuccessful sessions become product
- * failure records.
+ * One ad session: a bounded matcher window for one possible ad. Multiple
+ * actions inside the window belong to the same session and produce exactly
+ * one product result (see [result]). The raw GKD ActionLog keeps meaning
+ * "an action was performed"; [result] is the only success truth.
  */
 @Entity(
     tableName = "bypass_detection_session",
     indices = [
         Index(value = ["end_time"]),
         Index(value = ["success", "final_failure_reason"]),
+        Index(value = ["result", "end_time"]),
     ],
 )
 data class BypassDetectionSession(
@@ -31,11 +34,32 @@ data class BypassDetectionSession(
     @ColumnInfo(name = "candidate_seen") val candidateSeen: Boolean = false,
     @ColumnInfo(name = "matched_rules") val matchedRules: String = "",
     @ColumnInfo(name = "actions") val actions: String = "",
+    /** Legacy flag, derived from [result] == SUCCESS_CONFIRMED. */
     @ColumnInfo(name = "success") val success: Boolean = false,
     @ColumnInfo(name = "final_failure_reason") val finalFailureReason: String? = null,
     @ColumnInfo(name = "diagnostic_timeline") val diagnosticTimeline: String = "",
     @ColumnInfo(name = "candidate_snapshots") val candidateSnapshots: String = "",
+    // ---- schema 16: product session fields ----
+    /** Strategy mode at session start (historical, never the current value). */
+    @ColumnInfo(name = "strategy_mode", defaultValue = "CONSERVATIVE")
+    val strategyMode: String = BypassStrategyModeDefault,
+    /** Product outcome (BypassSessionResult name). */
+    @ColumnInfo(name = "result", defaultValue = "OPEN")
+    val result: String = BypassSessionResult.OPEN.name,
+    /** Total action attempts reserved for this session. */
+    @ColumnInfo(name = "action_attempts", defaultValue = "0")
+    val actionAttempts: Int = 0,
+    /** Exit candidate type of the last attempted action. */
+    @ColumnInfo(name = "candidate_type") val candidateType: String? = null,
+    /** Confirmed latency: action start -> outcome confirmed (ms). */
+    @ColumnInfo(name = "confirmed_latency_ms", defaultValue = "0")
+    val confirmedLatencyMs: Long = 0L,
+    /** Rule trust origin (BypassRuleTrust name) that created the session. */
+    @ColumnInfo(name = "rule_origin") val ruleOrigin: String? = null,
 ) {
+    val sessionResult: BypassSessionResult
+        get() = runCatching { BypassSessionResult.valueOf(result) }.getOrDefault(BypassSessionResult.OPEN)
+
     @Dao
     interface BypassDetectionSessionDao {
         @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -44,7 +68,7 @@ data class BypassDetectionSession(
         @Query(
             """
             SELECT * FROM bypass_detection_session
-            WHERE success = 0 AND final_failure_reason IS NOT NULL
+            WHERE result IN ('FAILURE_CONFIRMED', 'UNRESOLVED', 'MISCLICK_SUSPECTED')
             ORDER BY end_time DESC
             LIMIT 300
             """
@@ -53,10 +77,45 @@ data class BypassDetectionSession(
 
         @Query(
             """
+            SELECT * FROM bypass_detection_session
+            WHERE result = 'SUCCESS_CONFIRMED'
+            ORDER BY end_time DESC
+            LIMIT 300
+            """
+        )
+        fun querySuccesses(): Flow<List<BypassDetectionSession>>
+
+        @Query(
+            """
+            SELECT * FROM bypass_detection_session
+            ORDER BY end_time DESC
+            LIMIT 500
+            """
+        )
+        fun queryAll(): Flow<List<BypassDetectionSession>>
+
+        @Query("SELECT COUNT(*) FROM bypass_detection_session WHERE result = 'SUCCESS_CONFIRMED' AND end_time >= :from")
+        fun countSuccessSince(from: Long): Flow<Int>
+
+        @Query("SELECT COUNT(*) FROM bypass_detection_session WHERE result = 'SUCCESS_CONFIRMED'")
+        fun countSuccessAll(): Flow<Int>
+
+        @Query("SELECT AVG(confirmed_latency_ms) FROM bypass_detection_session WHERE result = 'SUCCESS_CONFIRMED' AND confirmed_latency_ms > 0")
+        fun avgConfirmedLatency(): Flow<Long?>
+
+        @Query(
+            """
             DELETE FROM bypass_detection_session
             WHERE end_time > 0 AND end_time < :cutoff
             """
         )
         suspend fun deleteBefore(cutoff: Long): Int
+
+        @Query("DELETE FROM bypass_detection_session")
+        suspend fun deleteAll(): Int
+    }
+
+    companion object {
+        const val BypassStrategyModeDefault = "CONSERVATIVE"
     }
 }

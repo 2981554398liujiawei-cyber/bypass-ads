@@ -16,6 +16,7 @@ import li.songe.gkd.META
 import li.songe.gkd.BYPASS_SPLASH_SUBS_ID
 import li.songe.gkd.app
 import li.songe.gkd.appScope
+import li.songe.gkd.bypass.BypassAdContextTracker
 import li.songe.gkd.data.ActionLog
 import li.songe.gkd.data.ActionResult
 import li.songe.gkd.data.ActivityLog
@@ -224,8 +225,12 @@ fun updateTopActivity(
             ruleSummary.globalRules.forEach { it.resetState(t) }
             ruleSummary.appIdToRules[oldActivityRule.topActivity.appId]?.forEach { it.resetState(t) }
             newActivityRule.appRules.forEach { it.resetState(t) }
+            BypassAdContextTracker.onTopActivityChanged(appId, activityId, t)
             A11yRuleEngine.instance?.onAppChanged()
         } else {
+            // Activity-level transition (package unchanged, e.g. WeChat
+            // LauncherUI -> AppBrandUI): a fresh window for the same host.
+            BypassAdContextTracker.onTopActivityChanged(appId, activityId, t)
             newActivityRule.currentRules.forEach { r ->
                 when (r.resetMatchType) {
                     ResetMatchType.App -> {

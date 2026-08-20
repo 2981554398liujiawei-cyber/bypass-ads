@@ -350,6 +350,8 @@ data class RawSubscription(
         val anyMatches: List<String>?
         val excludeMatches: List<String>?
         val excludeAllMatches: List<String>?
+        /** Bypass Ads strategy metadata (CONSERVATIVE/AGGRESSIVE/CRAZY). */
+        val bypassMode: String?
 
         fun getAllSelectorStrings(): List<String> {
             return listOfNotNull(matches, excludeMatches, anyMatches, excludeAllMatches).flatten()
@@ -513,7 +515,9 @@ data class RawSubscription(
         override val matchAnyApp: Boolean?,
         override val matchSystemApp: Boolean?,
         override val matchLauncher: Boolean?,
-        override val apps: List<RawGlobalApp>?
+        override val apps: List<RawGlobalApp>?,
+        /** Bypass Ads strategy metadata (CONSERVATIVE/AGGRESSIVE/CRAZY). */
+        override val bypassMode: String? = null,
     ) : RawRuleProps, RawGlobalRuleProps
 
     @Serializable
@@ -595,6 +599,8 @@ data class RawSubscription(
 
         override val versionCode: IntegerMatcher?,
         override val versionName: StringMatcher?,
+        /** Bypass Ads strategy metadata (CONSERVATIVE/AGGRESSIVE/CRAZY). */
+        override val bypassMode: String? = null,
     ) : RawRuleProps, RawAppRuleProps
 
     companion object {

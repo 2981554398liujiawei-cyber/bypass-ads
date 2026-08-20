@@ -11,6 +11,7 @@
             {
               "key": 100,
               "name": "Bypass-Test-Close-Aggressive",
+              "bypassMode": "AGGRESSIVE",
               "matches": [
                 "[text=\"关闭\" || text=\"关闭广告\" || desc=\"关闭\" || desc=\"关闭广告\"][visibleToUser=true][clickable=true][width<300 && height<200]"
               ],
@@ -19,6 +20,7 @@
             {
               "key": 101,
               "name": "Bypass-Test-ViewId-Aggressive",
+              "bypassMode": "AGGRESSIVE",
               "matches": [
                 "[vid~=\"(?is).*ad_close.*\"][visibleToUser=true]"
               ],
@@ -27,6 +29,7 @@
             {
               "key": 102,
               "name": "Bypass-Test-X-Aggressive",
+              "bypassMode": "AGGRESSIVE",
               "matches": [
                 "[text=\"×\" || text=\"X\"][visibleToUser=true][clickable=true][width<120 && height<120]"
               ],
@@ -34,17 +37,19 @@
             },
             {
               "key": 103,
-              "name": "Bypass-Test-Structural-Aggressive",
+              "name": "Bypass-Test-Structural-Crazy",
+              "bypassMode": "CRAZY",
               "matches": [
-                "[clickable=true][visibleToUser=true][width<160 && height<160][text=null][desc=null]"
+                "[clickable=true][visibleToUser=true][width<160 && height<160][text=null][desc=null][vid=null]"
               ],
               "action": "clickCenter"
             },
             {
               "key": 104,
               "name": "Bypass-Test-Coordinate-Crazy",
+              "bypassMode": "CRAZY",
               "matches": [
-                "[clickable=false][visibleToUser=true][width<200 && height<100][text=null][desc=null]"
+                "[clickable=false][visibleToUser=true][width<200 && height<100][text=null][desc=null][vid=null]"
               ],
               "action": "clickCenter"
             }
@@ -77,10 +82,16 @@
       "groups": [
         {
           "name": "开屏广告-小程序开屏广告-补强",
+          "activityIds": [
+            "com.alipay.mobile.nebulax.remote.biz.XRiverActivity",
+            "com.alipay.mobile.nebulaapp",
+            "com.alipay.mobile.nebulax"
+          ],
           "rules": [
             {
               "key": 210,
               "name": "Bypass-Alipay-Close-Aggressive",
+              "bypassMode": "AGGRESSIVE",
               "actionDelay": 400,
               "matches": [
                 "[desc=\"关闭\" || desc=\"关闭弹屏\" || desc=\"關閉\" || desc=\"close\"][visibleToUser=true]",
@@ -98,6 +109,10 @@
       "groups": [
         {
           "name": "开屏广告-微信小程序",
+          "activityIds": [
+            ".plugin.appbrand.ui.AppBrandUI",
+            ".plugin.appbrand.launching.AppBrandLaunchProxyUI"
+          ],
           "rules": [
             {
               "key": 200,
@@ -110,6 +125,7 @@
             {
               "key": 201,
               "name": "Bypass-WeChat-Close-Aggressive",
+              "bypassMode": "AGGRESSIVE",
               "actionDelay": 500,
               "matches": [
                 "[desc=\"关闭\" || desc=\"关闭广告\" || desc=\"關閉\" || desc=\"close\" || desc=\"Close\"][visibleToUser=true]",
@@ -119,10 +135,21 @@
             },
             {
               "key": 202,
-              "name": "Bypass-WeChat-X-Crazy",
+              "name": "Bypass-WeChat-X-Aggressive",
+              "bypassMode": "AGGRESSIVE",
               "actionDelay": 300,
               "matches": [
                 "[text=\"X\" || text=\"×\" || text=\"✕\"][visibleToUser=true][width<120 && height<120]"
+              ]
+            },
+            {
+              "key": 203,
+              "name": "Bypass-WeChat-Structural-Crazy",
+              "bypassMode": "CRAZY",
+              "actionDelay": 300,
+              "matches": [
+                "[clickable=true][visibleToUser=true][width<160 && height<160][text=null][desc=null][vid=null]",
+                "[clickable=false][childCount=0][visibleToUser=true][width<160 && height<160][text=null][desc=null][vid=null]"
               ]
             }
           ]

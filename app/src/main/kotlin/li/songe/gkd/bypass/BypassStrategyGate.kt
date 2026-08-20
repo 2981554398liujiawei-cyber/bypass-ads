@@ -1,39 +1,31 @@
 package li.songe.gkd.bypass
 
 import android.view.accessibility.AccessibilityNodeInfo
-import li.songe.gkd.a11y.A11yRuleEngine
 import li.songe.gkd.a11y.topActivityFlow
-import li.songe.gkd.service.A11yService
 import li.songe.gkd.store.storeFlow
 
 /**
  * Runtime gate that turns a matched node into an allowed ad-exit action.
  *
- * The GKD matcher still does the selector work; this layer only decides, per
- * strategy mode and ad context, whether a *generic* candidate is allowed to
- * run. Dedicated mature rules and Bypass-owned precise overrides are not
- * gated here (they were already curated).
+ * The GKD matcher still does the selector work; this layer decides, per
+ * strategy mode, rule trust, and ad context, whether a *generic* candidate
+ * is allowed to run. Curated mature dedicated rules are not gated here.
  */
 object BypassStrategyGate {
 
-    /** A dedicated rule: always allowed, no gate. */
-    fun isDedicatedRuleAllowed(groupName: String?): Boolean = true
+    fun currentStrategyMode(): BypassAdStrategyMode =
+        BypassAdStrategyMode.from(storeFlow.value.bypassAdStrategyMode)
 
-    fun currentStrategyLevel(): Int = storeFlow.value.let {
-        BypassAdStrategyMode.from(it.bypassAdStrategyMode).ordinal
-    }
-
-    /** Whether a marker-carrying Bypass-owned rule may run under the active mode. */
-    fun isRuleAllowedByStrategy(ruleName: String?): Boolean =
-        bypassRequiredStrategyLevel(ruleName) <= currentStrategyLevel()
+    fun currentPolicy(): BypassStrategyPolicy = currentStrategyMode().policy
 
     /**
-     * Decide whether a generic (fallback) candidate may act.
+     * Decide whether a candidate may act.
+     *
      * @param candidate classified exit type
-     * @param packageName current top app
-     * @param activityName current top activity (may be null)
-     * @param nodeWidth/nodeHeight visual size of the candidate
-     * @return null when allowed, otherwise a reject reason label
+     * @param policy active mode policy
+     * @param rulePolicy identity-derived policy of the matched rule
+     * @param contextLevel current ad context (NONE/WEAK/STRONG)
+     * @param inWindow whether the window was freshly entered
      */
     fun rejectReason(
         candidate: BypassExitCandidateType,
@@ -41,69 +33,82 @@ object BypassStrategyGate {
         activityName: String?,
         nodeWidth: Int,
         nodeHeight: Int,
-        startupWindowMs: Long = 15_000L,
-        appHasDedicatedRule: Boolean = false,
-        inWindow: Boolean? = null,
-        policy: BypassStrategyPolicy? = null,
+        policy: BypassStrategyPolicy,
+        rulePolicy: BypassRulePolicy,
+        contextLevel: BypassAdContextLevel,
+        inWindow: Boolean,
     ): String? {
-        // Hard gates that apply to every mode.
+        // High-risk hosts: only curated dedicated rules or Bypass-owned
+        // overrides may act; generic fallback is always off there.
         if (isBypassHighRiskApp(packageName)) {
-            // A high-risk host may still run its own dedicated precise rules,
-            // but never the generic fallback.
-            return if (appHasDedicatedRule) null else BypassRejectReason.SENSITIVE_ACTIVITY
+            val exempt = rulePolicy.trust == BypassRuleTrust.BUNDLED_DEDICATED ||
+                rulePolicy.trust == BypassRuleTrust.BYPASS_OVERRIDE
+            return if (exempt) null else BypassRejectReason.SENSITIVE_ACTIVITY
         }
-        val effectivePolicy = policy ?: storeFlow.value.let {
-            BypassAdStrategyMode.from(it.bypassAdStrategyMode).policy
+
+        // Curated dedicated rules run in every mode without candidate gating.
+        if (rulePolicy.trust == BypassRuleTrust.BUNDLED_DEDICATED) {
+            return null
         }
-        val effectiveWindow = inWindow ?: inStartupWindow(packageName, startupWindowMs)
-        // 广告窗口：启动后 15 秒内才允许通用 fallback
-        if (!effectiveWindow) {
+
+        // The post-entry ad window applies to generic/override candidates.
+        if (!inWindow) {
             return BypassRejectReason.OUTSIDE_WINDOW
         }
-        // 尺寸约束：过大控件不可能是关闭按钮
+
+        // Size constraint: oversized controls are not close buttons.
         if (nodeWidth > 420 || nodeHeight > 260) {
             return BypassRejectReason.TOO_LARGE
         }
-        return when (candidate) {
-            BypassExitCandidateType.SKIP_TEXT -> null
+
+        // Candidate type -> active policy.
+        val allowed = when (candidate) {
+            BypassExitCandidateType.SKIP_TEXT -> true
             BypassExitCandidateType.CLOSE_TEXT,
             BypassExitCandidateType.CLOSE_DESC,
-            -> if (effectivePolicy.allowGenericCloseText) null else BypassRejectReason.STRATEGY_GATE
-            BypassExitCandidateType.CLOSE_VIEW_ID -> if (effectivePolicy.allowCloseViewId) null else BypassRejectReason.STRATEGY_GATE
-            BypassExitCandidateType.CLOSE_ICON,
-            BypassExitCandidateType.STRUCTURAL_CLOSE,
-            -> if (effectivePolicy.allowStructuralCloseIcon) null else BypassRejectReason.STRATEGY_GATE
-            BypassExitCandidateType.COORDINATE_FALLBACK -> if (effectivePolicy.allowCoordinateFallback) null else BypassRejectReason.STRATEGY_GATE
+            -> policy.allowGenericCloseText
+            BypassExitCandidateType.CLOSE_VIEW_ID -> policy.allowCloseViewId
+            BypassExitCandidateType.CLOSE_ICON -> policy.allowGlyphClose
+            BypassExitCandidateType.STRUCTURAL_CLOSE -> policy.allowStructuralNoSemanticClose
+            BypassExitCandidateType.COORDINATE_FALLBACK -> policy.allowCoordinateFallback
         }
+        if (!allowed) {
+            return BypassRejectReason.STRATEGY_GATE
+        }
+
+        // Generic close/glyph/structural/coordinate candidates need a strong
+        // ad context (skip semantics are always explicit).
+        if (candidate != BypassExitCandidateType.SKIP_TEXT &&
+            rulePolicy.requiresStrongAdContext &&
+            contextLevel != BypassAdContextLevel.STRONG
+        ) {
+            return BypassRejectReason.NO_AD_CONTEXT
+        }
+        return null
     }
 
-    /** Whether the current app is inside the post-launch splash window. */
+    /**
+     * Whether the current window is inside the post-launch ad window.
+     *
+     * The window is anchored to actual package / activity entry time (kept by
+     * [BypassAdContextTracker]); a service reconnect never opens a new window.
+     */
     fun inStartupWindow(packageName: String, startupWindowMs: Long = 15_000L): Boolean {
         val topApp = topActivityFlow.value.appId
         if (topApp != packageName) return false
         val now = System.currentTimeMillis()
-        val appChange = li.songe.gkd.a11y.appChangeTime
-        if (appChange > 0 && now - appChange <= startupWindowMs) return true
-        // The engine may have (re)connected while the target app was already
-        // foreground (e.g. adb cold start, service restart). The service
-        // connection timestamp is then the effective splash-window baseline.
-        val connectedAt = A11yService.lastConnectedAt.value
-        return connectedAt > 0 && now - connectedAt <= startupWindowMs
+        val activityTime = BypassAdContextTracker.activityEntryTime(
+            packageName,
+            topActivityFlow.value.activityId,
+        )
+        if (activityTime > 0 && now - activityTime <= startupWindowMs) return true
+        val packageTime = BypassAdContextTracker.packageEntryTime(packageName)
+        return packageTime > 0 && now - packageTime <= startupWindowMs
     }
 
     /** Whether an activity is a known mini-program / webview splash host. */
-    fun isMiniProgramActivity(packageName: String, activityName: String?): Boolean {
-        if (activityName == null) return false
-        return when (packageName) {
-            "com.tencent.mm" -> activityName.contains(".plugin.appbrand.ui.AppBrandUI") ||
-                activityName.contains(".plugin.appbrand.launching.AppBrandLaunchProxyUI") ||
-                activityName.contains("AppBrandUI")
-            "com.eg.android.AlipayGphone" -> activityName.contains("XRiverActivity") ||
-                activityName.contains("NebulaActivity") ||
-                activityName.contains("nebula")
-            else -> false
-        }
-    }
+    fun isMiniProgramActivity(packageName: String, activityName: String?): Boolean =
+        BypassAdContextTracker.isMiniProgramAdActivity(packageName, activityName)
 
     /** Whether a candidate node is visible to user and inside the screen. */
     fun isSaneCandidate(node: AccessibilityNodeInfo): Boolean {
@@ -117,7 +122,5 @@ object BypassStrategyGate {
     }
 
     /** How many exit attempts remain for the current mode. */
-    fun maxExitAttempts(): Int = storeFlow.value.let {
-        BypassAdStrategyMode.from(it.bypassAdStrategyMode).policy.maxExitAttempts
-    }
+    fun maxExitAttempts(): Int = currentPolicy().maxExitAttempts
 }

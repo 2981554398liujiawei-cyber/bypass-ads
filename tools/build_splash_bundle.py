@@ -139,6 +139,27 @@ GENERIC_FALLBACK_GROUP = {
     ],
 }
 
+SAFETY_EXCLUSIONS_PATH = Path(__file__).resolve().parent.parent / "rules" / "safety_exclusions.json"
+ASSETS_SAFETY_EXCLUSIONS = Path(__file__).resolve().parent.parent / "app" / "src" / "main" / "assets" / "bypass_safety_exclusions.json"
+
+
+def load_safety_exclusions() -> dict:
+    """Single source of truth for safety exclusions (rules/safety_exclusions.json)."""
+    if not SAFETY_EXCLUSIONS_PATH.exists():
+        print("WARNING: rules/safety_exclusions.json not found, using built-in list", file=sys.stderr)
+        return {
+            "generator_disabled_apps": [item["id"] for item in GENERIC_FALLBACK_GROUP.get("apps", [])],
+        }
+    return json.loads(SAFETY_EXCLUSIONS_PATH.read_text(encoding="utf-8"))
+
+
+# The runtime veto list and the generator disabled list live in the JSON; the
+# literal above remains as a fallback when the file is missing.
+GENERIC_FALLBACK_GROUP["apps"] = [
+    {"id": app_id, "enable": False}
+    for app_id in load_safety_exclusions().get("generator_disabled_apps", [])
+]
+
 # Source-global rules remain the primary broad matcher. When present, these
 # Bypass-owned rules are appended to that same mature group rather than
 # creating a competing second global group. They cover two interaction shapes
@@ -163,9 +184,10 @@ SOURCE_GLOBAL_REINFORCEMENT_RULES = (
     {
         # Strategy-gated close text / desc / view id. The runtime gate
         # (BypassStrategyGate) decides whether this rule may run: it only
-        # actuates in AGGRESSIVE+ modes. The rule name marker keeps the
-        # merge idempotent across repeated builds.
+        # actuates in AGGRESSIVE+ modes. bypassMode is the structured
+        # security metadata; the name marker is only for log readability.
         "name": "Bypass Ads 策略化关闭补强-Aggressive",
+        "bypassMode": "AGGRESSIVE",
         "excludeMatches": '[text="NEXT" || text="下一步" || text="完成" || text="设置" || text="搜索" || text="历史记录" || text*="阅读并同意" || text*="跳过片头" || text*="跳过片尾" || text*="跳过视频" || text="取消" || text*="退出" || text="帮助"][visibleToUser=true]',
         "anyMatches": [
             '[clickable=true][visibleToUser=true][width<300 && height<200][(text="关闭" || text="关闭广告" || text="关闭此广告" || text="关闭该广告" || text="關閉" || text="關閉廣告" || text="Close" || text="close")]',
@@ -178,11 +200,25 @@ SOURCE_GLOBAL_REINFORCEMENT_RULES = (
         # modes, and only for a small, visible glyph. The runtime gate also
         # enforces the ad-context window.
         "name": "Bypass Ads 策略化 X 补强-Aggressive",
+        "bypassMode": "AGGRESSIVE",
         "action": "clickCenter",
         "excludeMatches": '[text="NEXT" || text="下一步" || text="完成" || text="设置" || text="搜索" || text="历史记录" || text*="阅读并同意" || text*="跳过片头" || text*="跳过片尾" || text*="跳过视频" || text="取消" || text*="退出" || text="帮助"][visibleToUser=true]',
         "anyMatches": [
             '[clickable=true][visibleToUser=true][width<120 && height<120][(text="X" || text="×" || text="✕")]',
             '[clickable=false][childCount=0][visibleToUser=true][width<120 && height<120][(text="X" || text="×" || text="✕")]'
+        ],
+    },
+    {
+        # CRAZY-only structural close: a small text-less ImageView/View
+        # inside a strong ad context. This is what makes CRAZY different
+        # from AGGRESSIVE in candidate discovery.
+        "name": "Bypass Ads 策略化结构关闭补强-Crazy",
+        "bypassMode": "CRAZY",
+        "action": "clickCenter",
+        "excludeMatches": '[text="NEXT" || text="下一步" || text="完成" || text="设置" || text="搜索" || text="历史记录" || text*="阅读并同意" || text*="跳过片头" || text*="跳过片尾" || text*="跳过视频" || text="取消" || text*="退出" || text="帮助"][visibleToUser=true]',
+        "anyMatches": [
+            '[clickable=true][visibleToUser=true][width<160 && height<160][text=null][desc=null][vid=null]',
+            '[clickable=false][childCount=0][visibleToUser=true][width<160 && height<160][text=null][desc=null][vid=null]'
         ],
     },
 )
@@ -701,6 +737,12 @@ def main() -> int:
     errors = validate_bundle(bundle) + validate_category_map(bundle, category_map)
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text(json.dumps(bundle, ensure_ascii=False, indent=2), encoding="utf-8")
+    # Ship the single-source safety exclusions to the app assets so the
+    # Kotlin runtime veto list and the generator list never drift.
+    if SAFETY_EXCLUSIONS_PATH.exists():
+        ASSETS_SAFETY_EXCLUSIONS.parent.mkdir(parents=True, exist_ok=True)
+        import shutil as _shutil
+        _shutil.copyfile(SAFETY_EXCLUSIONS_PATH, ASSETS_SAFETY_EXCLUSIONS)
     report_path = Path(args.conflict_report)
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")

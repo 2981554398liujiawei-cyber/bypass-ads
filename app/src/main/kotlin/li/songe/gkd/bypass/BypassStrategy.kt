@@ -6,11 +6,10 @@ import android.view.accessibility.AccessibilityNodeInfo
 /**
  * Three-tier splash exit strategy.
  *
- * The product keeps one rule stack (mature source + Bypass-owned override) and
- * a runtime [BypassStrategyPolicy]; the mode only decides which candidates,
- * which fallbacks, which actions, and how many exit attempts are allowed. It
- * never edits a third-party rule file and never changes rule-source
- * precedence.
+ * The mode decides which candidates, which fallbacks, which actions, and how
+ * many exit attempts are allowed. AGGRESSIVE and CRAZY must differ in
+ * candidate discovery: only CRAZY may run structural no-semantic close and
+ * coordinate fallback, and only inside STRONG ad context.
  */
 enum class BypassAdStrategyMode {
     CONSERVATIVE,
@@ -26,9 +25,9 @@ enum class BypassAdStrategyMode {
 
     val description: String
         get() = when (this) {
-            CONSERVATIVE -> "只操作高置信度广告退出控件。误触风险最低，但可能漏过部分“关闭/X”广告。"
-            AGGRESSIVE -> "同时识别“跳过、关闭”和部分 X 控件，并允许有限重试。成功率更高，存在少量误触风险。"
-            CRAZY -> "确认广告上下文后，积极尝试可用退出方式，包括 X、结构控件和受限坐标规则。成功率优先，误触风险最高。"
+            CONSERVATIVE -> "只运行成熟专用规则与明确的“跳过”语义控件。误触风险最低，可能漏过关闭/X 类广告。"
+            AGGRESSIVE -> "确认广告上下文后，识别“跳过、关闭、Close、ad_close、×”等控件并允许有限重试。仍不操作无语义结构控件。"
+            CRAZY -> "确认广告上下文后，进一步尝试结构型关闭控件与受限坐标规则。成功率优先，误触风险最高。"
         }
 
     val policy: BypassStrategyPolicy
@@ -36,21 +35,24 @@ enum class BypassAdStrategyMode {
             CONSERVATIVE -> BypassStrategyPolicy(
                 allowGenericCloseText = false,
                 allowCloseViewId = false,
-                allowStructuralCloseIcon = false,
+                allowGlyphClose = false,
+                allowStructuralNoSemanticClose = false,
                 allowCoordinateFallback = false,
                 maxExitAttempts = 1,
             )
             AGGRESSIVE -> BypassStrategyPolicy(
                 allowGenericCloseText = true,
                 allowCloseViewId = true,
-                allowStructuralCloseIcon = true,
+                allowGlyphClose = true,
+                allowStructuralNoSemanticClose = false,
                 allowCoordinateFallback = false,
                 maxExitAttempts = 2,
             )
             CRAZY -> BypassStrategyPolicy(
                 allowGenericCloseText = true,
                 allowCloseViewId = true,
-                allowStructuralCloseIcon = true,
+                allowGlyphClose = true,
+                allowStructuralNoSemanticClose = true,
                 allowCoordinateFallback = true,
                 maxExitAttempts = 3,
             )
@@ -65,7 +67,10 @@ enum class BypassAdStrategyMode {
 data class BypassStrategyPolicy(
     val allowGenericCloseText: Boolean,
     val allowCloseViewId: Boolean,
-    val allowStructuralCloseIcon: Boolean,
+    /** Explicit X / × / ✕ glyph with close semantics. */
+    val allowGlyphClose: Boolean,
+    /** Small text-less structural ImageView/View close candidates. */
+    val allowStructuralNoSemanticClose: Boolean,
     val allowCoordinateFallback: Boolean,
     val maxExitAttempts: Int,
 )
@@ -76,7 +81,9 @@ enum class BypassExitCandidateType {
     CLOSE_TEXT,
     CLOSE_DESC,
     CLOSE_VIEW_ID,
+    /** Explicit X / × / ✕ glyph. */
     CLOSE_ICON,
+    /** Small text-less structural ImageView/View (no semantics). */
     STRUCTURAL_CLOSE,
     COORDINATE_FALLBACK,
 }
@@ -90,6 +97,8 @@ object BypassRejectReason {
     const val NEGATIVE_SEMANTIC = "NEGATIVE_SEMANTIC"
     const val SENSITIVE_SEMANTIC = "SENSITIVE_SEMANTIC"
     const val STRATEGY_GATE = "STRATEGY_GATE"
+    const val RULE_LEVEL = "RULE_LEVEL"
+    const val BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED"
 }
 
 /** Pure text/attribute classifier used by tests and by the engine. */
@@ -102,6 +111,19 @@ object BypassExitClassifier {
     private val closeDescTokens = listOf("关闭", "关闭广告", "關閉", "close")
     private val negativeTokens = listOf("next", "下一步", "完成", "设置", "搜索", "历史记录", "阅读并同意", "跳过片头", "跳过片尾", "跳过视频", "取消", "退出", "帮助")
     private val sensitiveTokens = listOf("支付", "付款", "确认支付", "提交订单", "转账", "验证码", "授权登录", "允许", "安装", "卸载", "同意", "银行卡", "身份认证", "password", "otp", "card", "bank")
+    private val adLabelTokens = listOf("广告", "推广", "ad", "ads", "sponsored")
+
+    /**
+     * Normalize any text for semantic matching: trim + lowercase. All
+     * negative/sensitive/close/skip checks run against the normalized value.
+     */
+    fun normalize(value: String?): String = value?.trim()?.lowercase().orEmpty()
+
+    /** Whether the node carries an explicit ad label (ad context evidence). */
+    fun hasAdLabel(text: String?, description: String?, viewId: String?): Boolean {
+        val haystack = listOfNotNull(text, description, viewId).joinToString(" ").lowercase()
+        return adLabelTokens.any { haystack.contains(it) }
+    }
 
     fun classify(
         text: String?,
@@ -112,51 +134,46 @@ object BypassExitClassifier {
         width: Int,
         height: Int,
     ): BypassExitCandidateType? {
-        val t = text?.trim().orEmpty().lowercase()
-        val d = description?.trim().orEmpty().lowercase()
-        val vid = viewId?.lowercase().orEmpty()
-        val cn = className?.lowercase().orEmpty()
+        val t = normalize(text)
+        val d = normalize(description)
+        val vid = normalize(viewId)
+        val cn = className?.trim()?.lowercase().orEmpty()
 
         // Negative semantics are hard gates regardless of strategy.
-        val tRaw = text?.trim().orEmpty()
-        val dRaw = description?.trim().orEmpty()
-        if (negativeTokens.any { tRaw.contains(it) || dRaw.contains(it) }) return null
-        if (sensitiveTokens.any { tRaw.contains(it) || dRaw.contains(it) }) return null
+        if (negativeTokens.any { t.contains(it) || d.contains(it) }) return null
+        if (sensitiveTokens.any { t.contains(it) || d.contains(it) }) return null
 
         // Skip wins: mature conservative path.
-        if (skipTextTokens.any { tRaw.contains(it) } || t.contains("skip")) {
+        if (skipTextTokens.any { t.contains(it) } || t.contains("skip")) {
             return BypassExitCandidateType.SKIP_TEXT
         }
-        if (skipDescTokens.any { dRaw.contains(it) }) {
+        if (skipDescTokens.any { d.contains(it) }) {
             return BypassExitCandidateType.SKIP_TEXT
         }
 
         // Explicit close semantics by view id: ad_close / splash_close / close_btn...
         if (vid.isNotBlank() && (vid.contains("ad_close") || vid.contains("splash_close") ||
                 vid.contains("close_ad") || vid.contains("close_btn") || vid.contains("close_button") ||
-                vid.contains("close_icon") || vid.contains("close_icon") || vid.contains("iv_close") ||
+                vid.contains("close_icon") || vid.contains("iv_close") ||
                 vid.contains("img_close") || vid.contains("closeview"))
         ) {
             return BypassExitCandidateType.CLOSE_VIEW_ID
         }
 
-        // Explicit close text. Match against both the raw and the
-        // lower-cased value so "Close" and "关闭广告" both resolve.
-        if (closeTextTokens.any { tRaw.contains(it) || t.contains(it) } ||
-            closeTextTokens.any { dRaw.contains(it) || d.contains(it) }
-        ) {
+        // Explicit close text (normalized, so "Close"/"CLOSE"/"close" all hit).
+        if (closeTextTokens.any { t.contains(it) } || closeTextTokens.any { d.contains(it) }) {
             return if (t.isNotBlank()) BypassExitCandidateType.CLOSE_TEXT else BypassExitCandidateType.CLOSE_DESC
         }
 
         // X / × glyphs.
-        if (tRaw == "x" || tRaw == "×" || tRaw == "✕" || tRaw == "✖" || tRaw == "X") {
+        if (t == "x" || t == "×" || t == "✕" || t == "✖") {
             return BypassExitCandidateType.CLOSE_ICON
         }
-        if (dRaw == "关闭" || dRaw == "close" || dRaw == "x" || dRaw == "×") {
+        if (d == "关闭" || d == "close" || d == "x" || d == "×") {
             return BypassExitCandidateType.CLOSE_DESC
         }
 
-        // Small image/view without text inside an ad context.
+        // Small image/view without text inside an ad context: structural.
         if (cn.contains("imageview") || cn.contains("image") || cn == "android.view.view") {
             if (width in 1..160 && height in 1..160) {
                 return BypassExitCandidateType.STRUCTURAL_CLOSE
@@ -183,51 +200,18 @@ object BypassExitClassifier {
     }
 }
 
-/** Host apps that keep generic close/X fallback excluded. */
-val bypassHighRiskApps = setOf(
-    "com.eg.android.AlipayGphone", // Alipay pages can contain real payment controls
-    "com.tencent.mm", // WeChat host: handled by dedicated miniprogram rules only
-    "com.android.settings",
-    "com.android.permissioncontroller",
-    "com.android.packageinstaller",
-    "com.android.systemui",
-    "com.miui.securitycenter",
-    "com.miui.securitycore",
-    "com.miui.packageinstaller",
-    "com.google.android.permissioncontroller",
-    // Password managers / authenticators
-    "com.lastpass.lpandroid",
-    "com.dashlane",
-    "com.oneplus.bpkb",
-    "com.authenticator.auth",
-    // Banks and securities
-    "com.chinamworld.main", // 工商银行
-    "com.android.bankabc", // 农业银行
-    "com.ccb.life", // 建设银行
-    "com.unionpay", // 云闪付
-    "com.pingan.pinganwifi",
-    "com.eg.android.bankpay",
-)
-
-/** Whether a package should keep the generic strategy fallback off. */
+/**
+ * Host apps that keep generic close/X fallback excluded.
+ *
+ * Single source: rules/safety_exclusions.json (asset copy
+ * bypass_safety_exclusions.json) — see [BypassSafetyConfig]. The built-in
+ * fallback list lives there; nothing else defines it.
+ */
 fun isBypassHighRiskApp(packageName: String?): Boolean =
-    packageName != null && bypassHighRiskApps.contains(packageName)
+    BypassSafetyConfig.isHighRisk(packageName)
 
 /** Negative fallback tokens shared by the engine and tests. */
 val bypassNegativeFallbackTokens = listOf(
     "next", "下一步", "完成", "设置", "搜索", "历史记录", "阅读并同意",
     "跳过片头", "跳过片尾", "跳过视频", "取消", "退出", "帮助",
 )
-
-/**
- * Bypass-owned rules can declare the minimum strategy level that may run
- * them via a rule name suffix. Examples:
- *   "Bypass-WeChat-Close-Aggressive" -> needs AGGRESSIVE
- *   "Bypass-X-Crazy"                  -> needs CRAZY
- * Rules without a marker run in every mode (e.g. curated skip rules).
- */
-fun bypassRequiredStrategyLevel(ruleName: String?): Int = when {
-    ruleName.orEmpty().contains("Crazy", ignoreCase = true) -> 2
-    ruleName.orEmpty().contains("Aggressive", ignoreCase = true) -> 1
-    else -> 0
-}

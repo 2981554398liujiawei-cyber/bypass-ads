@@ -41,6 +41,7 @@ import li.songe.gkd.util.launchTry
 import li.songe.gkd.util.mapState
 import li.songe.gkd.util.subsMapFlow
 import li.songe.gkd.util.updateSubscription
+import li.songe.gkd.util.updateSubscriptionNow
 import java.security.MessageDigest
 
 /**
@@ -69,12 +70,14 @@ object GkdBypassEngine : BypassEngine {
         // an invented rule-import time.
         appScope.launchTry(Dispatchers.IO) {
             val bundle = subsMapFlow.map { it[BYPASS_SPLASH_SUBS_ID] }.filterNotNull().first()
-            val localOverrides = BypassTeachRules.read()
-            val effective = BypassTeachRules.merge(bundle, localOverrides)
-            if (localOverrides.apps.isNotEmpty()) {
+            val localImport = BypassRuleStackManager.readLocalImport()
+            val effective = BypassTeachRules.apply(
+                BypassRuleStackManager.mergeBundledAndLocal(bundle, localImport),
+            )
+            if (localImport != null || BypassTeachRules.read().apps.isNotEmpty()) {
                 updateSubscription(effective)
             }
-            if (metadataFlow.value.bundleVersion == null || localOverrides.apps.isNotEmpty()) {
+            if (metadataFlow.value.bundleVersion == null || localImport != null) {
                 saveMetadata(metadataFor(effective, BypassRuleSourceType.BUNDLED, null, app.packageManager
                     .getPackageInfo(app.packageName, 0).lastUpdateTime))
             }
@@ -210,13 +213,48 @@ object GkdBypassEngine : BypassEngine {
             .stateIn(appScope, SharingStarted.Eagerly, null)
 
     override val skipCount: StateFlow<Int> =
-        DbSet.actionLogDao.query().map { actions -> actions.count { it.subsId == BYPASS_SPLASH_SUBS_ID } }
+        DbSet.bypassDetectionSessionDao.countSuccessAll()
             .stateIn(appScope, SharingStarted.Eagerly, 0)
+
+    override val sessionRecords: StateFlow<List<BypassSessionRecord>> =
+        DbSet.bypassDetectionSessionDao.queryAll().map { sessions ->
+            sessions.map { it.toSessionRecord() }
+        }.stateIn(appScope, SharingStarted.Eagerly, emptyList())
 
     override val failureRecords: StateFlow<List<BypassFailureRecord>> =
         DbSet.bypassDetectionSessionDao.queryFailures().map { sessions ->
-            sessions.map { it.toFailureRecord() }
+            sessions.map { it.toSessionRecord() }.map { r ->
+                BypassFailureRecord(
+                    id = r.id,
+                    time = r.time,
+                    packageName = r.packageName,
+                    activityName = r.activityName,
+                    reason = r.reason,
+                    detail = buildString {
+                        append(r.strategyMode.label).append(" · ")
+                        append(r.label)
+                        if (r.actionAttempts > 0) append(" · ").append(r.actionAttempts).append(" 次动作")
+                        r.candidateType?.let { append(" · ").append(it.name) }
+                    },
+                    candidates = r.candidates,
+                )
+            }
         }.stateIn(appScope, SharingStarted.Eagerly, emptyList())
+
+    override val productStats: StateFlow<BypassStats> =
+        combine(
+            DbSet.bypassDetectionSessionDao.countSuccessSince(startOfDay()),
+            DbSet.bypassDetectionSessionDao.countSuccessSince(startOfWeek()),
+            DbSet.bypassDetectionSessionDao.countSuccessAll(),
+            DbSet.bypassDetectionSessionDao.avgConfirmedLatency(),
+        ) { today, week, total, avg ->
+            BypassStats(
+                todaySkips = today,
+                weekSkips = week,
+                totalSkips = total,
+                averageResponseMs = avg,
+            )
+        }.stateIn(appScope, SharingStarted.Eagerly, BypassStats())
 
     override val averageResponseMs: StateFlow<Int?> = BypassPerfTrace.averageActionLatencyMs
 
@@ -360,11 +398,18 @@ object GkdBypassEngine : BypassEngine {
             globalGroups = sourceGlobals.ifEmpty { current?.globalGroups ?: emptyList() },
             categories = parsed.categories.filter { it.name in advertisingCategoryNames },
         )
-        val effective = BypassTeachRules.apply(imported)
-        updateSubscription(effective)
+        // Layered stack: persist the local layer, merge over bundled (never
+        // deleting unrelated bundled coverage), then teach on top.
+        BypassRuleStackManager.saveLocalImport(imported)
+        val bundle = subsMapFlow.value[BYPASS_SPLASH_SUBS_ID] ?: imported
+        val effective = BypassTeachRules.apply(
+            BypassRuleStackManager.mergeBundledAndLocal(bundle, imported),
+        )
+        // Atomic apply: success is only returned after the engine holds it.
+        updateSubscriptionNow(effective)
         saveMetadata(metadataFor(effective, BypassRuleSourceType.LOCAL_IMPORT, sourceFileName))
         ensureCategoryDefaults(effective)
-        return BypassImportResult(true, "已导入 ${advertisingApps.size} 个应用的广告规则")
+        return BypassImportResult(true, "已导入 ${advertisingApps.size} 个应用的广告规则（与内置规则合并）")
     }
 
     override suspend fun restoreBundledRules(): BypassImportResult {
@@ -377,16 +422,42 @@ object GkdBypassEngine : BypassEngine {
             return BypassImportResult(false, "内置规则包无效")
         }
         val bundled = restored.copy(id = BYPASS_SPLASH_SUBS_ID)
+        // 恢复内置: remove the local import layer; Teach rules are kept
+        // (they can be deleted separately in the Teach screen).
+        BypassRuleStackManager.clearLocalImport()
         val effective = BypassTeachRules.apply(bundled)
-        updateSubscription(effective)
+        updateSubscriptionNow(effective)
         ensureCategoryDefaults(effective)
         saveMetadata(metadataFor(effective, BypassRuleSourceType.BUNDLED, null))
-        return BypassImportResult(true, "已恢复内置开屏规则")
+        return BypassImportResult(true, "已恢复内置开屏规则（教学规则保留）")
     }
 
     override suspend fun clearRecentActions() {
+        // Clear everything the product shows: session records, stats, the
+        // corresponding raw Bypass action log, and the debug trace. After
+        // this the Records screen is truly empty.
+        DbSet.bypassDetectionSessionDao.deleteAll()
         DbSet.actionLogDao.deleteBySubsId(BYPASS_SPLASH_SUBS_ID)
         BypassDiagnostics.clear()
+    }
+
+    private fun startOfDay(): Long {
+        val cal = java.util.Calendar.getInstance()
+        cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+        cal.set(java.util.Calendar.MINUTE, 0)
+        cal.set(java.util.Calendar.SECOND, 0)
+        cal.set(java.util.Calendar.MILLISECOND, 0)
+        return cal.timeInMillis
+    }
+
+    private fun startOfWeek(): Long {
+        val cal = java.util.Calendar.getInstance()
+        cal.set(java.util.Calendar.DAY_OF_WEEK, cal.firstDayOfWeek)
+        cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+        cal.set(java.util.Calendar.MINUTE, 0)
+        cal.set(java.util.Calendar.SECOND, 0)
+        cal.set(java.util.Calendar.MILLISECOND, 0)
+        return cal.timeInMillis
     }
 
     override val protectedApps: StateFlow<List<BypassAppInfo>> = protectedAppsCache

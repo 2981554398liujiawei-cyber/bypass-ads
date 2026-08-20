@@ -7,16 +7,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Unit tests for the three-tier strategy engine.
+ * Unit tests for the three-tier strategy engine (V2).
  *
  * Only pure Kotlin logic is covered here (classifier, policy mapping,
- * strategy-level marker parsing). Android node plumbing is covered by the
- * instrumented matrix on device.
+ * normalization). Android node plumbing is covered by the instrumented
+ * matrix on device.
  */
 class BypassStrategyTest {
 
     // ------------------------------------------------------------------
-    // Policy mapping (task 54-55)
+    // Policy mapping V2: AGGRESSIVE and CRAZY must differ in discovery
     // ------------------------------------------------------------------
 
     @Test
@@ -24,27 +24,31 @@ class BypassStrategyTest {
         val p = BypassAdStrategyMode.CONSERVATIVE.policy
         assertFalse(p.allowGenericCloseText)
         assertFalse(p.allowCloseViewId)
-        assertFalse(p.allowStructuralCloseIcon)
+        assertFalse(p.allowGlyphClose)
+        assertFalse(p.allowStructuralNoSemanticClose)
         assertFalse(p.allowCoordinateFallback)
         assertEquals(1, p.maxExitAttempts)
     }
 
     @Test
-    fun aggressive_policy_allows_close_but_not_coordinate() {
+    fun aggressive_policy_allows_close_and_glyph_but_not_structural_or_coordinate() {
         val p = BypassAdStrategyMode.AGGRESSIVE.policy
         assertTrue(p.allowGenericCloseText)
         assertTrue(p.allowCloseViewId)
-        assertTrue(p.allowStructuralCloseIcon)
+        assertTrue(p.allowGlyphClose)
+        // The split that makes CRAZY different from AGGRESSIVE:
+        assertFalse(p.allowStructuralNoSemanticClose)
         assertFalse(p.allowCoordinateFallback)
         assertEquals(2, p.maxExitAttempts)
     }
 
     @Test
-    fun crazy_policy_allows_everything_with_bounded_attempts() {
+    fun crazy_policy_is_the_only_mode_with_structural_and_coordinate() {
         val p = BypassAdStrategyMode.CRAZY.policy
         assertTrue(p.allowGenericCloseText)
         assertTrue(p.allowCloseViewId)
-        assertTrue(p.allowStructuralCloseIcon)
+        assertTrue(p.allowGlyphClose)
+        assertTrue(p.allowStructuralNoSemanticClose)
         assertTrue(p.allowCoordinateFallback)
         assertEquals(3, p.maxExitAttempts)
     }
@@ -66,7 +70,49 @@ class BypassStrategyTest {
     }
 
     // ------------------------------------------------------------------
-    // Candidate classifier (task 115-118)
+    // Normalization: trim + lowercase before every semantic check
+    // ------------------------------------------------------------------
+
+    @Test
+    fun normalize_trims_and_lowercases() {
+        assertEquals("close", BypassExitClassifier.normalize("  Close  "))
+        assertEquals("next", BypassExitClassifier.normalize("Next"))
+        assertEquals("", BypassExitClassifier.normalize(null))
+    }
+
+    @Test
+    fun case_insensitive_negative_semantics() {
+        assertNull(BypassExitClassifier.classify("NEXT", null, null, "android.widget.TextView", true, 100, 50))
+        assertNull(BypassExitClassifier.classify("Next", null, null, "android.widget.TextView", true, 100, 50))
+        assertNull(BypassExitClassifier.classify("next", null, null, "android.widget.TextView", true, 100, 50))
+    }
+
+    @Test
+    fun case_insensitive_sensitive_semantics() {
+        assertNull(BypassExitClassifier.classify("PAYMENT", null, null, "android.widget.TextView", true, 300, 80))
+        assertNull(BypassExitClassifier.classify("Payment", null, null, "android.widget.TextView", true, 300, 80))
+        assertNull(BypassExitClassifier.classify("Password", null, null, "android.widget.TextView", true, 200, 60))
+        assertNull(BypassExitClassifier.classify("pASSWORD", null, null, "android.widget.TextView", true, 200, 60))
+    }
+
+    @Test
+    fun case_insensitive_close_semantics() {
+        assertEquals(
+            BypassExitCandidateType.CLOSE_TEXT,
+            BypassExitClassifier.classify("CLOSE", null, null, "android.widget.TextView", true, 80, 40),
+        )
+        assertEquals(
+            BypassExitCandidateType.CLOSE_TEXT,
+            BypassExitClassifier.classify("Close", null, null, "android.widget.TextView", true, 80, 40),
+        )
+        assertEquals(
+            BypassExitCandidateType.CLOSE_TEXT,
+            BypassExitClassifier.classify("close", null, null, "android.widget.TextView", true, 80, 40),
+        )
+    }
+
+    // ------------------------------------------------------------------
+    // Candidate classifier
     // ------------------------------------------------------------------
 
     @Test
@@ -94,10 +140,6 @@ class BypassStrategyTest {
         assertEquals(
             BypassExitCandidateType.CLOSE_TEXT,
             BypassExitClassifier.classify("关闭广告", null, null, "android.widget.TextView", true, 120, 60),
-        )
-        assertEquals(
-            BypassExitCandidateType.CLOSE_TEXT,
-            BypassExitClassifier.classify("Close", null, null, "android.widget.TextView", true, 80, 40),
         )
     }
 
@@ -135,6 +177,10 @@ class BypassStrategyTest {
             BypassExitCandidateType.CLOSE_ICON,
             BypassExitClassifier.classify("×", null, null, "android.widget.TextView", true, 40, 40),
         )
+        assertEquals(
+            BypassExitCandidateType.CLOSE_ICON,
+            BypassExitClassifier.classify("x", null, null, "android.widget.TextView", true, 40, 40),
+        )
     }
 
     @Test
@@ -145,8 +191,16 @@ class BypassStrategyTest {
         )
     }
 
+    @Test
+    fun ad_label_evidence_is_detected() {
+        assertTrue(BypassExitClassifier.hasAdLabel("广告", null, null))
+        assertTrue(BypassExitClassifier.hasAdLabel(null, "ad", null))
+        assertTrue(BypassExitClassifier.hasAdLabel(null, null, "com.example:id/ad_container"))
+        assertFalse(BypassExitClassifier.hasAdLabel("关闭", null, null))
+    }
+
     // ------------------------------------------------------------------
-    // Negative semantics are hard gates (task 62, 118)
+    // Negative semantics are hard gates
     // ------------------------------------------------------------------
 
     @Test
@@ -154,6 +208,7 @@ class BypassStrategyTest {
         assertNull(BypassExitClassifier.classify("NEXT", null, null, "android.widget.TextView", true, 100, 50))
         assertNull(BypassExitClassifier.classify("跳过片头", null, null, "android.widget.TextView", true, 200, 60))
         assertNull(BypassExitClassifier.classify("跳过片尾", null, null, "android.widget.TextView", true, 200, 60))
+        assertNull(BypassExitClassifier.classify("跳过视频", null, null, "android.widget.TextView", true, 200, 60))
         assertNull(BypassExitClassifier.classify("取消", null, null, "android.widget.TextView", true, 80, 40))
         assertNull(BypassExitClassifier.classify("下一步", null, null, "android.widget.TextView", true, 100, 50))
     }
@@ -164,10 +219,15 @@ class BypassStrategyTest {
         assertNull(BypassExitClassifier.classify("允许", null, null, "android.widget.TextView", true, 100, 50))
         assertNull(BypassExitClassifier.classify("提交订单", null, null, "android.widget.TextView", true, 200, 60))
         assertNull(BypassExitClassifier.classify(null, "授权登录", null, "android.widget.TextView", true, 100, 50))
+        assertNull(BypassExitClassifier.classify("转账", null, null, "android.widget.TextView", true, 200, 60))
+        assertNull(BypassExitClassifier.classify("安装", null, null, "android.widget.TextView", true, 200, 60))
+        assertNull(BypassExitClassifier.classify("卸载", null, null, "android.widget.TextView", true, 200, 60))
+        assertNull(BypassExitClassifier.classify("银行卡", null, null, "android.widget.TextView", true, 300, 80))
+        assertNull(BypassExitClassifier.classify("身份认证", null, null, "android.widget.TextView", true, 300, 80))
     }
 
     // ------------------------------------------------------------------
-    // High-risk app exclusion (task 11)
+    // High-risk app exclusion
     // ------------------------------------------------------------------
 
     @Test
@@ -177,13 +237,5 @@ class BypassStrategyTest {
         assertTrue(isBypassHighRiskApp("com.tencent.mm"))
         assertTrue(isBypassHighRiskApp("com.unionpay"))
         assertFalse(isBypassHighRiskApp("com.example.normal.app"))
-    }
-
-    @Test
-    fun strategy_level_markers_parse_correctly() {
-        assertEquals(0, bypassRequiredStrategyLevel("Bypass-WeChat-Skip"))
-        assertEquals(1, bypassRequiredStrategyLevel("Bypass-WeChat-Close-Aggressive"))
-        assertEquals(2, bypassRequiredStrategyLevel("Bypass-X-Crazy"))
-        assertEquals(0, bypassRequiredStrategyLevel(null))
     }
 }

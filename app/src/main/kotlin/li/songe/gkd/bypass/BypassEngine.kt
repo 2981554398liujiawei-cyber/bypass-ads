@@ -46,8 +46,14 @@ interface BypassEngine {
     /** Number of successful actions kept in the Bypass Ads local history. */
     val skipCount: StateFlow<Int>
 
-    /** Recent product-facing failure records, distinct from raw debug logs. */
+    /** Product records: every finalized ad session (success + failure). */
+    val sessionRecords: StateFlow<List<BypassSessionRecord>>
+
+    /** Recent product-facing failure records (subset of [sessionRecords]). */
     val failureRecords: StateFlow<List<BypassFailureRecord>>
+
+    /** Product stats computed from SUCCESS_CONFIRMED sessions only. */
+    val productStats: StateFlow<BypassStats>
 
     /** Current-process average matcher-to-action response time. */
     val averageResponseMs: StateFlow<Int?>
@@ -276,9 +282,49 @@ data class BypassFailureRecord(
             FailureReason.ACTION_TOO_EARLY -> "页面仍在加载，规则正在等待。"
             FailureReason.ACCESSIBILITY_NODE_MISSING -> "当前无法读取无障碍节点。"
             FailureReason.EVENT_MISSED -> "可能错过了页面变化事件。"
+            FailureReason.MISCLICK_SUSPECTED -> "动作把界面带到了外部页面，已立即停止。"
             FailureReason.UNKNOWN -> "暂时无法确定原因。"
         }
 }
+
+/**
+ * One product record per ad session. All Records rows come from here; the
+ * raw ActionLog is never mixed into the product timeline.
+ */
+data class BypassSessionRecord(
+    val id: String,
+    val time: Long,
+    val packageName: String,
+    val activityName: String?,
+    /** Strategy in effect when the session started (historical). */
+    val strategyMode: BypassAdStrategyMode,
+    val result: BypassSessionResult,
+    val actionAttempts: Int,
+    val confirmedLatencyMs: Long,
+    val candidateType: BypassExitCandidateType?,
+    val reason: FailureReason,
+    val actions: List<String> = emptyList(),
+    val candidates: List<BypassCandidateSnapshot> = emptyList(),
+    val ruleOrigin: String? = null,
+) {
+    val isSuccess: Boolean get() = result == BypassSessionResult.SUCCESS_CONFIRMED
+    val label: String
+        get() = when (result) {
+            BypassSessionResult.OPEN -> "处理中"
+            BypassSessionResult.SUCCESS_CONFIRMED -> "已跳过"
+            BypassSessionResult.FAILURE_CONFIRMED -> "未跳过"
+            BypassSessionResult.UNRESOLVED -> "无法确认"
+            BypassSessionResult.MISCLICK_SUSPECTED -> "疑似误触"
+        }
+}
+
+/** Product stats, all derived from SUCCESS_CONFIRMED sessions. */
+data class BypassStats(
+    val todaySkips: Int = 0,
+    val weekSkips: Int = 0,
+    val totalSkips: Int = 0,
+    val averageResponseMs: Long? = null,
+)
 
 data class BypassAppInfo(
     val packageName: String,
