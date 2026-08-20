@@ -18,7 +18,9 @@ class BypassStrategyMatrixTest {
 
     private fun policyFor(ordinal: Int) = BypassAdStrategyMode.from(ordinal).policy
 
-    /** Generic fallback gate with STRONG context (post-entry window). */
+    /** Generic fallback gate with STRONG context (post-entry window). The
+     * candidate is passed through unchanged — a null candidate is a HARD
+     * denial (P0-1: nothing is ever faked as SKIP_TEXT). */
     private fun gate(
         candidate: BypassExitCandidateType?,
         p: BypassStrategyPolicy,
@@ -27,8 +29,8 @@ class BypassStrategyMatrixTest {
         context: BypassAdContextLevel = BypassAdContextLevel.STRONG,
         trust: BypassRuleTrust = BypassRuleTrust.BUNDLED_GLOBAL,
         inWindow: Boolean = true,
-    ): String? = BypassStrategyGate.rejectReason(
-        candidate = candidate ?: BypassExitCandidateType.SKIP_TEXT,
+    ): String? = BypassStrategyGate.evaluateExecution(
+        candidate = candidate,
         packageName = "com.example.app",
         activityName = "com.example.MainActivity",
         nodeWidth = w,
@@ -48,7 +50,7 @@ class BypassStrategyMatrixTest {
     @Test
     fun conservative_only_allows_skip() {
         val p = policyFor(0)
-        assertNull("skip should be allowed", gate(null, p, 80, 40))
+        assertNull("skip should be allowed", gate(BypassExitCandidateType.SKIP_TEXT, p, 80, 40))
         assertNotNull("close text rejected in conservative", gateCloseText(p))
         assertNotNull("close view id rejected in conservative", gateCloseViewId(p))
         assertNotNull("glyph X rejected in conservative", gateCloseIcon(p))
@@ -104,7 +106,7 @@ class BypassStrategyMatrixTest {
     fun oversized_candidate_rejected_in_every_mode() {
         for (ordinal in 0..2) {
             val p = policyFor(ordinal)
-            assertEquals(BypassRejectReason.TOO_LARGE, gate(null, p, 520, 320))
+            assertEquals(BypassRejectReason.TOO_LARGE, gate(BypassExitCandidateType.SKIP_TEXT, p, 520, 320))
         }
     }
 
@@ -244,7 +246,7 @@ class BypassStrategyMatrixTest {
     }
 
     private fun wechatOverrideGate(inWindow: Boolean, context: BypassAdContextLevel): String? =
-        BypassStrategyGate.rejectReason(
+        BypassStrategyGate.evaluateExecution(
             candidate = BypassExitCandidateType.CLOSE_TEXT,
             packageName = "com.tencent.mm",
             activityName = "com.tencent.mm.plugin.appbrand.ui.AppBrandUI",
@@ -261,6 +263,254 @@ class BypassStrategyMatrixTest {
             contextLevel = context,
             inWindow = inWindow,
         )
+
+    // ---- P0-1 production-path gate: the engine and these tests call the
+    // ---- exact same BypassStrategyGate.evaluateExecution ----
+
+    /** The engine's gate with a fully specified request (production path). */
+    private fun prodGate(
+        candidate: BypassExitCandidateType?,
+        packageName: String,
+        trust: BypassRuleTrust,
+        mode: BypassAdStrategyMode = BypassAdStrategyMode.AGGRESSIVE,
+        requiresStrongAdContext: Boolean = true,
+        context: BypassAdContextLevel = BypassAdContextLevel.STRONG,
+        inWindow: Boolean = true,
+        w: Int = 80,
+        h: Int = 40,
+    ): String? = BypassStrategyGate.evaluateExecution(
+        candidate = candidate,
+        packageName = packageName,
+        activityName = "com.tencent.mm.plugin.appbrand.ui.AppBrandUI",
+        nodeWidth = w,
+        nodeHeight = h,
+        policy = mode.policy,
+        rulePolicy = BypassRulePolicy(
+            trust = trust,
+            minimumMode = BypassAdStrategyMode.CONSERVATIVE,
+            requiresStrongAdContext = requiresStrongAdContext,
+            coordinate = false,
+            maxAttempts = 3,
+        ),
+        contextLevel = context,
+        inWindow = inWindow,
+    )
+
+    @Test
+    fun high_risk_bundled_dedicated_outside_window_is_no() {
+        // Acceptance: high-risk host + BUNDLED_DEDICATED + OUTSIDE_WINDOW => NO.
+        // On high-risk hosts "dedicated" only waives untrusted source; the
+        // window gate still applies.
+        assertEquals(
+            BypassRejectReason.OUTSIDE_WINDOW,
+            prodGate(
+                candidate = BypassExitCandidateType.CLOSE_TEXT,
+                packageName = "com.tencent.mm",
+                trust = BypassRuleTrust.BUNDLED_DEDICATED,
+                requiresStrongAdContext = false,
+                inWindow = false,
+            ),
+        )
+    }
+
+    @Test
+    fun high_risk_bundled_dedicated_null_candidate_is_no() {
+        // Acceptance: high-risk host + BUNDLED_DEDICATED + candidate=null => NO.
+        // No origin may act without a real semantic candidate (P0-1: no
+        // SKIP_TEXT masquerade, no dedicated bypass for a fake candidate).
+        assertEquals(
+            BypassRejectReason.NEGATIVE_SEMANTIC,
+            prodGate(
+                candidate = null,
+                packageName = "com.tencent.mm",
+                trust = BypassRuleTrust.BUNDLED_DEDICATED,
+                requiresStrongAdContext = false,
+                inWindow = true,
+            ),
+        )
+    }
+
+    @Test
+    fun high_risk_bundled_dedicated_in_window_aggressive_with_semantics_is_allowed() {
+        // A real semantic candidate inside the window on a high-risk host is
+        // allowed to continue (dedicated only waives the source, the rest of
+        // the gate passed).
+        assertNull(
+            prodGate(
+                candidate = BypassExitCandidateType.SKIP_TEXT,
+                packageName = "com.tencent.mm",
+                trust = BypassRuleTrust.BUNDLED_DEDICATED,
+                requiresStrongAdContext = false,
+                inWindow = true,
+            ),
+        )
+    }
+
+    @Test
+    fun normal_app_mature_dedicated_requires_real_candidate() {
+        // A null candidate is a hard denial even on a normal host with a
+        // mature dedicated rule: no fake-skip execution ever.
+        assertEquals(
+            BypassRejectReason.NEGATIVE_SEMANTIC,
+            prodGate(
+                candidate = null,
+                packageName = "com.example.app",
+                trust = BypassRuleTrust.BUNDLED_DEDICATED,
+                requiresStrongAdContext = false,
+                inWindow = false, // must not even reach the window check
+            ),
+        )
+    }
+
+    @Test
+    fun normal_app_mature_dedicated_with_real_candidate_runs_low_cost_path() {
+        // Acceptance: normal app mature dedicated => conservative normal run,
+        // even outside the startup window (curated trusted path).
+        assertNull(
+            prodGate(
+                candidate = BypassExitCandidateType.CLOSE_TEXT,
+                packageName = "com.example.app",
+                trust = BypassRuleTrust.BUNDLED_DEDICATED,
+                requiresStrongAdContext = false,
+                context = BypassAdContextLevel.NONE,
+                inWindow = false,
+            ),
+        )
+    }
+
+    @Test
+    fun wechat_official_skip_outside_window_is_no() {
+        // Acceptance: WeChat official Skip (BYPASS_OVERRIDE, no bypassMode
+        // needed — structured origin) + OUTSIDE_WINDOW => NO.
+        assertEquals(
+            BypassRejectReason.OUTSIDE_WINDOW,
+            prodGate(
+                candidate = BypassExitCandidateType.SKIP_TEXT,
+                packageName = "com.tencent.mm",
+                trust = BypassRuleTrust.BYPASS_OVERRIDE,
+                inWindow = false,
+            ),
+        )
+    }
+
+    @Test
+    fun wechat_official_skip_in_window_is_yes() {
+        // Acceptance: WeChat official Skip + inWindow => YES (skip semantics
+        // are explicit; no ad-context requirement).
+        assertNull(
+            prodGate(
+                candidate = BypassExitCandidateType.SKIP_TEXT,
+                packageName = "com.tencent.mm",
+                trust = BypassRuleTrust.BYPASS_OVERRIDE,
+                context = BypassAdContextLevel.NONE,
+                inWindow = true,
+            ),
+        )
+    }
+
+    @Test
+    fun wechat_official_close_without_strong_context_is_no() {
+        // Acceptance: WeChat official Close + context NONE => NO.
+        assertEquals(
+            BypassRejectReason.NO_AD_CONTEXT,
+            prodGate(
+                candidate = BypassExitCandidateType.CLOSE_TEXT,
+                packageName = "com.tencent.mm",
+                trust = BypassRuleTrust.BYPASS_OVERRIDE,
+                context = BypassAdContextLevel.NONE,
+                inWindow = true,
+            ),
+        )
+    }
+
+    @Test
+    fun wechat_official_close_strong_in_window_aggressive_is_yes() {
+        // Acceptance: WeChat official Close + STRONG + inWindow + Aggressive => YES.
+        assertNull(
+            prodGate(
+                candidate = BypassExitCandidateType.CLOSE_TEXT,
+                packageName = "com.tencent.mm",
+                trust = BypassRuleTrust.BYPASS_OVERRIDE,
+                mode = BypassAdStrategyMode.AGGRESSIVE,
+                context = BypassAdContextLevel.STRONG,
+                inWindow = true,
+            ),
+        )
+    }
+
+    @Test
+    fun high_risk_imported_rule_still_denied_even_with_strong_context() {
+        // Untrusted source on a high-risk host is ALWAYS denied, even with
+        // STRONG context, in window, and CRAZY mode.
+        assertEquals(
+            BypassRejectReason.SENSITIVE_ACTIVITY,
+            prodGate(
+                candidate = BypassExitCandidateType.SKIP_TEXT,
+                packageName = "com.tencent.mm",
+                trust = BypassRuleTrust.LOCAL_IMPORT_DEDICATED,
+                mode = BypassAdStrategyMode.CRAZY,
+                context = BypassAdContextLevel.STRONG,
+                inWindow = true,
+            ),
+        )
+    }
+
+    // ---- P0-3: AppBrandUI alone is WEAK context (star-charge acceptance) ----
+
+    @Test
+    fun normal_appbrandui_without_ad_evidence_small_imageview_crazy_is_no() {
+        // Acceptance: normal AppBrandUI + no splash evidence + small
+        // ImageView matching a Crazy structural selector => NO ACTION. The
+        // mini-program shell alone is WEAK context, and a structural
+        // no-semantic close requires STRONG context in every mode. (The rule
+        // is an exempt override so the gate reaches the context check instead
+        // of denying on source trust.)
+        assertEquals(
+            BypassRejectReason.NO_AD_CONTEXT,
+            BypassStrategyGate.evaluateExecution(
+                candidate = BypassExitCandidateType.STRUCTURAL_CLOSE,
+                packageName = "com.tencent.mm",
+                activityName = "com.tencent.mm.plugin.appbrand.ui.AppBrandUI",
+                nodeWidth = 60,
+                nodeHeight = 60,
+                policy = BypassAdStrategyMode.CRAZY.policy,
+                rulePolicy = BypassRulePolicy(
+                    trust = BypassRuleTrust.BYPASS_OVERRIDE,
+                    minimumMode = BypassAdStrategyMode.CONSERVATIVE,
+                    requiresStrongAdContext = true,
+                    coordinate = false,
+                    maxAttempts = 3,
+                ),
+                contextLevel = BypassAdContextLevel.WEAK, // AppBrandUI alone
+                inWindow = true,
+            ),
+        )
+    }
+
+    @Test
+    fun appbrandui_with_real_ad_evidence_structural_close_crazy_is_yes() {
+        // Acceptance: AppBrandUI + real ad evidence (STRONG context) +
+        // structural close + Crazy => YES.
+        assertNull(
+            BypassStrategyGate.evaluateExecution(
+                candidate = BypassExitCandidateType.STRUCTURAL_CLOSE,
+                packageName = "com.tencent.mm",
+                activityName = "com.tencent.mm.plugin.appbrand.ui.AppBrandUI",
+                nodeWidth = 60,
+                nodeHeight = 60,
+                policy = BypassAdStrategyMode.CRAZY.policy,
+                rulePolicy = BypassRulePolicy(
+                    trust = BypassRuleTrust.BYPASS_OVERRIDE,
+                    minimumMode = BypassAdStrategyMode.CRAZY,
+                    requiresStrongAdContext = true,
+                    coordinate = false,
+                    maxAttempts = 3,
+                ),
+                contextLevel = BypassAdContextLevel.STRONG, // real ad evidence
+                inWindow = true,
+            ),
+        )
+    }
 
     private fun gateCloseText(p: BypassStrategyPolicy): String? =
         gate(BypassExitCandidateType.CLOSE_TEXT, p, 80, 40)

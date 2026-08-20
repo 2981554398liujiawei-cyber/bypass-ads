@@ -85,3 +85,14 @@
   工作，不能证明真实广告可被关闭。
 - 结构 X / 坐标 selector 对真实广告快照仍需实机样本调优（TestAd fixture 已闭环）。
 - Shizuku 路径：NO_ENV（无授权环境，R6.1 结论保留）。
+
+## R6.3.2 状态（2026-08-2x，CODE GATE PASS）
+
+- **P0-1 真实生产 high-risk gate**：`RawRuleProps.bypassOrigin` 结构化来源（OVERRIDE/LOCAL_IMPORT，随规则体持久化）；`trustOf` 不再用 bypassMode 推断来源；`A11yRuleEngine` 与测试统一调用 `BypassStrategyGate.evaluateExecution`；high-risk 上 BUNDLED_DEDICATED/BYPASS_OVERRIDE 仅豁免来源不可信，之后全部门禁；`candidate ?: SKIP_TEXT` 伪装已删除（candidate=null 任何来源硬拒）。修复了生产解析丢弃 bypassMode 的隐患（jsonToRuleRaw/jsonToGlobalRule 现解析 bypassMode+bypassOrigin）。
+- **P0-2 Session-Scoped Verifier**：Session 保存 acted rule key/group key/bounds（schema 17：acted_rule_key/acted_group_key/acted_candidate_bounds）；verifier 只复查同一规则/同一区域，无关 banner/ImageView 不阻止 SUCCESS；星星充电 fixture（AppBrandUI+splash→正常页+瓜子/GNC banner）必须 SUCCESS_CONFIRMED。
+- **P0-3 STRONG 修正**：AppBrandUI/XRiverActivity alone => WEAK；STRONG 需真实广告证据（skip 候选/广告 label）。
+- **P0-4 Provenance 持久化 + collision remap**：side-map 镜像 `bypass_provenance.json`，任何 resolution 前惰性 restore；同 app 同 key 不同名 => local 组 remap 稳定唯一 key（0x40000000+hash），bundled 不误标 local；bundled upgrade 保留 local/teach/config/origin。
+- **P0-5 Window Anchor 四态**：SERVICE_RECONNECT（空基线不刷新）/ REAL_PACKAGE_CHANGE（刷新 packageEntryTime）/ REAL_ACTIVITY_CHANGE（刷新 activityEntryTime）/ ENGINE_FALLBACK_OBSERVATION（不刷新）；A→B→A→B 第二次 B 是新窗口。
+- **P0-6 Privacy-safe 工具**：relaunch_mp/ui_auto 不再落盘完整 XML、只输出 AD 白名单（其余 `<redacted>`）、设备文件即删；pull_sessions 只取元数据列；`tools/test_privacy_policy.py`（PRIVACY POLICY PASS）；AdEvidenceSnapshot 字段白名单测试。
+- Gate：JVM 117/0、assembleGkdDebug/AndroidTest/Fulltools 全绿、Python gates 全 PASS、check_repo_integrity ok、git diff --check 干净。
+- **FIELD GATE 仍 PENDING**（STAR-CHARGE PENDING：本轮纯代码 fixture 回归，未刷真实广告库存）。

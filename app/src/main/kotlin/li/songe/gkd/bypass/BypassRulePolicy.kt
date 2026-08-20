@@ -68,6 +68,12 @@ object BypassRulePolicyResolver {
         val isGlobal: Boolean,
         val groupName: String,
         val bypassMode: String?,
+        /**
+         * Structured rule origin persisted on the rule body ("OVERRIDE" /
+         * "LOCAL_IMPORT" / null). This is the security boundary; it is never
+         * inferred from bypassMode or from display names.
+         */
+        val bypassOrigin: String?,
         val coordinate: Boolean,
         val maxAttempts: Int,
     )
@@ -80,6 +86,7 @@ object BypassRulePolicyResolver {
             isGlobal = rule is GlobalRule,
             groupName = rule.g.group.name,
             bypassMode = rule.rule.bypassMode,
+            bypassOrigin = rule.rule.bypassOrigin,
             coordinate = rule.rule.position != null,
             maxAttempts = (rule.rule.actionMaximum ?: 3).coerceIn(1, 3),
         ),
@@ -118,11 +125,24 @@ object BypassRulePolicyResolver {
             return if (identity.coordinate) BypassRuleTrust.TEACH_COORDINATE
             else BypassRuleTrust.TEACH_NODE
         }
+        // Structured origin persisted on the rule body is the primary source
+        // of truth (P0-1/P0-4): official overrides carry "OVERRIDE" regardless
+        // of their minimum mode, user imports carry "LOCAL_IMPORT". This is a
+        // security boundary; bypassMode (a strategy hint) and display names
+        // never infer origin.
+        when (identity.bypassOrigin?.uppercase()) {
+            "OVERRIDE" -> return BypassRuleTrust.BYPASS_OVERRIDE
+            "LOCAL_IMPORT" -> {
+                return if (identity.isGlobal) BypassRuleTrust.LOCAL_IMPORT_GLOBAL
+                else BypassRuleTrust.LOCAL_IMPORT_DEDICATED
+            }
+        }
         // Structured origin side-map: after the local-import merge every rule
         // carries BYPASS_SPLASH_SUBS_ID, so subsId alone can no longer
         // separate imported from bundled rules (P0-4). The side-map is keyed
         // by the same structured identity used everywhere else; origins are
-        // never guessed from rule names.
+        // never guessed from rule names. It is restored from disk before any
+        // resolution so it never depends on UI initialization.
         if (!identity.isGlobal && BypassRuleProvenance.isLocalAppGroup(identity.appId, identity.groupKey)) {
             return BypassRuleTrust.LOCAL_IMPORT_DEDICATED
         }
@@ -133,10 +153,7 @@ object BypassRulePolicyResolver {
             !inBypassSubs && identity.isGlobal -> BypassRuleTrust.LOCAL_IMPORT_GLOBAL
             !inBypassSubs -> BypassRuleTrust.LOCAL_IMPORT_DEDICATED
             identity.isGlobal -> BypassRuleTrust.BUNDLED_GLOBAL
-            else -> when {
-                identity.bypassMode != null -> BypassRuleTrust.BYPASS_OVERRIDE
-                else -> BypassRuleTrust.BUNDLED_DEDICATED
-            }
+            else -> BypassRuleTrust.BUNDLED_DEDICATED
         }
     }
 

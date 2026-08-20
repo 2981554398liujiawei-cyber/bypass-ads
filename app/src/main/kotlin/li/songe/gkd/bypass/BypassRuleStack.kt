@@ -29,6 +29,9 @@ object BypassRuleStackManager {
         val appId: String,
         val groupName: String,
         val winner: String,
+        /** Set when the conflict was a same-key/different-name collision that
+         * got remapped instead of silently sharing one DB identity. */
+        val remappedFromKey: Int? = null,
     )
 
     @Volatile
@@ -39,6 +42,12 @@ object BypassRuleStackManager {
      * Pure layer merge (unit-testable): returns the effective subscription
      * where [local] groups replace same-named bundled groups of the same app
      * and all other bundled groups are preserved.
+     *
+     * groupKey collisions (P0-4): a local group whose key equals a *kept*
+     * bundled group's key but whose name differs is remapped to a stable
+     * unique key derived from (appId, group name). Two different groups never
+     * share one DB identity, a bundled group is never mis-tagged as local by
+     * the side-map, and the user's per-group configs never cross-contaminate.
      */
     fun mergeBundledAndLocal(
         bundled: RawSubscription,
@@ -48,39 +57,92 @@ object BypassRuleStackManager {
             BypassRuleProvenance.clear()
             return bundled
         }
-        // Record the structured origin of every imported group BEFORE the
-        // merge rewrites identities: the resolver needs the side-map to tell
-        // imported rules from bundled ones once they share BYPASS_SPLASH_SUBS_ID.
-        local.apps.forEach { localApp ->
-            localApp.groups.forEach { group -> BypassRuleProvenance.markLocalApp(localApp.id, group.key) }
-        }
-        local.globalGroups.forEach { group -> BypassRuleProvenance.markLocalGlobal(group.key) }
         val conflicts = mutableListOf<LayerConflict>()
         val localByApp = local.apps.associateBy { it.id }
         val apps = bundled.apps.map { bundledApp ->
             val localApp = localByApp[bundledApp.id] ?: return@map bundledApp
             val localGroupNames = localApp.groups.map { it.name }.toSet()
             // Bundled groups with the same name are replaced by the import.
-            localGroupNames.forEach { name ->
+            val replacedNames = localGroupNames.intersect(bundledApp.groups.map { it.name }.toSet())
+            replacedNames.forEach { name ->
                 conflicts += LayerConflict(bundledApp.id, name, "LOCAL_IMPORT")
             }
-            bundledApp.copy(
-                groups = bundledApp.groups.filterNot { it.name in localGroupNames } + localApp.groups,
-            )
+            val kept = bundledApp.groups.filterNot { it.name in localGroupNames }
+            val keptKeys = kept.map { it.key }.toSet()
+            // Same key + different name must not share one DB identity: remap
+            // the imported group to a stable unique key. The side-map must be
+            // recorded with the FINAL (possibly remapped) key so a kept
+            // bundled group sharing the old key is never mis-tagged as local.
+            val remappedLocalGroups = localApp.groups.map { group ->
+                if (group.key in keptKeys) {
+                    val newKey = stableRemapKey(bundledApp.id, group.name, keptKeys)
+                    conflicts += LayerConflict(
+                        bundledApp.id,
+                        group.name,
+                        "LOCAL_IMPORT_REMAPPED",
+                        remappedFromKey = group.key,
+                    )
+                    BypassRuleProvenance.markLocalApp(bundledApp.id, newKey)
+                    group.copy(key = newKey)
+                } else {
+                    BypassRuleProvenance.markLocalApp(bundledApp.id, group.key)
+                    group
+                }
+            }
+            bundledApp.copy(groups = kept + remappedLocalGroups)
         }.toMutableList()
-        // Apps only present in the import are added whole.
+        // Apps only present in the import are added whole (their keys are
+        // already recorded above via the local-marking loop below).
         localByApp.forEach { (packageName, localApp) ->
-            if (apps.none { it.id == packageName }) apps += localApp
+            if (apps.none { it.id == packageName }) {
+                localApp.groups.forEach { group -> BypassRuleProvenance.markLocalApp(packageName, group.key) }
+                apps += localApp
+            }
         }
         lastConflicts = conflicts
         val globals = if (local.globalGroups.isEmpty()) {
             bundled.globalGroups
         } else {
             val localGlobalNames = local.globalGroups.map { it.name }.toSet()
-            bundled.globalGroups.filterNot { it.name in localGlobalNames } + local.globalGroups
+            val keptGlobals = bundled.globalGroups.filterNot { it.name in localGlobalNames }
+            val keptGlobalKeys = keptGlobals.map { it.key }.toSet()
+            val remappedLocalGlobals = local.globalGroups.map { group ->
+                if (group.key in keptGlobalKeys) {
+                    val newKey = stableRemapKey("global", group.name, keptGlobalKeys)
+                    conflicts += LayerConflict(
+                        "global",
+                        group.name,
+                        "LOCAL_IMPORT_REMAPPED",
+                        remappedFromKey = group.key,
+                    )
+                    BypassRuleProvenance.markLocalGlobal(newKey)
+                    group.copy(key = newKey)
+                } else {
+                    BypassRuleProvenance.markLocalGlobal(group.key)
+                    group
+                }
+            }
+            keptGlobals + remappedLocalGlobals
         }
         return bundled.copy(apps = apps, globalGroups = globals)
     }
+
+    /**
+     * Stable unique remap key for a colliding imported group: derived from
+     * (scope, group name) so a restart / bundled upgrade maps the same group
+     * to the same key; bumped past any key already in use in this merge.
+     */
+    private fun stableRemapKey(scope: String, groupName: String, usedKeys: Set<Int>): Int {
+        val seed = (scope + "|" + groupName).hashCode() and 0x3fffffff
+        var candidate = REMAP_BASE + seed
+        while (candidate in usedKeys || candidate == seed) {
+            candidate = (candidate + 1) and 0x7fffffff
+            if (candidate < REMAP_BASE) candidate = REMAP_BASE
+        }
+        return candidate
+    }
+
+    private const val REMAP_BASE = 0x40000000
 
     suspend fun readLocalImport(): RawSubscription? = withContext(Dispatchers.IO) {
         if (!localImportFile.exists()) return@withContext null

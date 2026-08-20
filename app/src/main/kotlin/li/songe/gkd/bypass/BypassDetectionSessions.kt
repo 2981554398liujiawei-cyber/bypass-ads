@@ -34,6 +34,20 @@ data class BypassCandidateSnapshot(
 )
 
 /**
+ * Session-scoped ad evidence (P0-2): exactly the candidate the session acted
+ * on — its classified type, the structured rule identity, and its screen
+ * bounds. The OutcomeVerifier re-checks THIS ad region/exit afterwards, never
+ * an unrelated window-wide banner.
+ */
+data class BypassSessionAdEvidence(
+    val candidateType: BypassExitCandidateType?,
+    val ruleKey: Int?,
+    val groupKey: Int?,
+    /** "left,top,right,bottom" of the acted candidate. */
+    val bounds: String?,
+)
+
+/**
  * One ad session is one ad. Matcher evidence is accumulated into the active
  * window session; multiple actions (skip -> X -> close) stay in ONE session
  * and produce exactly one [BypassSessionResult].
@@ -89,6 +103,8 @@ object BypassDetectionSessions {
         candidateType: BypassExitCandidateType,
         ruleLabel: String,
         target: AccessibilityNodeInfo,
+        ruleKey: Int? = null,
+        groupKey: Int? = null,
     ) {
         val snapshot = BypassCandidateSanitizer.snapshot(target, packageName, activityName, structural = true)
         updateById(sessionId, "TARGET_FOUND:${candidateType.name}") { record ->
@@ -99,9 +115,34 @@ object BypassDetectionSessions {
                 candidateSnapshots = snapshot?.let {
                     encodeSnapshots(decodeSnapshots(record.candidateSnapshots) + it)
                 } ?: record.candidateSnapshots,
+                // Session-scoped verifier evidence: the acted rule identity and
+                // candidate bounds let the verifier re-check THE SAME ad
+                // region/exit after the action (P0-2).
+                actedRuleKey = record.actedRuleKey ?: ruleKey,
+                actedGroupKey = record.actedGroupKey ?: groupKey,
+                actedCandidateBounds = record.actedCandidateBounds ?: snapshot?.bounds,
             )
         }
     }
+
+    /**
+     * The ad evidence of the session currently attached to this window, or
+     * null when no session / no acted candidate exists. This is what the
+     * OutcomeVerifier scopes its fresh check to.
+     */
+    fun activeSessionEvidence(packageName: String, activityName: String?): BypassSessionAdEvidence? =
+        synchronized(lock) {
+            val current = active?.record ?: return null
+            if (current.packageName != packageName || current.activityName != activityName) return null
+            BypassSessionAdEvidence(
+                candidateType = current.candidateType?.let {
+                    runCatching { BypassExitCandidateType.valueOf(it) }.getOrNull()
+                },
+                ruleKey = current.actedRuleKey,
+                groupKey = current.actedGroupKey,
+                bounds = current.actedCandidateBounds,
+            )
+        }
 
     /** Record that one action attempt was reserved/performed. */
     fun actionAttempted(sessionId: String, action: String) {

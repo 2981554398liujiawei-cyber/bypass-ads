@@ -24,7 +24,7 @@ import li.songe.gkd.util.dbFolder
 import li.songe.gkd.util.json
 
 @Database(
-    version = 16,
+    version = 17,
     entities = [
         SubsItem::class,
         Snapshot::class,
@@ -56,6 +56,9 @@ import li.songe.gkd.util.json
         // (strategy_mode, result, action_attempts, candidate_type,
         //  confirmed_latency_ms, rule_origin) - all added with defaults.
         AutoMigration(from = 15, to = 16),
+        // schema 17: session-scoped verifier evidence (acted_rule_key,
+        // acted_group_key, acted_candidate_bounds) - all nullable.
+        AutoMigration(from = 16, to = 17),
     ]
 )
 @TypeConverters(DbConverters::class)

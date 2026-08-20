@@ -19,6 +19,7 @@ class TeachPolicyTest {
             isGlobal = false,
             groupName = "教学规则 · 跳过",
             bypassMode = null,
+            bypassOrigin = null,
             coordinate = coordinate,
             maxAttempts = 1,
         ),

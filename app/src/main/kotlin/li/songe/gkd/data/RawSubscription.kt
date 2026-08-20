@@ -353,6 +353,14 @@ data class RawSubscription(
         /** Bypass Ads strategy metadata (CONSERVATIVE/AGGRESSIVE/CRAZY). */
         val bypassMode: String?
 
+        /**
+         * Bypass Ads structured rule origin (security boundary, never inferred
+         * from display names): "OVERRIDE" for Bypass-owned official overrides,
+         * "LOCAL_IMPORT" for user imports. Persisted with the rule body so it
+         * survives process restarts and bundled upgrades.
+         */
+        val bypassOrigin: String?
+
         fun getAllSelectorStrings(): List<String> {
             return listOfNotNull(matches, excludeMatches, anyMatches, excludeAllMatches).flatten()
         }
@@ -518,6 +526,8 @@ data class RawSubscription(
         override val apps: List<RawGlobalApp>?,
         /** Bypass Ads strategy metadata (CONSERVATIVE/AGGRESSIVE/CRAZY). */
         override val bypassMode: String? = null,
+        /** Bypass Ads structured rule origin (see [RawRuleProps.bypassOrigin]). */
+        override val bypassOrigin: String? = null,
     ) : RawRuleProps, RawGlobalRuleProps
 
     @Serializable
@@ -601,6 +611,8 @@ data class RawSubscription(
         override val versionName: StringMatcher?,
         /** Bypass Ads strategy metadata (CONSERVATIVE/AGGRESSIVE/CRAZY). */
         override val bypassMode: String? = null,
+        /** Bypass Ads structured rule origin (see [RawRuleProps.bypassOrigin]). */
+        override val bypassOrigin: String? = null,
     ) : RawRuleProps, RawAppRuleProps
 
     companion object {
@@ -879,6 +891,8 @@ data class RawSubscription(
                 forcedTime = getLong(jsonObject, "forcedTime"),
                 priorityTime = getLong(jsonObject, "priorityTime"),
                 priorityActionMaximum = getInt(jsonObject, "priorityActionMaximum"),
+                bypassMode = getString(jsonObject, "bypassMode"),
+                bypassOrigin = getString(jsonObject, "bypassOrigin"),
             )
         }
 
@@ -996,6 +1010,8 @@ data class RawSubscription(
                 swipeArg = getSwipeArg(jsonObject),
                 priorityTime = getLong(jsonObject, "priorityTime"),
                 priorityActionMaximum = getInt(jsonObject, "priorityActionMaximum"),
+                bypassMode = getString(jsonObject, "bypassMode"),
+                bypassOrigin = getString(jsonObject, "bypassOrigin"),
             )
         }
 

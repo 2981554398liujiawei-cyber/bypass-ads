@@ -39,11 +39,47 @@ object BypassStrategyGate {
         rulePolicy: BypassRulePolicy,
         contextLevel: BypassAdContextLevel,
         inWindow: Boolean,
+    ): String? = evaluateExecution(
+        candidate = candidate,
+        packageName = packageName,
+        activityName = activityName,
+        nodeWidth = nodeWidth,
+        nodeHeight = nodeHeight,
+        policy = policy,
+        rulePolicy = rulePolicy,
+        contextLevel = contextLevel,
+        inWindow = inWindow,
+    )
+
+    /**
+     * THE shared production execution gate (P0-1). The engine and the
+     * production-path tests call exactly this function, so a test verdict is
+     * the engine verdict. Returns null (ALLOW) or a [BypassRejectReason].
+     *
+     * Trust semantics:
+     *  - High-risk hosts (WeChat / Alipay / ...) deny every non-exempt
+     *    source outright. Exempt sources (BUNDLED_DEDICATED / BYPASS_OVERRIDE)
+     *    only waive "untrusted source"; they still run the FULL gate below:
+     *    real candidate -> window -> size -> strategy -> ad context.
+     *  - A null candidate (no exit semantics, or negative/sensitive text) is
+     *    a HARD denial for EVERY origin — nothing ever acts as a fake
+     *    SKIP_TEXT ("candidate ?: SKIP_TEXT" is forbidden).
+     *  - On normal (non-high-risk) hosts, mature BUNDLED_DEDICATED rules keep
+     *    the low-cost trusted path (real candidate required, no window/size/
+     *    strategy/context gating).
+     */
+    fun evaluateExecution(
+        candidate: BypassExitCandidateType?,
+        packageName: String,
+        activityName: String?,
+        nodeWidth: Int,
+        nodeHeight: Int,
+        policy: BypassStrategyPolicy,
+        rulePolicy: BypassRulePolicy,
+        contextLevel: BypassAdContextLevel,
+        inWindow: Boolean,
     ): String? {
-        // High-risk hosts: untrusted sources are always denied. Exempt
-        // sources (curated dedicated / official overrides) are allowed to
-        // continue through the FULL gate below — the override may only waive
-        // "untrusted source", never context/window/size/strategy (P0-3).
+        // High-risk hosts: untrusted sources are always denied.
         val isHighRisk = isBypassHighRiskApp(packageName)
         val exemptSource = rulePolicy.trust == BypassRuleTrust.BUNDLED_DEDICATED ||
             rulePolicy.trust == BypassRuleTrust.BYPASS_OVERRIDE
@@ -51,9 +87,17 @@ object BypassStrategyGate {
             return BypassRejectReason.SENSITIVE_ACTIVITY
         }
 
+        // A matched control with no exit semantics (or with negative /
+        // sensitive semantics) never acts — for ANY origin, including
+        // high-risk exempt sources and normal-host dedicated rules.
+        if (candidate == null) {
+            return BypassRejectReason.NEGATIVE_SEMANTIC
+        }
+
         // On normal hosts, curated dedicated rules run in every mode without
-        // candidate gating. On high-risk hosts they keep going through the
-        // window/size/strategy/context checks below.
+        // candidate gating (but still require a real semantic candidate).
+        // On high-risk hosts they keep going through the window/size/strategy/
+        // context checks below.
         if (!isHighRisk && rulePolicy.trust == BypassRuleTrust.BUNDLED_DEDICATED) {
             return null
         }

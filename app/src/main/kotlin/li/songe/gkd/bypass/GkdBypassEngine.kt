@@ -65,6 +65,10 @@ object GkdBypassEngine : BypassEngine {
     private val categoryMap by lazy { readCategoryMap() }
 
     init {
+        // P0-4: restore the persisted local-import origin side-map before ANY
+        // resolution (the resolver also restores lazily, but the engine must
+        // not depend on the UI having been opened).
+        BypassRuleProvenance.restore()
         // Existing installs from before R3 receive a truthful bundled record on
         // first launch. The timestamp is the installed APK's update time, not
         // an invented rule-import time.

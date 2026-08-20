@@ -207,4 +207,195 @@ class RuleStackManagerTest {
         BypassRuleProvenance.clear()
         assertTrue(!BypassRuleProvenance.isLocalAppGroup("com.app.a", 10))
     }
+
+    // ---- P0-4: groupKey collision (bundled app=A key=10 name=X vs
+    // ---- local app=A key=10 name=Y) ----
+
+    private val bundledCollisionJson = """
+    {
+      "id": 100000001,
+      "name": "bundled",
+      "version": 1,
+      "apps": [
+        {"id": "com.app.a", "name": "AppA", "groups": [
+          {"key": 10, "name": "开屏广告-X", "rules": [
+            {"key": 0, "matches": ["[text=\"跳过\"]"]}
+          ]}
+        ]}
+      ]
+    }
+    """.trimIndent()
+
+    private val localCollisionJson = """
+    {
+      "id": 100000001,
+      "name": "local",
+      "version": 1,
+      "apps": [
+        {"id": "com.app.a", "name": "AppA", "groups": [
+          {"key": 10, "name": "开屏广告-Y", "rules": [
+            {"key": 0, "matches": ["[text=\"关闭\"]"]}
+          ]}
+        ]}
+      ]
+    }
+    """.trimIndent()
+
+    @Test
+    fun same_key_different_name_collision_is_remapped_not_shared() {
+        BypassRuleProvenance.clear()
+        val bundled = subscription(bundledCollisionJson)
+        val local = subscription(localCollisionJson)
+        val merged = BypassRuleStackManager.mergeBundledAndLocal(bundled, local)
+
+        // Both groups survive with DIFFERENT keys: never two groups sharing
+        // one DB identity (appId + groupKey).
+        val app = merged.apps.first { it.id == "com.app.a" }
+        assertEquals(2, app.groups.size)
+        val bundledGroup = app.groups.first { it.name == "开屏广告-X" }
+        val localGroup = app.groups.first { it.name == "开屏广告-Y" }
+        assertEquals(10, bundledGroup.key)
+        assertTrue("local key must be remapped", localGroup.key != 10)
+
+        // Conflict recorded with remap info.
+        val conflict = BypassRuleStackManager.lastConflicts.first {
+            it.groupName == "开屏广告-Y" && it.winner == "LOCAL_IMPORT_REMAPPED"
+        }
+        assertEquals("LOCAL_IMPORT_REMAPPED", conflict.winner)
+        assertEquals(10, conflict.remappedFromKey)
+
+        // The bundled group sharing the OLD key is NOT mis-tagged as local.
+        val bResolved = ResolvedAppGroup(bundledGroup, merged, subsItem(), config = null, app = app, enable = true)
+        assertEquals(
+            BypassRuleTrust.BUNDLED_DEDICATED,
+            BypassRulePolicyResolver.resolve(
+                AppRule(bundledGroup.rules.first() as RawSubscription.RawAppRule, bResolved, appInfo = null),
+            ).trust,
+        )
+        // The local group resolves to LOCAL_IMPORT_DEDICATED.
+        val lResolved = ResolvedAppGroup(localGroup, merged, subsItem(), config = null, app = app, enable = true)
+        assertEquals(
+            BypassRuleTrust.LOCAL_IMPORT_DEDICATED,
+            BypassRulePolicyResolver.resolve(
+                AppRule(localGroup.rules.first() as RawSubscription.RawAppRule, lResolved, appInfo = null),
+            ).trust,
+        )
+
+        // The remap is STABLE: merging again yields the same final key (a
+        // restart / bundled upgrade maps the same group to the same identity).
+        val merged2 = BypassRuleStackManager.mergeBundledAndLocal(bundled, local)
+        val app2 = merged2.apps.first { it.id == "com.app.a" }
+        assertEquals(localGroup.key, app2.groups.first { it.name == "开屏广告-Y" }.key)
+    }
+
+    @Test
+    fun local_provenance_survives_process_restart() {
+        // P0-4 acceptance: local import -> persist effective subscription ->
+        // clear in-memory provenance -> simulate a new process loading the
+        // persisted provenance -> the imported rule still resolves to
+        // LOCAL_IMPORT_DEDICATED without re-running the merge.
+        BypassRuleProvenance.clear()
+        val bundled = subscription(bundledJson)
+        val local = subscription(localJson)
+        val merged = BypassRuleStackManager.mergeBundledAndLocal(bundled, local)
+        assertTrue(BypassRuleProvenance.isLocalAppGroup("com.app.a", 10))
+
+        // The merge wrote the provenance; a fresh process reads the snapshot.
+        val snapshot = BypassRuleProvenance.snapshotJson()
+        assertTrue("persisted provenance must not be empty", !snapshot.isNullOrBlank())
+
+        // New process: in-memory side-map starts empty.
+        BypassRuleProvenance.clear()
+        assertTrue(!BypassRuleProvenance.isLocalAppGroup("com.app.a", 10))
+
+        // New process loads the persisted provenance file.
+        BypassRuleProvenance.restoreFromJson(snapshot!!)
+        assertTrue(BypassRuleProvenance.isLocalAppGroup("com.app.a", 10))
+
+        // Resolve the EFFECTIVE subscription (loaded from disk, subs id
+        // already rewritten to BYPASS_SPLASH_SUBS_ID) — the restored side-map
+        // alone must recover the LOCAL_IMPORT origin.
+        val app = merged.apps.first { it.id == "com.app.a" }
+        val localGroup = app.groups.first { it.key == 10 }
+        val resolvedGroup = ResolvedAppGroup(localGroup, merged, subsItem(), config = null, app = app, enable = true)
+        val policy = BypassRulePolicyResolver.resolve(
+            AppRule(localGroup.rules.first() as RawSubscription.RawAppRule, resolvedGroup, appInfo = null),
+        )
+        assertEquals(
+            "restored provenance must recover LOCAL_IMPORT_DEDICATED across processes",
+            BypassRuleTrust.LOCAL_IMPORT_DEDICATED,
+            policy.trust,
+        )
+        // And a bundled group is still not mis-tagged.
+        val keptGroup = app.groups.first { it.key == 2 }
+        val keptResolved = ResolvedAppGroup(keptGroup, merged, subsItem(), config = null, app = app, enable = true)
+        assertEquals(
+            BypassRuleTrust.BUNDLED_DEDICATED,
+            BypassRulePolicyResolver.resolve(
+                AppRule(keptGroup.rules.first() as RawSubscription.RawAppRule, keptResolved, appInfo = null),
+            ).trust,
+        )
+    }
+
+    @Test
+    fun bundled_upgrade_keeps_local_import_teach_and_origin() {
+        // P0-4 acceptance (JVM level): a bundled APK upgrade re-merges the
+        // persisted local import over the NEW bundled rules; the local import
+        // groups, their LOCAL_IMPORT origin, and the recorded conflicts all
+        // survive. (The per-group enable/disable config lives in the DB and
+        // is keyed by appId+groupKey, which the remap keeps stable.)
+        BypassRuleProvenance.clear()
+        val bundledV1 = subscription(bundledJson)
+        val local = subscription(localJson)
+        val effectiveV1 = BypassRuleStackManager.mergeBundledAndLocal(bundledV1, local)
+        assertTrue(effectiveV1.apps.first { it.id == "com.app.a" }.groups.any { it.name == "开屏广告-A" })
+
+        // APK upgrade: the bundled subscription gains a new group (version
+        // bump, same id). The local import file is untouched.
+        val bundledV2 = subscription(
+            """
+            {
+              "id": 100000001,
+              "name": "bundled",
+              "version": 2,
+              "apps": [
+                {"id": "com.app.a", "name": "AppA", "groups": [
+                  {"key": 1, "name": "开屏广告-A", "rules": [
+                    {"key": 0, "matches": ["[text=\"跳过\"]"]}
+                  ]},
+                  {"key": 2, "name": "开屏广告-B", "rules": [
+                    {"key": 0, "matches": ["[text=\"关闭\"]"]}
+                  ]},
+                  {"key": 3, "name": "开屏广告-C", "rules": [
+                    {"key": 0, "matches": ["[text=\"跳过\"]"]}
+                  ]}
+                ]}
+              ]
+            }
+            """.trimIndent(),
+        )
+        val effectiveV2 = BypassRuleStackManager.mergeBundledAndLocal(bundledV2, local)
+
+        // The local import is still present with the same identity (key 10).
+        val app = effectiveV2.apps.first { it.id == "com.app.a" }
+        val localGroup = app.groups.first { it.key == 10 }
+        assertEquals("开屏广告-A", localGroup.name)
+        val resolved = ResolvedAppGroup(localGroup, effectiveV2, subsItem(), config = null, app = app, enable = true)
+        assertEquals(
+            "local import origin must survive a bundled upgrade",
+            BypassRuleTrust.LOCAL_IMPORT_DEDICATED,
+            BypassRulePolicyResolver.resolve(
+                AppRule(localGroup.rules.first() as RawSubscription.RawAppRule, resolved, appInfo = null),
+            ).trust,
+        )
+        // The NEW bundled group also survives and keeps its bundled origin.
+        val newBundled = app.groups.first { it.key == 3 }
+        val newResolved = ResolvedAppGroup(newBundled, effectiveV2, subsItem(), config = null, app = app, enable = true)
+        assertEquals(
+            BypassRuleTrust.BUNDLED_DEDICATED,
+            BypassRulePolicyResolver.resolve(
+                AppRule(newBundled.rules.first() as RawSubscription.RawAppRule, newResolved, appInfo = null),
+            ).trust,
+        )
+    }
 }

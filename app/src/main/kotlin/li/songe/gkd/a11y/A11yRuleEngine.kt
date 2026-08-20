@@ -28,6 +28,8 @@ import li.songe.gkd.bypass.BypassOutcomeVerifier
 import li.songe.gkd.bypass.BypassPerfTrace
 import li.songe.gkd.bypass.BypassDiagnostics
 import li.songe.gkd.bypass.BypassDetectionSessions
+import li.songe.gkd.bypass.BypassSessionAdEvidence
+import li.songe.gkd.bypass.Bounds
 import li.songe.gkd.bypass.BypassRejectReason
 import li.songe.gkd.bypass.BypassExitCandidateType
 import li.songe.gkd.bypass.BypassExitClassifier
@@ -37,6 +39,7 @@ import li.songe.gkd.bypass.BypassRuntimeFlow
 import li.songe.gkd.bypass.BypassStrategyGate
 import li.songe.gkd.bypass.BypassTeachRules
 import li.songe.gkd.bypass.BypassWindowAnchor
+import li.songe.gkd.bypass.BypassWindowAnchorObservationType
 import li.songe.gkd.bypass.FailureReason
 import li.songe.gkd.data.ActionPerformer
 import li.songe.gkd.data.ActionResult
@@ -456,12 +459,12 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
             // sometimes swallow the launch event; a fresh active-window read
             // that reveals a real top-app transition is a launch. A service
             // reconnect (empty baseline) or a re-read of the same app is NOT:
-            // it must never re-open the startup window (P0-6).
+            // it must never re-open the startup window (P0-5).
             if (rightAppId != observedTopApp) {
-                val reanchor = BypassWindowAnchor.shouldReanchorOnObservation(observedTopApp, rightAppId)
+                val observationType = BypassWindowAnchor.classifyObservation(observedTopApp, rightAppId)
                 observedTopApp = rightAppId
-                if (reanchor) {
-                    BypassAdContextTracker.onAppObserved(rightAppId, System.currentTimeMillis())
+                if (observationType == BypassWindowAnchorObservationType.REAL_PACKAGE_CHANGE) {
+                    BypassAdContextTracker.onAppObserved(rightAppId, System.currentTimeMillis(), observationType)
                 }
             }
             val matchApp = rule.matchActivity(rightAppId)
@@ -522,28 +525,14 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
                     bypassContext.appId,
                     bypassContext.activityId,
                 )
-                val isDedicated = rulePolicy.trust == BypassRuleTrust.BUNDLED_DEDICATED
-                if (!isDedicated && candidate == null) {
-                    // A matched control with no exit semantics (or with
-                    // negative/sensitive semantics) never acts.
-                    BypassDiagnostics.record(
-                        FailureReason.GLOBAL_EXCLUDED,
-                        packageName = bypassContext.appId,
-                        activityName = bypassContext.activityId,
-                        detail = "CLOSE_CANDIDATE_REJECTED reason=NEGATIVE_SEMANTIC type=null",
-                    )
-                    BypassDetectionSessions.candidateRejected(
-                        bypassContext.appId,
-                        bypassContext.activityId,
-                        "?",
-                        BypassRejectReason.NEGATIVE_SEMANTIC,
-                    )
-                    continue
-                }
-                // C. Candidate gate: curated dedicated rules run un-gated;
-                // every other candidate is gated per mode + trust + context.
-                val reject = if (isDedicated) null else BypassStrategyGate.rejectReason(
-                    candidate = candidate ?: BypassExitCandidateType.SKIP_TEXT,
+                // C. THE shared execution gate (P0-1). Every origin — bundled
+                //    dedicated, official override, imported, teach — runs this
+                //    exact function; high-risk exempt sources only waive
+                //    "untrusted source", never window/size/strategy/context.
+                //    A null candidate (no exit semantics) is a hard denial for
+                //    every origin: nothing is ever faked as SKIP_TEXT.
+                val reject = BypassStrategyGate.evaluateExecution(
+                    candidate = candidate,
                     packageName = bypassContext.appId,
                     activityName = bypassContext.activityId,
                     nodeWidth = target.casted.boundsInScreen.width(),
@@ -561,7 +550,7 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
                         FailureReason.GLOBAL_EXCLUDED,
                         packageName = bypassContext.appId,
                         activityName = bypassContext.activityId,
-                        detail = "CLOSE_CANDIDATE_REJECTED reason=$reject type=${candidate?.name ?: "?"}",
+                        detail = "CLOSE_CANDIDATE_REJECTED reason=$reject type=${candidate?.name ?: "?"} trust=${rulePolicy.trust}",
                     )
                     BypassDetectionSessions.candidateRejected(
                         bypassContext.appId,
@@ -588,6 +577,8 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
                         it,
                         rule.statusText(),
                         target,
+                        ruleKey = rule.rule.key,
+                        groupKey = rule.g.group.key,
                     )
                 }
                 BypassDetectionSessions.strategyApplied(bypassContext.appId, bypassContext.activityId, mode)
@@ -678,13 +669,21 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
                         val actionStart = System.currentTimeMillis()
                         val outcome = BypassOutcomeVerifier.verify(
                             packageName = bypassContext.appId,
+                            // P0-2: the verifier re-checks THE SAME ad region /
+                            // exit the session acted on, never unrelated banners.
+                            sessionEvidence = BypassDetectionSessions.activeSessionEvidence(
+                                bypassContext.appId,
+                                bypassContext.activityId,
+                            ),
                             freshWindowProvider = { getTimeoutActiveWindow() },
                             // P0-5: the verifier re-reads the top app AFTER
                             // its own delay; the event-driven flow is only the
                             // fallback when the window read fails.
                             topFallbackProvider = { topActivityFlow.value.appId },
-                            freshAdCandidateProvider = { root -> hasFreshAdCandidate(root) },
-                            freshAdLabelProvider = { root -> BypassAdContextTracker.scanFreshAdLabel(root) },
+                            freshSameAdProvider = { root, evidence -> hasSameAdCandidate(root, evidence) },
+                            freshProximityAdLabelProvider = { root, evidence ->
+                                hasProximityAdLabel(root, evidence)
+                            },
                         )
                         val latency = System.currentTimeMillis() - actionStart
                         BypassPerfTrace.outcomeConfirmed(rule.statusText(), outcome.name)
@@ -751,24 +750,40 @@ class A11yRuleEngine(val service: A11yCommonImpl) {
     }
 
     /**
-     * Whether any Bypass ad candidate still matches on a fresh root. Used by
-     * the OutcomeVerifier: after an action, if any ad rule still matches, the
-     * ad has not been closed yet. Reuses the GKD selector machinery (no
-     * second scanner); bounded to keep the check cheap.
+     * Whether THE SAME ad candidate (same rule family, same region) still
+     * matches on a fresh root (P0-2). Only the session's acted rule is
+     * queried; unrelated banners never count as "the ad is still up".
+     * Reuses the GKD selector machinery (no second scanner).
      */
-    private fun hasFreshAdCandidate(root: AccessibilityNodeInfo): Boolean {
+    private fun hasSameAdCandidate(root: AccessibilityNodeInfo, evidence: BypassSessionAdEvidence): Boolean {
         // The window changed after the action; drop the stale node cache so
         // the fresh queries see the new window, not the old nodes.
         runCatching { a11yContext.clearOldAppNodeCache() }
+        if (evidence.ruleKey == null || evidence.groupKey == null) return false
         val activityRule = synchronized(topActivityFlow) { activityRuleFlow.value }
-        var queries = 0
         for (rule in activityRule.priorityRules) {
             if (rule.subsItem.id != BYPASS_SPLASH_SUBS_ID) continue
-            if (queries++ >= 24) break
-            val matched = runCatching { a11yContext.queryRule(rule, root) != null }.getOrDefault(false)
-            if (matched) return true
+            if (rule.g.group.key != evidence.groupKey || rule.rule.key != evidence.ruleKey) continue
+            val matched = runCatching { a11yContext.queryRule(rule, root) }.getOrNull()
+            if (matched == null) return false
+            // The rule still matches: is it the SAME region the session acted
+            // on? (A different region of the page is not this ad.)
+            val acted = BypassOutcomeVerifier.parseBounds(evidence.bounds) ?: return true
+            val nodeBounds = matched.casted.boundsInScreen
+            val fresh = Bounds(nodeBounds.left, nodeBounds.top, nodeBounds.right, nodeBounds.bottom)
+            return BypassOutcomeVerifier.sameAdRegion(acted, fresh)
         }
+        // The acted rule no longer exists (subscription changed): cannot
+        // claim the same ad is still up.
         return false
+    }
+
+    /**
+     * Whether an ad label is still visible near the acted candidate (P0-2).
+     */
+    private fun hasProximityAdLabel(root: AccessibilityNodeInfo, evidence: BypassSessionAdEvidence): Boolean {
+        val bounds = evidence.bounds ?: return false
+        return BypassAdContextTracker.scanFreshAdLabelNear(root, bounds)
     }
 
     companion object {

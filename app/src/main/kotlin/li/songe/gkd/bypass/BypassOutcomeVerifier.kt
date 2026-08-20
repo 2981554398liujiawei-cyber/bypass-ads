@@ -14,31 +14,40 @@ enum class BypassOutcome {
     MISCLICK_SUSPECTED,
 }
 
+/** Pure screen-rect math (JVM-testable; no android.graphics dependency). */
+data class Bounds(val l: Int, val t: Int, val r: Int, val b: Int)
+
 /**
  * Verifies what an action actually did by re-reading the active window and
  * re-querying ad evidence with the same GKD selector machinery (no second
  * scanner). The result is the session-level truth.
  *
- * Mini-program shells are NOT treated as ad proof: WeChat keeps running the
- * mini-program inside AppBrandUI after the ad closes, so "AppBrandUI is
- * foreground" alone proves nothing. The verifier only accepts fresh
- * evidence gathered AFTER the action:
+ * The check is SESSION-SCOPED (P0-2): after an action the verifier re-checks
+ * THE SAME ad region/exit the session acted on — the same rule family and the
+ * same candidate bounds — never the whole window:
  *
- *   Action -> delay -> re-read top package/activity (P0-5: never the
- *   pre-delay cached state) -> fresh root -> fresh ad-exit candidates +
- *   fresh ad-label scan.
+ *   Action -> delay -> re-read top package/activity (never the pre-delay
+ *   cached state) -> fresh root -> re-match the acted rule -> candidate
+ *   bounds vs acted bounds -> ad labels near the acted candidate.
  *
  *  - top moved to an external landing package (browser / store / launcher)
  *    after the delay               -> MISCLICK_SUSPECTED
  *  - top moved elsewhere           -> UNRESOLVED
- *  - an ad exit candidate or an ad label still matches the fresh root
+ *  - no session evidence / no fresh root -> UNRESOLVED
+ *  - the SAME ad candidate (same rule + same region) still matches
  *                                   -> ACTION_NO_EFFECT
- *  - same app, no ad evidence      -> SUCCESS_CONFIRMED
- *  - cannot determine              -> UNRESOLVED
+ *  - an ad label is still visible NEAR the acted candidate
+ *                                   -> ACTION_NO_EFFECT
+ *  - unrelated banners / unrelated ad labels elsewhere on the page never
+ *    block SUCCESS_CONFIRMED (star-charge page banners are not "the ad")
+ *  - otherwise (same app, no same-ad evidence) -> SUCCESS_CONFIRMED
  */
 object BypassOutcomeVerifier {
 
     private const val VERIFY_DELAY_MS = 300L
+
+    /** Same-ad region tolerance (px, center distance of bounds). */
+    const val SAME_AD_RADIUS_PX = 500
 
     /** Browsers / app stores / launchers / ad landing hosts. */
     val externalLandingPackages = setOf(
@@ -72,19 +81,24 @@ object BypassOutcomeVerifier {
 
     /**
      * @param packageName the package the action ran in (the original top app)
+     * @param sessionEvidence the ad evidence the session acted on (may be null
+     *        when no candidate was recorded -> UNRESOLVED, never a guessed
+     *        success or failure)
      * @param freshWindowProvider fresh active-window read after the delay
      * @param topFallbackProvider fallback fresh top-package read when the
      *        window read fails (e.g. the event-driven topActivityFlow)
-     * @param freshAdCandidateProvider fresh ad-exit candidate query
-     * @param freshAdLabelProvider one-shot ad-label scan (ad overlay evidence,
-     *        never persisted window state)
+     * @param freshSameAdProvider whether the SAME rule still matches near the
+     *        acted candidate bounds on the fresh root
+     * @param freshProximityAdLabelProvider whether an ad label is still
+     *        visible near the acted candidate bounds on the fresh root
      */
     suspend fun verify(
         packageName: String,
+        sessionEvidence: BypassSessionAdEvidence?,
         freshWindowProvider: suspend () -> AccessibilityNodeInfo?,
         topFallbackProvider: suspend () -> String?,
-        freshAdCandidateProvider: suspend (AccessibilityNodeInfo) -> Boolean,
-        freshAdLabelProvider: suspend (AccessibilityNodeInfo) -> Boolean,
+        freshSameAdProvider: suspend (AccessibilityNodeInfo, BypassSessionAdEvidence) -> Boolean,
+        freshProximityAdLabelProvider: suspend (AccessibilityNodeInfo, BypassSessionAdEvidence) -> Boolean,
     ): BypassOutcome {
         // 1. Give the target app a moment to react — and a possible external
         //    jump (browser/store/launcher) a moment to show up.
@@ -96,30 +110,65 @@ object BypassOutcomeVerifier {
         //    Chrome must be MISCLICK_SUSPECTED, never SUCCESS_CONFIRMED.
         val freshRoot = freshWindowProvider()
         val freshTopPkg = freshRoot?.packageName?.toString() ?: topFallbackProvider()
-        if (freshTopPkg != null && freshTopPkg != packageName) {
-            return decide(
-                freshAdCandidateExists = false,
-                freshAdEvidence = false,
-                topChanged = true,
-                topChangedToExternal = isExternalLanding(freshTopPkg),
+
+        // 3. Fresh evidence on the same window, scoped to the acted candidate.
+        //    Without session evidence there is nothing to verify: the verdict
+        //    is UNRESOLVED, never a guessed success/failure.
+        if (freshRoot != null && sessionEvidence != null) {
+            val sameAdExists = runCatching {
+                freshSameAdProvider(freshRoot, sessionEvidence)
+            }.getOrDefault(false)
+            val proximityAdLabel = runCatching {
+                freshProximityAdLabelProvider(freshRoot, sessionEvidence)
+            }.getOrDefault(false)
+            return decideFromVerify(
+                freshTopPkg = freshTopPkg,
+                packageName = packageName,
+                freshRootAvailable = true,
+                sessionEvidenceAvailable = true,
+                sameAdExists = sameAdExists,
+                proximityAdLabel = proximityAdLabel,
             )
         }
+        return decideFromVerify(
+            freshTopPkg = freshTopPkg,
+            packageName = packageName,
+            freshRootAvailable = freshRoot != null,
+            sessionEvidenceAvailable = sessionEvidence != null,
+            sameAdExists = false,
+            proximityAdLabel = false,
+        )
+    }
 
-        // 3. Fresh evidence on the same window: ad exit candidates and ad
-        //    labels. A mini-program shell being foreground is NOT evidence.
-        if (freshRoot == null) return BypassOutcome.UNRESOLVED
-        val freshAdCandidate = runCatching {
-            freshAdCandidateProvider(freshRoot)
-        }.getOrDefault(true)
-        val freshAdEvidence = runCatching {
-            freshAdLabelProvider(freshRoot)
-        }.getOrDefault(false)
-
-        return decide(
-            freshAdCandidateExists = freshAdCandidate,
-            freshAdEvidence = freshAdEvidence,
+    /**
+     * Pure full-chain decision used by [verify] (unit-testable without an
+     * AccessibilityNodeInfo): top-change checks, fresh-root availability,
+     * session evidence, then the same-ad / proximity evidence.
+     */
+    internal fun decideFromVerify(
+        freshTopPkg: String?,
+        packageName: String,
+        freshRootAvailable: Boolean,
+        sessionEvidenceAvailable: Boolean,
+        sameAdExists: Boolean,
+        proximityAdLabel: Boolean,
+    ): BypassOutcome = when {
+        freshTopPkg != null && freshTopPkg != packageName ->
+            decide(
+                sameAdExists = false,
+                proximityAdLabel = false,
+                topChanged = true,
+                topChangedToExternal = isExternalLanding(freshTopPkg),
+                hasSessionEvidence = sessionEvidenceAvailable,
+            )
+        !freshRootAvailable -> BypassOutcome.UNRESOLVED
+        !sessionEvidenceAvailable -> BypassOutcome.UNRESOLVED
+        else -> decide(
+            sameAdExists = sameAdExists,
+            proximityAdLabel = proximityAdLabel,
             topChanged = false,
             topChangedToExternal = false,
+            hasSessionEvidence = true,
         )
     }
 
@@ -128,25 +177,49 @@ object BypassOutcomeVerifier {
      *
      *  - top moved to an external landing package  -> MISCLICK_SUSPECTED
      *  - top moved elsewhere (not external)        -> UNRESOLVED
-     *  - an ad exit candidate still matches        -> ACTION_NO_EFFECT
-     *  - an ad label is still visible on the fresh root (ad overlay) ->
-     *    ACTION_NO_EFFECT
-     *  - otherwise (same app, no ad evidence)      -> SUCCESS_CONFIRMED
+     *  - no session evidence                       -> UNRESOLVED
+     *  - the SAME ad candidate still matches       -> ACTION_NO_EFFECT
+     *  - an ad label is still near the acted candidate -> ACTION_NO_EFFECT
+     *  - otherwise (same app, no same-ad evidence) -> SUCCESS_CONFIRMED
      */
     fun decide(
-        freshAdCandidateExists: Boolean,
-        freshAdEvidence: Boolean,
+        sameAdExists: Boolean,
+        proximityAdLabel: Boolean,
         topChanged: Boolean,
         topChangedToExternal: Boolean,
+        hasSessionEvidence: Boolean,
     ): BypassOutcome = when {
         topChanged && topChangedToExternal -> BypassOutcome.MISCLICK_SUSPECTED
         topChanged -> BypassOutcome.UNRESOLVED
-        freshAdCandidateExists -> BypassOutcome.ACTION_NO_EFFECT
-        freshAdEvidence -> BypassOutcome.ACTION_NO_EFFECT
+        !hasSessionEvidence -> BypassOutcome.UNRESOLVED
+        sameAdExists -> BypassOutcome.ACTION_NO_EFFECT
+        proximityAdLabel -> BypassOutcome.ACTION_NO_EFFECT
         else -> BypassOutcome.SUCCESS_CONFIRMED
     }
 
     fun isExternalLanding(packageName: String): Boolean = externalLandingPackages.contains(packageName)
+
+    /** "left,top,right,bottom" -> bounds (null when malformed). */
+    fun parseBounds(value: String?): Bounds? = value
+        ?.split(',')
+        ?.mapNotNull { it.trim().toIntOrNull() }
+        ?.takeIf { it.size == 4 }
+        ?.let { Bounds(it[0], it[1], it[2], it[3]) }
+
+    /** Center distance in px between two bounds. */
+    fun centerDistance(a: Bounds, b: Bounds): Int {
+        val ax = (a.l + a.r) / 2
+        val ay = (a.t + a.b) / 2
+        val bx = (b.l + b.r) / 2
+        val by = (b.t + b.b) / 2
+        val dx = ax - bx
+        val dy = ay - by
+        return kotlin.math.sqrt((dx * dx + dy * dy).toDouble()).toInt()
+    }
+
+    /** Whether two bounds belong to the same ad region. */
+    fun sameAdRegion(a: Bounds, b: Bounds): Boolean =
+        centerDistance(a, b) <= SAME_AD_RADIUS_PX
 
     /** Accessor kept for tests that want to pin the verifier delay. */
     internal fun verifyDelayMs(): Long = VERIFY_DELAY_MS

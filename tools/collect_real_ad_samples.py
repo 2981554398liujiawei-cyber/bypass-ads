@@ -34,7 +34,7 @@ TABLE = "bypass_detection_session"
 SELECT_COLS = (
     "session_id, package_name, activity_name, strategy_mode, result, "
     "action_attempts, candidate_type, confirmed_latency_ms, rule_origin, "
-    "start_time, end_time, diagnostic_timeline"
+    "start_time, end_time"
 )
 
 

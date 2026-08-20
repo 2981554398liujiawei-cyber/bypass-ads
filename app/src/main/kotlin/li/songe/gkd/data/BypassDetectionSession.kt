@@ -56,6 +56,12 @@ data class BypassDetectionSession(
     val confirmedLatencyMs: Long = 0L,
     /** Rule trust origin (BypassRuleTrust name) that created the session. */
     @ColumnInfo(name = "rule_origin") val ruleOrigin: String? = null,
+    // ---- schema 17: session-scoped verifier evidence ----
+    /** Structured identity of the rule whose candidate was acted on. */
+    @ColumnInfo(name = "acted_rule_key") val actedRuleKey: Int? = null,
+    @ColumnInfo(name = "acted_group_key") val actedGroupKey: Int? = null,
+    /** "left,top,right,bottom" of the acted candidate (same-ad region check). */
+    @ColumnInfo(name = "acted_candidate_bounds") val actedCandidateBounds: String? = null,
 ) {
     val sessionResult: BypassSessionResult
         get() = runCatching { BypassSessionResult.valueOf(result) }.getOrDefault(BypassSessionResult.OPEN)
