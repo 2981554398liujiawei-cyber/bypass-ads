@@ -50,7 +50,7 @@ def test_source_global_reinforcement_contract() -> None:
     serialized = json.dumps(groups[0], ensure_ascii=False)
     assert "Bypass Ads 可点击父节点补强" in serialized
     assert "Bypass Ads 安全手势补强" in serialized
-    # R6.2/R6.3: strategy-gated close / X / structural reinforcement rules
+    # Strategy-gated close / X / structural reinforcement rules
     # carry structured bypassMode metadata (never name-parsed at runtime).
     assert "Bypass Ads 策略化关闭补强-Aggressive" in serialized
     assert "Bypass Ads 策略化 X 补强-Aggressive" in serialized
