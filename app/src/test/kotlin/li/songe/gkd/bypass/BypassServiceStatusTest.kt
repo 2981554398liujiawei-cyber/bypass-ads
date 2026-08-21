@@ -24,21 +24,17 @@ class BypassServiceStatusTest {
     }
 
     @Test
-    fun authorized_and_system_bound_is_normal_even_without_instance_flag() {
-        // The HyperOS cover-install / recovery case: dumpsys Bound, settings
-        // still authorized, but onServiceConnected was not re-delivered.
+    fun authorized_and_system_bound_without_instance_is_recovering() {
         assertEquals(
-            BypassServiceStatus.NORMAL,
+            BypassServiceStatus.RECOVERING,
             resolveBypassServiceStatus(instanceRunning = false, authorized = true, systemBound = true),
         )
     }
 
     @Test
-    fun authorized_and_a11y_enabled_is_normal_even_without_bound_list() {
-        // HyperOS getEnabledAccessibilityServiceList can be empty while dumpsys
-        // already shows Bound. Authorized + accessibility enabled => NORMAL.
+    fun authorized_and_a11y_enabled_without_instance_is_recovering() {
         assertEquals(
-            BypassServiceStatus.NORMAL,
+            BypassServiceStatus.RECOVERING,
             resolveBypassServiceStatus(
                 instanceRunning = false,
                 authorized = true,

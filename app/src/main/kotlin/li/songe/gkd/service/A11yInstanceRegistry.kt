@@ -20,6 +20,8 @@ import kotlinx.coroutines.flow.StateFlow
  */
 object A11yInstanceRegistry {
 
+    private val lock = Any()
+
     @Volatile
     private var current: Any? = null
 
@@ -29,12 +31,14 @@ object A11yInstanceRegistry {
     val isRunning: StateFlow<Boolean> = running
 
     /** The live service instance, or null. */
-    fun currentInstance(): Any? = current
+    fun currentInstance(): Any? = synchronized(lock) { current }
 
     /** A service connected and became the current live instance. */
     fun <T : Any> connected(instance: T): T {
-        current = instance
-        running.value = true
+        synchronized(lock) {
+            current = instance
+            running.value = true
+        }
         return instance
     }
 
@@ -44,15 +48,19 @@ object A11yInstanceRegistry {
      * NEVER clear B.
      */
     fun <T : Any> destroyed(instance: T) {
-        if (current === instance) {
-            current = null
-            running.value = false
+        synchronized(lock) {
+            if (current === instance) {
+                current = null
+                running.value = false
+            }
         }
     }
 
     /** Test hook. */
     internal fun clearForTest() {
-        current = null
-        running.value = false
+        synchronized(lock) {
+            current = null
+            running.value = false
+        }
     }
 }

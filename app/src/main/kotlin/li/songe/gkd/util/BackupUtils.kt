@@ -7,7 +7,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import li.songe.gkd.BYPASS_SPLASH_SUBS_ID
-import li.songe.gkd.bypass.BypassEngine
 import li.songe.gkd.bypass.GkdBypassEngine
 import li.songe.gkd.bypass.BypassRuleMetadata
 import li.songe.gkd.bypass.BypassRuleSourceType
@@ -185,7 +184,13 @@ object BackupUtils {
                     val subs = withContext(Dispatchers.Default) {
                         json.decodeFromString<RawSubscription>(file.readText())
                     }
-                    updateSubscription(subs)
+                    // Bypass has one authoritative restore path below:
+                    // clean APK bundled base + restored Local + Teach. Do
+                    // not enqueue a generic async update for it, or that
+                    // update can overwrite the rebuilt stack afterwards.
+                    if (subs.id != BYPASS_SPLASH_SUBS_ID) {
+                        updateSubscription(subs)
+                    }
                 } catch (e: Exception) {
                     LogUtils.d("importBackUpData.saveSubs", file.name, e)
                 }
@@ -264,7 +269,6 @@ object BackupUtils {
             apply()
         }
         // Local source metadata — restore the truthful record (type/file/time).
-        val metadataPrefs = li.songe.gkd.app.getSharedPreferences("bypass_rule_metadata", Context.MODE_PRIVATE)
         val sourceType = runCatching { BypassRuleSourceType.valueOf(state.metadataSourceType) }
             .getOrDefault(BypassRuleSourceType.BUNDLED)
         val previous = GkdBypassEngine.ruleMetadata.value
@@ -278,16 +282,7 @@ object BackupUtils {
             sha256 = state.metadataSha256.ifBlank { previous.sha256 },
             sourceFileName = state.metadataSourceFileName ?: previous.sourceFileName,
         )
-        metadataPrefs.edit()
-            .putString("sourceType", restoredMetadata.sourceType.name)
-            .putInt("bundleVersion", restoredMetadata.bundleVersion ?: -1)
-            .putLong("installedAt", restoredMetadata.installedAt)
-            .putInt("appCount", restoredMetadata.appCount)
-            .putInt("groupCount", restoredMetadata.groupCount)
-            .putInt("ruleCount", restoredMetadata.ruleCount)
-            .putString("sha256", restoredMetadata.sha256)
-            .putString("sourceFileName", restoredMetadata.sourceFileName)
-            .apply()
+        GkdBypassEngine.restoreMetadata(restoredMetadata)
         // Armed retest windows are deliberately NOT restored.
         li.songe.gkd.app.getSharedPreferences("bypass_teach_retest", Context.MODE_PRIVATE).edit().clear().apply()
     }

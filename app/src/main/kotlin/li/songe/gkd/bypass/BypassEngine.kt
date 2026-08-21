@@ -190,14 +190,9 @@ fun resolveBypassServiceStatus(
     systemBound: Boolean,
     accessibilityEnabled: Boolean = false,
 ): BypassServiceStatus = when {
-    // In-process instance, system Bound, or (authorized + a11y enabled):
-    // HyperOS can keep the service Bound after upgrade/rebind without
-    // delivering onServiceConnected AND without listing us in
-    // getEnabledAccessibilityServiceList. If the user authorized the
-    // service and accessibility is on, the engine is the live Bound
-    // service — show NORMAL, not a stuck "正在恢复".
-    instanceRunning || (authorized && (systemBound || accessibilityEnabled)) ->
-        BypassServiceStatus.NORMAL
+    // Only the live in-process registry proves that the Bypass service runs.
+    // Authorization and system accessibility APIs are diagnostic signals.
+    instanceRunning -> BypassServiceStatus.NORMAL
     !authorized -> BypassServiceStatus.NEED_AUTHORIZATION
     else -> BypassServiceStatus.RECOVERING
 }

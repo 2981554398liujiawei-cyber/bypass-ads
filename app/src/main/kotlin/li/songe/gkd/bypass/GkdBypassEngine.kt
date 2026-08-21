@@ -156,6 +156,11 @@ object GkdBypassEngine : BypassEngine {
         return BypassImportResult(true, "规则栈已重建")
     }
 
+    /** Restore metadata through the engine so disk and the live flow agree. */
+    fun restoreMetadata(metadata: BypassRuleMetadata) {
+        saveMetadata(metadata)
+    }
+
     /** Whether the accessibility service component is currently enabled in
      * system settings (used to distinguish "正在恢复" from "需要授权"). */
     private fun checkA11yAuthorized(): Boolean {

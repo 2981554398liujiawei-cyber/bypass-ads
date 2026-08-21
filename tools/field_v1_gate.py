@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""G5-V1-FINAL device gate: TestAd matrix + HyperOS rebind + backup smoke.
+"""V1.0 device gate: TestAd matrix + HyperOS rebind + backup smoke.
 
 Privacy: never persist a full UI tree. Only ad/result tokens are printed.
 """
@@ -133,7 +133,7 @@ def home_status() -> str:
 
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    print("== G5-V1-FINAL device gate ==")
+    print("== V1.0 device gate ==")
     fails: list[str] = []
 
     # 0. install TestAd

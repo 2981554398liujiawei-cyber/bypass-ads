@@ -62,7 +62,7 @@ def run_process_recovery(cycles=20):
     setting_kept = 0
     for i in range(1, cycles + 1):
         # 正常进程回收：am kill 不置 force-stop 标志，系统可重新拉起服务进程。
-        # force-stop 是 Android 平台边界（R6 审计注明），不作为本项验收。
+        # force-stop is an Android platform boundary and is not part of this gate.
         sh("shell", "am", "kill", PKG)
         time.sleep(2)
         # 设置应保留（未被系统清除）

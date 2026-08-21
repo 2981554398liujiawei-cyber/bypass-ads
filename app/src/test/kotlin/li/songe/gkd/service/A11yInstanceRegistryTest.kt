@@ -6,6 +6,9 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * P1-5 (HyperOS destroy/rebind race): an OLD accessibility service instance
@@ -84,6 +87,38 @@ class A11yInstanceRegistryTest {
         A11yInstanceRegistry.destroyed(a2)
         assertSame(a1, A11yInstanceRegistry.currentInstance())
         A11yInstanceRegistry.clearForTest()
+    }
+
+    @Test
+    fun concurrent_destroy_and_rebind_never_loses_new_instance() {
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            repeat(5_000) {
+                A11yInstanceRegistry.clearForTest()
+                val a = FakeService("A")
+                val b = FakeService("B")
+                A11yInstanceRegistry.connected(a)
+                val start = CountDownLatch(1)
+                val done = CountDownLatch(2)
+                executor.execute {
+                    start.await()
+                    A11yInstanceRegistry.destroyed(a)
+                    done.countDown()
+                }
+                executor.execute {
+                    start.await()
+                    A11yInstanceRegistry.connected(b)
+                    done.countDown()
+                }
+                start.countDown()
+                assertTrue(done.await(5, TimeUnit.SECONDS))
+                assertSame(b, A11yInstanceRegistry.currentInstance())
+                assertTrue(A11yInstanceRegistry.isRunning.value)
+            }
+        } finally {
+            executor.shutdownNow()
+            A11yInstanceRegistry.clearForTest()
+        }
     }
 
     @Test
