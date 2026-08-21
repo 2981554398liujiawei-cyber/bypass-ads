@@ -53,12 +53,15 @@ def dump_texts() -> str:
 def click_text(label: str) -> bool:
     sh("shell", "uiautomator", "dump", DUMP)
     rc, xml, _ = sh("exec-out", f"cat {DUMP}")
-    # Prefer exact text match with bounds.
-    pat = rf'text="{re.escape(label)}"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"'
-    m = re.search(pat, xml)
-    if not m:
-        pat2 = rf'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"[^>]*text="{re.escape(label)}"'
-        m = re.search(pat2, xml)
+    # Match the complete node so attribute order changes do not break the gate.
+    for node in re.findall(r"<node\b[^>]*>", xml):
+        text_match = re.search(r'\btext="([^"]*)"', node)
+        bounds_match = re.search(r'\bbounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', node)
+        if text_match and bounds_match and text_match.group(1) == label:
+            m = bounds_match
+            break
+    else:
+        m = None
     if not m:
         return False
     x = (int(m.group(1)) + int(m.group(3))) // 2

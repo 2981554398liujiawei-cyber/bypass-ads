@@ -180,9 +180,9 @@ enum class BypassServiceStatus {
 
 /**
  * Product a11y status (P1-5). HyperOS can keep the service Bound after an
- * upgrade/rebind without delivering onServiceConnected, so the in-process
- * instance flag may lag the system. Authorized + system-bound is therefore
- * NORMAL, not RECOVERING — the engine is already working.
+ * upgrade/rebind without delivering onServiceConnected, so system-bound and
+ * accessibility-enabled signals may lag the in-process instance. They are
+ * recovery hints only; NORMAL requires the live registry instance.
  */
 fun resolveBypassServiceStatus(
     instanceRunning: Boolean,
