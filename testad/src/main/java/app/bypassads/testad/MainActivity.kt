@@ -54,6 +54,7 @@ class MainActivity : Activity() {
             text = "测试场景 ${mode.uppercase()}: ${scenarioLabel(mode)}"
             textSize = 17f
             setTextColor(Color.WHITE)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { setMargins(dp(24), dp(64), 0, 0) })
         when (mode) {
             "a" -> scene.addView(skipTarget(text = "跳过广告") { showResult(mode) }, topEndParams())

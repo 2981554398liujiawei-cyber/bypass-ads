@@ -119,7 +119,27 @@ def classify(texts: str) -> str:
 
 def a11y_bound() -> bool:
     rc, out, _ = sh("shell", "dumpsys", "accessibility")
-    return "Bound services:{Service[label=Bypass Ads" in out or "label=Bypass Ads" in out
+    bound_match = re.search(
+        r"Bound\s+services\s*:\s*\{(?P<section>.*?)\}\s*Enabled\s+services\s*:",
+        out,
+        re.DOTALL,
+    )
+    enabled_match = re.search(
+        r"Enabled\s+services\s*:\s*\{(?P<section>.*?)\}\s*Binding\s+services\s*:",
+        out,
+        re.DOTALL,
+    )
+    if not bound_match or not enabled_match:
+        return False
+    bound_section = re.sub(r"\s+", " ", bound_match.group("section"))
+    enabled_section = re.sub(r"\s+", " ", enabled_match.group("section"))
+    # HyperOS omits the component name from the Bound service object, so
+    # correlate that bounded entry with the exact enabled component. Never
+    # treat a label elsewhere in the full dumpsys output as proof of binding.
+    return (
+        "Service[label=Bypass Ads" in bound_section
+        and A11Y in enabled_section
+    )
 
 
 def home_status() -> str:
@@ -173,12 +193,22 @@ def main() -> int:
     time.sleep(2)
     sh("shell", "settings", "put", "secure", "enabled_accessibility_services", A11Y)
     sh("shell", "settings", "put", "secure", "accessibility_enabled", "1")
-    time.sleep(3)
-    bound = a11y_bound()
-    after = home_status()
-    print("bound:", bound, "after:", after)
-    if not bound or after != "NORMAL":
-        fails.append(f"rebind bound={bound} ui={after}")
+    bound = False
+    after = "UNKNOWN"
+    poll_seconds = 0
+    for poll_seconds in range(1, 16):
+        time.sleep(1)
+        bound = a11y_bound()
+        after = home_status()
+        print(f"  poll={poll_seconds}s actualBound={bound} uiStatus={after}")
+        if bound and after == "NORMAL":
+            break
+    authorized = A11Y in sh("shell", "settings", "get", "secure", "enabled_accessibility_services")[1]
+    print(f"authorized={authorized} actualBound={bound} uiStatus={after} pollSeconds={poll_seconds}")
+    if not bound:
+        fails.append("REBIND_NOT_ESTABLISHED")
+    elif after != "NORMAL":
+        fails.append("LIVE_STATE_SYNC_FAIL")
 
     # 3. Backup UI presence
     print("\n== Backup UI ==")
