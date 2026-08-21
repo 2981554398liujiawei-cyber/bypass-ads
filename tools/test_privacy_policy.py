@@ -125,6 +125,24 @@ def main() -> int:
         "editable/input nodes must never be snapshotted",
     )
 
+    # --- v1.0 release diagnostics (privacy-safe in the formal release) ---
+    diag_src = source(TOOLS.parent / "app/src/main/kotlin/li/songe/gkd/bypass/BypassDiagnostics.kt")
+    check(
+        "release diagnostics are not disabled by debuggable flag",
+        "if (!META.debuggable) return" not in diag_src,
+        "the formal self-use release must record privacy-safe diagnostics too",
+    )
+    check(
+        "diagnostics bounded event count",
+        "MAX_EVENTS = 40" in diag_src,
+        "diagnostics must be bounded (MAX_EVENTS ~40)",
+    )
+    check(
+        "diagnostics detail is sanitized",
+        ".take(160)" in diag_src,
+        "diagnostic detail strings must be truncated",
+    )
+
     # --- .gitignore protection ---
     gi = GITIGNORE.read_text(encoding="utf-8")
     check(

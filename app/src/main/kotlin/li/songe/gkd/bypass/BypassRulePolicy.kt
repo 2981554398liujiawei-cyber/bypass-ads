@@ -125,29 +125,31 @@ object BypassRulePolicyResolver {
             return if (identity.coordinate) BypassRuleTrust.TEACH_COORDINATE
             else BypassRuleTrust.TEACH_NODE
         }
+        // Structured origin side-map FIRST (P0-3 3.1): after the local-import
+        // merge every rule carries BYPASS_SPLASH_SUBS_ID, so subsId alone can
+        // no longer separate imported from bundled rules (P0-4). The side-map
+        // is keyed by the same structured identity used everywhere else and
+        // wins over anything the rule body claims — a local import that
+        // smuggled "bypassOrigin":"OVERRIDE" must still resolve to
+        // LOCAL_IMPORT_*. It is restored from disk before any resolution so
+        // it never depends on UI initialization.
+        if (!identity.isGlobal && BypassRuleProvenance.isLocalAppGroup(identity.appId, identity.groupKey)) {
+            return BypassRuleTrust.LOCAL_IMPORT_DEDICATED
+        }
+        if (identity.isGlobal && BypassRuleProvenance.isLocalGlobalGroup(identity.groupKey)) {
+            return BypassRuleTrust.LOCAL_IMPORT_GLOBAL
+        }
         // Structured origin persisted on the rule body is the primary source
-        // of truth (P0-1/P0-4): official overrides carry "OVERRIDE" regardless
-        // of their minimum mode, user imports carry "LOCAL_IMPORT". This is a
-        // security boundary; bypassMode (a strategy hint) and display names
-        // never infer origin.
+        // of truth for everything NOT in the local layer (P0-1/P0-4):
+        // official overrides carry "OVERRIDE" regardless of their minimum
+        // mode. This is a security boundary; bypassMode (a strategy hint) and
+        // display names never infer origin.
         when (identity.bypassOrigin?.uppercase()) {
             "OVERRIDE" -> return BypassRuleTrust.BYPASS_OVERRIDE
             "LOCAL_IMPORT" -> {
                 return if (identity.isGlobal) BypassRuleTrust.LOCAL_IMPORT_GLOBAL
                 else BypassRuleTrust.LOCAL_IMPORT_DEDICATED
             }
-        }
-        // Structured origin side-map: after the local-import merge every rule
-        // carries BYPASS_SPLASH_SUBS_ID, so subsId alone can no longer
-        // separate imported from bundled rules (P0-4). The side-map is keyed
-        // by the same structured identity used everywhere else; origins are
-        // never guessed from rule names. It is restored from disk before any
-        // resolution so it never depends on UI initialization.
-        if (!identity.isGlobal && BypassRuleProvenance.isLocalAppGroup(identity.appId, identity.groupKey)) {
-            return BypassRuleTrust.LOCAL_IMPORT_DEDICATED
-        }
-        if (identity.isGlobal && BypassRuleProvenance.isLocalGlobalGroup(identity.groupKey)) {
-            return BypassRuleTrust.LOCAL_IMPORT_GLOBAL
         }
         return when {
             !inBypassSubs && identity.isGlobal -> BypassRuleTrust.LOCAL_IMPORT_GLOBAL

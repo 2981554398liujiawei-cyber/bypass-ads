@@ -872,7 +872,7 @@ fun BypassDiagnosticsPage(
         BypassBackButton("诊断", onBack)
         Spacer(Modifier.height(12.dp))
         BypassSectionCard("未跳过诊断") {
-            BypassMutedText("诊断仅在 debug/self-use 构建记录 GKD matcher 的排除原因。导出内容始终保留在本机，并过滤输入和完整页面文字。", 12)
+            BypassMutedText("诊断在本机记录最近 40 条 GKD matcher 的排除原因（正式版同样生效）。导出内容始终保留在本机，并过滤输入和完整页面文字。", 12)
             Spacer(Modifier.height(10.dp))
             BypassModeButton("生成本地诊断包", false, onClick = {
                 bundleResult = runCatching {
@@ -1131,7 +1131,7 @@ fun BypassFullToolsPage(
 fun BypassAboutPage(onBack: () -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         BypassBackButton("关于 Bypass Ads", onBack); Spacer(Modifier.height(12.dp))
-        BypassSectionCard("Bypass Ads") { Text("0.1.0", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = BypassPalette.Ink); Spacer(Modifier.height(8.dp)); BypassMutedText("完全离线的广告自动跳过工具。", 13) }
+        BypassSectionCard("Bypass Ads") { Text(li.songe.gkd.META.versionName, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = BypassPalette.Ink); Spacer(Modifier.height(8.dp)); BypassMutedText("完全离线的广告自动跳过工具。", 13) }
     }
 }
 

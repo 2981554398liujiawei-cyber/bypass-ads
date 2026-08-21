@@ -18,9 +18,8 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import li.songe.gkd.BYPASS_SPLASH_SUBS_ID
-import li.songe.gkd.BYPASS_SPLASH_ASSETS_LOCAL_NAME
-import li.songe.gkd.BYPASS_SPLASH_ASSETS_NAME
 import li.songe.gkd.app
+import li.songe.gkd.loadCleanBundledBase
 import li.songe.gkd.appScope
 import li.songe.gkd.data.AppConfig
 import li.songe.gkd.data.RawSubscription
@@ -63,30 +62,98 @@ object GkdBypassEngine : BypassEngine {
     private val protectedAppsCache = MutableStateFlow<List<BypassAppInfo>>(emptyList())
     private val lastRecoveryAttemptAt = MutableStateFlow(0L)
     private val categoryMap by lazy { readCategoryMap() }
+    /** Bumped whenever the system accessibility state changes so [serviceState]
+     * re-reads Bound/authorized even if the in-process instance flag lags. */
+    private val a11ySystemTick = MutableStateFlow(0L)
 
     init {
+        runCatching {
+            app.a11yManager.addAccessibilityStateChangeListener {
+                noteA11ySystemChanged()
+            }
+        }
+        runCatching {
+            app.registerObserver(
+                android.provider.Settings.Secure.getUriFor(
+                    android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+                ),
+                li.songe.gkd.contentObserver { noteA11ySystemChanged() },
+            )
+        }
         // P0-4: restore the persisted local-import origin side-map before ANY
         // resolution (the resolver also restores lazily, but the engine must
         // not depend on the UI having been opened).
         BypassRuleProvenance.restore()
-        // Existing installs from before R3 receive a truthful bundled record on
-        // first launch. The timestamp is the installed APK's update time, not
-        // an invented rule-import time.
+        // P0-3 (3.3/3.6): rebuild the effective stack from a CLEAN bundled
+        // base (APK assets, never the possibly-stale persisted subscription)
+        // + the current local import + teach, and record truthful metadata:
+        // LOCAL_IMPORT when a local layer exists, BUNDLED otherwise — keeping
+        // the previous sourceFileName/import time instead of stamping the APK
+        // update time on every launch.
         appScope.launchTry(Dispatchers.IO) {
-            val bundle = subsMapFlow.map { it[BYPASS_SPLASH_SUBS_ID] }.filterNotNull().first()
             val localImport = BypassRuleStackManager.readLocalImport()
+            val teach = BypassTeachRules.read()
+            val cleanBase = loadCleanBundledBase() ?: return@launchTry
             val effective = BypassTeachRules.apply(
-                BypassRuleStackManager.mergeBundledAndLocal(bundle, localImport),
+                BypassRuleStackManager.mergeBundledAndLocal(cleanBase, localImport),
             )
-            if (localImport != null || BypassTeachRules.read().apps.isNotEmpty()) {
-                updateSubscription(effective)
-            }
-            if (metadataFlow.value.bundleVersion == null || localImport != null) {
-                saveMetadata(metadataFor(effective, BypassRuleSourceType.BUNDLED, null, app.packageManager
-                    .getPackageInfo(app.packageName, 0).lastUpdateTime))
+            // Always rebuild the effective stack from the clean APK base so a
+            // bundled APK upgrade cannot leave the previous (possibly stale)
+            // persisted subscription in place — even when there is no local
+            // import / teach layer.
+            updateSubscription(effective)
+            val previous = metadataFlow.value
+            val sourceType = if (localImport != null) BypassRuleSourceType.LOCAL_IMPORT else BypassRuleSourceType.BUNDLED
+            if (previous.bundleVersion == null || localImport != null || previous.sourceType != sourceType) {
+                saveMetadata(
+                    metadataFor(
+                        effective,
+                        sourceType,
+                        // Preserve the user's original source file name /
+                        // import time across restarts and bundled upgrades.
+                        if (sourceType == BypassRuleSourceType.LOCAL_IMPORT) {
+                            previous.sourceFileName ?: localImport?.name
+                        } else {
+                            null
+                        },
+                        if (previous.installedAt > 0L) previous.installedAt
+                        else app.packageManager.getPackageInfo(app.packageName, 0).lastUpdateTime,
+                    ),
+                )
             }
             ensureCategoryDefaults(effective)
         }
+    }
+
+    /**
+     * P0-3 (3.3) + backup/restore: rebuild the effective stack from the clean
+     * bundled base + current local import + teach, persist it, rebuild the
+     * provenance side-map, refresh metadata and category defaults. Used after
+     * a backup restore and by restore-bundled.
+     */
+    override suspend fun rebuildEffectiveStack(): BypassImportResult {
+        val localImport = BypassRuleStackManager.readLocalImport()
+        val cleanBase = loadCleanBundledBase() ?: return BypassImportResult(false, "内置规则包不可用")
+        val effective = BypassTeachRules.apply(
+            BypassRuleStackManager.mergeBundledAndLocal(cleanBase, localImport),
+        )
+        updateSubscriptionNow(effective)
+        val previous = metadataFlow.value
+        val sourceType = if (localImport != null) BypassRuleSourceType.LOCAL_IMPORT else BypassRuleSourceType.BUNDLED
+        saveMetadata(
+            metadataFor(
+                effective,
+                sourceType,
+                if (sourceType == BypassRuleSourceType.LOCAL_IMPORT) {
+                    previous.sourceFileName ?: localImport?.name
+                } else {
+                    null
+                },
+                if (previous.installedAt > 0L) previous.installedAt else System.currentTimeMillis(),
+            ),
+        )
+        ensureCategoryDefaults(effective)
+        return BypassImportResult(true, "规则栈已重建")
     }
 
     /** Whether the accessibility service component is currently enabled in
@@ -99,13 +166,44 @@ object GkdBypassEngine : BypassEngine {
         return enabled.split(':').any { it == A11yService.a11yCn.flattenToString() }
     }
 
+    /**
+     * Whether the system currently has our accessibility service Bound (P1-5).
+     * HyperOS recovery/upgrade can keep the service Bound without delivering
+     * onServiceConnected, so the in-process instance flag may lag. Bound is
+     * the system's own truth that the engine is already working.
+     */
+    private fun checkA11ySystemBound(): Boolean = runCatching {
+        val am = li.songe.gkd.app.a11yManager
+        am.getEnabledAccessibilityServiceList(
+            android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_ALL_MASK,
+        ).any { info ->
+            val si = info.resolveInfo?.serviceInfo
+            val byComponent = si?.packageName == li.songe.gkd.app.packageName &&
+                si.name == A11yService.a11yCn.className
+            val byId = info.id == A11yService.a11yCn.flattenToString() ||
+                info.id.endsWith("/${A11yService.a11yCn.className}")
+            byComponent || byId
+        }
+    }.getOrDefault(false)
+
+    private fun checkA11yEnabled(): Boolean =
+        runCatching { li.songe.gkd.app.a11yManager.isEnabled }.getOrDefault(false)
+
+    /** Called from the live a11y service and from settings observers. */
+    fun noteA11ySystemChanged() {
+        a11ySystemTick.value = System.currentTimeMillis()
+    }
+
     override val serviceState: StateFlow<BypassServiceState> =
-        A11yService.isRunning.map { running ->
-            when {
-                running -> BypassServiceState(BypassServiceStatus.NORMAL)
-                !checkA11yAuthorized() -> BypassServiceState(BypassServiceStatus.NEED_AUTHORIZATION)
-                else -> BypassServiceState(BypassServiceStatus.RECOVERING)
-            }
+        combine(A11yService.isRunning, a11ySystemTick) { running, _ ->
+            BypassServiceState(
+                resolveBypassServiceStatus(
+                    instanceRunning = running,
+                    authorized = checkA11yAuthorized(),
+                    systemBound = checkA11ySystemBound(),
+                    accessibilityEnabled = checkA11yEnabled(),
+                ),
+            )
         }.stateIn(appScope, SharingStarted.Eagerly, BypassServiceState(BypassServiceStatus.OFF))
 
     override val masterEnabled: StateFlow<Boolean> =
@@ -336,6 +434,7 @@ object GkdBypassEngine : BypassEngine {
 
     override fun refreshPermissionState() {
         permissionStateFlow.value = readPermissionState()
+        noteA11ySystemChanged()
     }
 
     override fun requestServiceRecovery() {
@@ -374,7 +473,10 @@ object GkdBypassEngine : BypassEngine {
             appRule.takeIf { groups.isNotEmpty() }?.copy(groups = groups)
         }
         if (advertisingApps.isEmpty()) return BypassImportResult(false, "文件中没有可导入的广告规则")
-        val current = subsMapFlow.value[BYPASS_SPLASH_SUBS_ID]
+        // P0-3 (3.3): always merge over the CLEAN bundled base from the APK
+        // assets — never over the current effective subscription, which may
+        // already contain an older local import + teach (import B would
+        // otherwise freeze import A into the stack).
         val sourceGlobals = parsed.globalGroups.filter { it.name == "开屏广告" || it.name.startsWith("开屏广告-") }
         val imported = parsed.copy(
             id = BYPASS_SPLASH_SUBS_ID,
@@ -383,17 +485,19 @@ object GkdBypassEngine : BypassEngine {
             // must never manufacture a version from the previously active set.
             version = parsed.version,
             apps = advertisingApps,
-            // Retain only source global splash groups. If a local file does
-            // not have one, keep the active Bypass fallback instead.
-            globalGroups = sourceGlobals.ifEmpty { current?.globalGroups ?: emptyList() },
+            // P0-3 (3.4): the local layer carries ONLY the local file's own
+            // global groups. A file without globals gets an empty global
+            // layer; bundled global/fallback is preserved by the merge and is
+            // never mislabeled as local.
+            globalGroups = sourceGlobals,
             categories = parsed.categories.filter { it.name in advertisingCategoryNames },
         )
         // Layered stack: persist the local layer, merge over bundled (never
         // deleting unrelated bundled coverage), then teach on top.
         BypassRuleStackManager.saveLocalImport(imported)
-        val bundle = subsMapFlow.value[BYPASS_SPLASH_SUBS_ID] ?: imported
+        val cleanBase = loadCleanBundledBase() ?: return BypassImportResult(false, "内置规则包不可用")
         val effective = BypassTeachRules.apply(
-            BypassRuleStackManager.mergeBundledAndLocal(bundle, imported),
+            BypassRuleStackManager.mergeBundledAndLocal(cleanBase, imported),
         )
         // Atomic apply: success is only returned after the engine holds it.
         updateSubscriptionNow(effective)
@@ -403,22 +507,12 @@ object GkdBypassEngine : BypassEngine {
     }
 
     override suspend fun restoreBundledRules(): BypassImportResult {
-        val raw = runCatching {
-            app.assets.open(BYPASS_SPLASH_ASSETS_LOCAL_NAME).bufferedReader().use { it.readText() }
-        }.recoverCatching {
-            app.assets.open(BYPASS_SPLASH_ASSETS_NAME).bufferedReader().use { it.readText() }
-        }.getOrElse { return BypassImportResult(false, "内置规则包不可用") }
-        val restored = runCatching { RawSubscription.parse(raw, json5 = false) }.getOrElse {
-            return BypassImportResult(false, "内置规则包无效")
-        }
-        val bundled = restored.copy(id = BYPASS_SPLASH_SUBS_ID)
         // 恢复内置: remove the local import layer; Teach rules are kept
-        // (they can be deleted separately in the Teach screen).
+        // (they can be deleted separately in the Teach screen). Rebuild from
+        // the clean bundled base (P0-3 3.3).
         BypassRuleStackManager.clearLocalImport()
-        val effective = BypassTeachRules.apply(bundled)
-        updateSubscriptionNow(effective)
-        ensureCategoryDefaults(effective)
-        saveMetadata(metadataFor(effective, BypassRuleSourceType.BUNDLED, null))
+        val result = rebuildEffectiveStack()
+        if (!result.accepted) return result
         return BypassImportResult(true, "已恢复内置开屏规则（教学规则保留）")
     }
 

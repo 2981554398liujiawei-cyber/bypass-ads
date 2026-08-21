@@ -69,10 +69,12 @@ android {
         targetSdk = rootProject.ext["android.targetSdk"] as Int
 
         applicationId = "app.bypassads"
-        // Bypass Ads self-use version; the bundled GKD engine stays at 1.12.1
-        // (kept as an internal constant, not advertised in the product UI).
-        versionCode = 2
-        versionName = "0.2.0"
+        // Bypass Ads v1.0.0 self-use version. The bundled GKD engine stays at
+        // 1.12.1 (kept as an internal constant, not advertised in the product
+        // UI). versionName is the exact release string "1.0.0" — the commit
+        // SHA suffix is only applied to debug builds (see GitInfo below).
+        versionCode = 100
+        versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -97,7 +99,14 @@ android {
         resValues = true
     }
 
-    val gkdSigningConfig = if (project.hasProperty("GKD_STORE_FILE")) {
+    // v1.0 signing policy:
+    //  - GKD release NEVER falls back to the debug key. Without a formal
+    //    signing config (GKD_STORE_FILE / GKD_STORE_PASSWORD / GKD_KEY_ALIAS /
+    //    GKD_KEY_PASSWORD via -P or gradle.properties) the release buildType
+    //    is UNSIGNED: assembleGkdRelease still builds (CI / R8 validation),
+    //    and tools/build_selfuse.ps1 refuses to ship an unsigned "release".
+    //  - Debug keeps the debug key so on-device debugging keeps working.
+    val gkdReleaseSigning = if (project.hasProperty("GKD_STORE_FILE")) {
         signingConfigs.create("gkd") {
             storeFile = file(project.properties["GKD_STORE_FILE"] as String)
             storePassword = project.findProperty("GKD_STORE_PASSWORD")?.toString()
@@ -105,7 +114,7 @@ android {
             keyPassword = project.findProperty("GKD_KEY_PASSWORD")?.toString()
         }
     } else {
-        signingConfigs.getByName("debug")
+        null
     }
 
     val playSigningConfig = if (project.hasProperty("PLAY_STORE_FILE")) {
@@ -116,36 +125,41 @@ android {
             keyPassword = project.properties["PLAY_KEY_PASSWORD"].toString()
         }
     } else {
-        gkdSigningConfig
+        gkdReleaseSigning
     }
 
     buildTypes {
-        all {
-            versionNameSuffix = gitInfo.versionNameSuffix
-        }
-        release {
-            isMinifyEnabled = true
-            isShrinkResources = true
-            isDebuggable = false
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro",
-            )
-        }
         debug {
-            signingConfig = gkdSigningConfig
+            // Debug carries the commit SHA suffix (helps identify on-device
+            // builds); RELEASE must be exactly "1.0.0" — no suffix.
+            versionNameSuffix = gitInfo.versionNameSuffix
+            // Debug builds always use the debug key, regardless of any
+            // GKD_STORE_* configuration (release signing is for release only).
+            signingConfig = signingConfigs.getByName("debug")
             applicationIdSuffix = ".debug"
             resValue("color", "better_black", "#FF5D92")
             debugSuffixPairList.onEach { (key, value) ->
                 resValue("string", key, "$value-debug")
             }
         }
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            isDebuggable = false
+            // null when no formal key is configured -> UNSIGNED release
+            // (never the debug key).
+            signingConfig = gkdReleaseSigning
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+        }
     }
     productFlavors {
         flavorDimensions += "channel"
         create("gkd") {
             isDefault = true
-            signingConfig = gkdSigningConfig
+            signingConfig = gkdReleaseSigning
             resValue("bool", "is_accessibility_tool", "true")
         }
         create("play") {
@@ -154,7 +168,7 @@ android {
             manifestPlaceholders["channel"] = "bypassads"
         }
         create("fulltools") {
-            signingConfig = gkdSigningConfig
+            signingConfig = gkdReleaseSigning
             applicationIdSuffix = ".fulltools"
             resValue("bool", "is_accessibility_tool", "true")
             manifestPlaceholders["channel"] = "fulltools"

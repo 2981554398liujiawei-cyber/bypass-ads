@@ -232,6 +232,142 @@ class OutcomeVerifierTest {
         )
     }
 
+    // ---- P0-2 multi-stage Skip -> Close (pure sibling check) ----
+
+    @Test
+    fun skip_still_in_same_region_is_action_no_effect() {
+        assertTrue(BypassOutcomeVerifier.sameAdStillPresent(exactRuleMatchedInSameRegion = true))
+        assertEquals(
+            BypassOutcome.ACTION_NO_EFFECT,
+            BypassOutcomeVerifier.decideFromVerify(
+                freshTopPkg = "com.tencent.mm",
+                packageName = "com.tencent.mm",
+                freshRootAvailable = true,
+                sessionEvidenceAvailable = true,
+                sameAdExists = true,
+                proximityAdLabel = false,
+            ),
+        )
+    }
+
+    @Test
+    fun skip_gone_same_group_close_in_same_region_is_action_no_effect() {
+        // Skip disappeared, a semantic sibling Close of the SAME group is still
+        // in the same ad region -> the ad is still up (allow the next requery).
+        assertTrue(
+            BypassOutcomeVerifier.sameAdStillPresent(
+                exactRuleMatchedInSameRegion = false,
+                siblingType = BypassExitCandidateType.CLOSE_TEXT,
+                siblingInSameRegion = true,
+            ),
+        )
+        assertTrue(
+            BypassOutcomeVerifier.sameAdStillPresent(
+                exactRuleMatchedInSameRegion = false,
+                siblingType = BypassExitCandidateType.CLOSE_ICON,
+                siblingInSameRegion = true,
+            ),
+        )
+        assertEquals(
+            BypassOutcome.ACTION_NO_EFFECT,
+            BypassOutcomeVerifier.decideFromVerify(
+                freshTopPkg = "com.tencent.mm",
+                packageName = "com.tencent.mm",
+                freshRootAvailable = true,
+                sessionEvidenceAvailable = true,
+                sameAdExists = true, // sibling counted as same-ad by the engine
+                proximityAdLabel = false,
+            ),
+        )
+    }
+
+    @Test
+    fun structural_or_coordinate_sibling_is_never_same_ad() {
+        // A normal-page ImageView / coordinate fallback must never fabricate
+        // "the ad is still up" after Skip/Close disappeared.
+        assertTrue(
+            !BypassOutcomeVerifier.sameAdStillPresent(
+                exactRuleMatchedInSameRegion = false,
+                siblingType = BypassExitCandidateType.STRUCTURAL_CLOSE,
+                siblingInSameRegion = true,
+            ),
+        )
+        assertTrue(
+            !BypassOutcomeVerifier.sameAdStillPresent(
+                exactRuleMatchedInSameRegion = false,
+                siblingType = BypassExitCandidateType.COORDINATE_FALLBACK,
+                siblingInSameRegion = true,
+            ),
+        )
+        assertTrue(!BypassOutcomeVerifier.isSemanticSibling(BypassExitCandidateType.STRUCTURAL_CLOSE))
+        assertTrue(!BypassOutcomeVerifier.isSemanticSibling(BypassExitCandidateType.COORDINATE_FALLBACK))
+    }
+
+    @Test
+    fun skip_gone_only_far_banner_and_ordinary_imageview_is_success() {
+        // After the second-stage Close disappears, a far page banner "广告"
+        // plus an ordinary small ImageView is SUCCESS — never ACTION_NO_EFFECT.
+        assertTrue(
+            !BypassOutcomeVerifier.sameAdStillPresent(
+                exactRuleMatchedInSameRegion = false,
+                siblingType = BypassExitCandidateType.STRUCTURAL_CLOSE,
+                siblingInSameRegion = false,
+            ),
+        )
+        assertEquals(
+            BypassOutcome.SUCCESS_CONFIRMED,
+            BypassOutcomeVerifier.decideFromVerify(
+                freshTopPkg = "com.tencent.mm",
+                packageName = "com.tencent.mm",
+                freshRootAvailable = true,
+                sessionEvidenceAvailable = true,
+                sameAdExists = false,
+                proximityAdLabel = false,
+            ),
+        )
+    }
+
+    @Test
+    fun per_action_evidence_is_immutable_snapshot() {
+        // Action A verifier must keep A's evidence even if session later holds B.
+        val evidenceA = BypassSessionAdEvidence(
+            candidateType = BypassExitCandidateType.SKIP_TEXT,
+            ruleKey = 1,
+            groupKey = 10,
+            bounds = "10,20,90,60",
+        )
+        val evidenceB = BypassSessionAdEvidence(
+            candidateType = BypassExitCandidateType.CLOSE_TEXT,
+            ruleKey = 2,
+            groupKey = 10,
+            bounds = "200,300,280,360",
+        )
+        // The verifier consumes the snapshot it was given, never the later B.
+        assertEquals(1, evidenceA.ruleKey)
+        assertEquals(BypassExitCandidateType.SKIP_TEXT, evidenceA.candidateType)
+        assertTrue(evidenceA.ruleKey != evidenceB.ruleKey)
+        assertTrue(evidenceA.bounds != evidenceB.bounds)
+    }
+
+    @Test
+    fun chrome_market_launcher_stay_misclick() {
+        assertTrue(BypassOutcomeVerifier.isExternalLanding("com.android.chrome"))
+        assertTrue(BypassOutcomeVerifier.isExternalLanding("com.xiaomi.market"))
+        assertTrue(BypassOutcomeVerifier.isExternalLanding("com.android.vending"))
+        assertTrue(BypassOutcomeVerifier.isExternalLanding("com.miui.home"))
+        assertEquals(
+            BypassOutcome.MISCLICK_SUSPECTED,
+            BypassOutcomeVerifier.decideFromVerify(
+                freshTopPkg = "com.android.chrome",
+                packageName = "com.tencent.mm",
+                freshRootAvailable = false,
+                sessionEvidenceAvailable = true,
+                sameAdExists = false,
+                proximityAdLabel = false,
+            ),
+        )
+    }
+
     @Test
     fun splash_candidate_remaining_same_region_is_action_no_effect() {
         // Acceptance: same splash candidate remains => ACTION_NO_EFFECT.

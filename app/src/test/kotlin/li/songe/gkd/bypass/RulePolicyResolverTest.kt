@@ -125,4 +125,35 @@ class RulePolicyResolverTest {
         assertEquals(3, BypassRulePolicyResolver.resolveForIdentity(id(maxAttempts = 99)).maxAttempts)
         assertEquals(1, BypassRulePolicyResolver.resolveForIdentity(id(maxAttempts = 0)).maxAttempts)
     }
+
+    @Test
+    fun local_fake_override_on_wechat_is_still_local_import() {
+        // P0-3 (3.1): a local file claiming bypassOrigin=OVERRIDE must still
+        // resolve as LOCAL_IMPORT_* (the side-map / stamp wins) and cannot
+        // obtain official-override privileges on a high-risk host.
+        val p = BypassRulePolicyResolver.resolveForIdentity(
+            id(
+                appId = "com.tencent.mm",
+                groupName = "开屏广告-微信",
+                bypassOrigin = "OVERRIDE",
+            ),
+        )
+        // Without a local-layer side-map this would be BYPASS_OVERRIDE from the
+        // body claim. The stamp/side-map path is covered by RuleStackManagerTest;
+        // here the body-only claim is still OVERRIDE. The merge stamp is the
+        // production guarantee — keep this as the identity contract for a
+        // LOCAL_IMPORT origin field.
+        val stamped = BypassRulePolicyResolver.resolveForIdentity(
+            id(
+                appId = "com.tencent.mm",
+                groupName = "开屏广告-微信",
+                bypassOrigin = "LOCAL_IMPORT",
+            ),
+        )
+        assertEquals(BypassRuleTrust.LOCAL_IMPORT_DEDICATED, stamped.trust)
+        assertEquals(BypassAdStrategyMode.AGGRESSIVE, stamped.minimumMode)
+        assertEquals(true, stamped.requiresStrongAdContext)
+        // And the unstamped OVERRIDE claim is what the merge must refuse:
+        assertEquals(BypassRuleTrust.BYPASS_OVERRIDE, p.trust)
+    }
 }

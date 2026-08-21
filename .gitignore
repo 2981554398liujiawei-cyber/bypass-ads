@@ -26,6 +26,10 @@ local.properties
 /app/src/main/assets/bypass_splash_rules.local.json
 # local third-party subscription cache for tools/build_splash_bundle.py
 /tools/.cache/
+# final self-use release artifacts
+/dist/
+# user-home signing material is never in the repo (created by build_selfuse.ps1)
+/signing.properties
 
 /.cache
 /.kotlin
@@ -37,6 +41,10 @@ local.properties
 /gkd_*
 /gkd_subscriptions/
 /compare_*
+# ad-hoc accessibility dumps from device field checks
+/ui.xml
+/ui_a11y.xml
+/ui_texts.txt
 
 # Python bytecode cache
 __pycache__/

@@ -115,33 +115,56 @@ object BypassDetectionSessions {
                 candidateSnapshots = snapshot?.let {
                     encodeSnapshots(decodeSnapshots(record.candidateSnapshots) + it)
                 } ?: record.candidateSnapshots,
-                // Session-scoped verifier evidence: the acted rule identity and
-                // candidate bounds let the verifier re-check THE SAME ad
-                // region/exit after the action (P0-2).
-                actedRuleKey = record.actedRuleKey ?: ruleKey,
-                actedGroupKey = record.actedGroupKey ?: groupKey,
-                actedCandidateBounds = record.actedCandidateBounds ?: snapshot?.bounds,
+                // Session-scoped verifier evidence (P0-2): acted* holds the
+                // MOST RECENT action's rule identity and candidate bounds, so
+                // a multi-stage ad (Skip -> Close) verifies against the last
+                // exit it acted on, never sticky on the first candidate.
+                actedRuleKey = ruleKey ?: record.actedRuleKey,
+                actedGroupKey = groupKey ?: record.actedGroupKey,
+                actedCandidateBounds = snapshot?.bounds ?: record.actedCandidateBounds,
             )
         }
     }
 
     /**
+     * P0-2 (multi-stage): immutable evidence of the CURRENT action, captured
+     * immediately before performAction. The OutcomeVerifier receives THIS
+     * snapshot and never re-guesses from the mutable active session after
+     * verification has started — a later candidate B cannot pollute the
+     * verification of action A.
+     */
+    fun captureActionEvidence(sessionId: String): BypassSessionAdEvidence? = synchronized(lock) {
+        val current = active?.takeIf { it.record.sessionId == sessionId } ?: return null
+        evidenceOf(current.record)
+    }
+
+    /** Pure: the latest acted evidence of a session record (JVM-testable). */
+    internal fun evidenceOf(record: BypassDetectionSession): BypassSessionAdEvidence? {
+        if (record.actedRuleKey == null && record.actedGroupKey == null &&
+            record.actedCandidateBounds == null && record.candidateType == null
+        ) {
+            return null
+        }
+        return BypassSessionAdEvidence(
+            candidateType = record.candidateType?.let {
+                runCatching { BypassExitCandidateType.valueOf(it) }.getOrNull()
+            },
+            ruleKey = record.actedRuleKey,
+            groupKey = record.actedGroupKey,
+            bounds = record.actedCandidateBounds,
+        )
+    }
+
+    /**
      * The ad evidence of the session currently attached to this window, or
-     * null when no session / no acted candidate exists. This is what the
-     * OutcomeVerifier scopes its fresh check to.
+     * null when no session / no acted candidate exists. Kept for legacy
+     * callers; the verifier itself uses [captureActionEvidence] (P0-2).
      */
     fun activeSessionEvidence(packageName: String, activityName: String?): BypassSessionAdEvidence? =
         synchronized(lock) {
             val current = active?.record ?: return null
             if (current.packageName != packageName || current.activityName != activityName) return null
-            BypassSessionAdEvidence(
-                candidateType = current.candidateType?.let {
-                    runCatching { BypassExitCandidateType.valueOf(it) }.getOrNull()
-                },
-                ruleKey = current.actedRuleKey,
-                groupKey = current.actedGroupKey,
-                bounds = current.actedCandidateBounds,
-            )
+            evidenceOf(current)
         }
 
     /** Record that one action attempt was reserved/performed. */
@@ -177,6 +200,14 @@ object BypassDetectionSessions {
         }?.let {
             scheduledFinalizers.remove(sessionId)?.cancel()
             if (result == BypassSessionResult.SUCCESS_CONFIRMED || result == BypassSessionResult.MISCLICK_SUSPECTED) {
+                // P0-1: a terminal outcome ends this window's transient ad
+                // evidence — the previous splash's STRONG must not pollute the
+                // normal page that follows (star-charge regression).
+                synchronized(lock) {
+                    active?.record?.let { r ->
+                        BypassAdContextTracker.clearWindowEvidence(r.packageName, r.activityName)
+                    }
+                }
                 finalizeNow(sessionId)
             }
         }
@@ -205,6 +236,13 @@ object BypassDetectionSessions {
             )
         }?.let {
             scheduledFinalizers.remove(sessionId)?.cancel()
+            // P0-1: FAILURE_CONFIRMED is terminal too — clear this window's
+            // transient ad evidence.
+            synchronized(lock) {
+                active?.record?.let { r ->
+                    BypassAdContextTracker.clearWindowEvidence(r.packageName, r.activityName)
+                }
+            }
             finalizeNow(sessionId)
         }
     }
@@ -317,6 +355,8 @@ object BypassDetectionSessions {
                 // Terminal: a FAILURE_CONFIRMED session must never be reused
                 // as the active session by a later update (P1). The next
                 // window opens a brand-new session instead.
+                // P0-1: terminal -> clear this window's transient ad evidence.
+                BypassAdContextTracker.clearWindowEvidence(current.record.packageName, current.record.activityName)
                 persist(finalized, cleanup = true)
                 active = null
             }

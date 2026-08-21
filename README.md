@@ -5,7 +5,7 @@
 ## 特性
 
 - **完全离线**：默认 APK 不含 `INTERNET` 权限，运行时无任何网络请求。
-- **开箱即用**：首次安装自动内置广告规则（覆盖大量常见 App），默认启用，无需导入订阅。
+- **开箱即用**：首次安装自动内置广告规则（仓库跟踪的是小型自写基线夹具；完整自用规则包由本机构建生成），默认启用，无需导入订阅。
 - **四类广告**：开屏 / 全屏·插屏 / 营销弹窗 / 其它可关闭广告。
 - **三档策略**：保守（成熟专用规则 + 明确跳过语义）→ 激进（确认广告上下文后的
   关闭/Close/ad_close/×）→ 彻底疯狂（进一步尝试结构型关闭与受限坐标，仅限强广告
@@ -23,6 +23,22 @@
 
 需要 JDK 17+ 与 Android SDK（`local.properties` 配置 `sdk.dir`）：
 
+自用正式版（推荐，单命令产出已签名 Release APK）：
+
+```
+.\tools\build_selfuse.ps1 -SubscriptionPath D:\rules\gkd.json5
+```
+
+该脚本会：生成完整本地规则包 → 运行策略/JVM 测试 → `assembleGkdRelease`（R8 + 资源裁剪）→
+APK 权限/包名/版本/allowBackup/内置规则 SHA 检查 → apksigner 验签 → 输出
+`dist\Bypass-Ads-v1.0.0-selfuse.apk`。
+
+- 签名：优先复用配置的 `GKD_STORE_*`；否则首次自动在
+  `%USERPROFILE%\.bypass-ads\signing\` 创建长期自用密钥（密码仅存本机，后续构建复用同一密钥）。
+- Release 构建**永不静默回退 debug 密钥**：未配置正式签名时 Gradle 只产出未签名 Release
+  （供 CI/R8 验证），本脚本会拒绝输出“正式 APK”。
+- 开发构建：
+
 ```
 gradle :app:assembleGkdDebug
 ```
@@ -34,17 +50,15 @@ gradle :app:assembleGkdDebug
 
 ## 内置规则
 
-- 仓库跟踪的基线夹具：`app/src/main/assets/bypass_splash_rules.json`（自写规则，用于构建与测试）。
-- 本地大规模规则生成：`tools/build_ad_bundle.py <第三方订阅.json5>`（等价实现位于
-  `tools/build_splash_bundle.py`），只过滤广告规则组，输出到
-  `app/src/main/assets/bypass_splash_rules.local.json`（已 gitignore，**第三方规则正文不提交到公开仓库**）。
-- ⚠️ 第三方规则来源（如 Lin-arm/GKD_subscription，GitHub 元数据 `license:null`）**仅作为本地研发与真机验证输入**；
-  “未提交到公开仓库”不等于获得再分发授权。公开 APK 携带大规模第三方规则正文的长期许可方案另行处理，
-  当前本仓库只随构建附带自写基线夹具。
+- 仓库只跟踪自写的基线夹具 `app/src/main/assets/bypass_splash_rules.json`（用于构建与测试）。
+- 自用完整构建经 `tools/build_selfuse.ps1` 从本机第三方订阅生成 full local bundle
+  （`app/src/main/assets/bypass_splash_rules.local.json`，已 gitignore）。
+- 未获再分发许可的第三方规则正文不进入本仓库；包含这类规则的 self-use APK 仅限本机自用，
+  不公开分发。
 
 ## 免责声明
 
-**本项目基于 [GKD](https://github.com/gkd-kit/gkd) 修改，遵循 [GPL-3.0](/LICENSE) 开源，仅供学习交流，禁止用于商业或非法用途。**
+**本项目基于 [GKD](https://github.com/gkd-kit/gkd) 修改，依据 [GPL-3.0](/LICENSE) 发布。软件按现状提供，无担保。使用者需遵守适用法律法规。**
 
 - 上游项目：[gkd-kit/gkd](https://github.com/gkd-kit/gkd)（GKD v1.12.1 基线，commit `5a00f84`）
 - 本仓库保留 GKD 的全部 GPL-3.0 源码与版权声明。

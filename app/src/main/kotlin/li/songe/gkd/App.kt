@@ -27,6 +27,7 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import li.songe.gkd.a11y.initA11yFeat
 import li.songe.gkd.data.CrashData
@@ -67,6 +68,26 @@ const val BYPASS_SPLASH_SUBS_ID = 100000001L
 const val BYPASS_SPLASH_ASSETS_NAME = "bypass_splash_rules.json"
 const val BYPASS_SPLASH_ASSETS_LOCAL_NAME = "bypass_splash_rules.local.json"
 
+/**
+ * P0-3 (3.3): the clean bundled base for every rebuild — startup, local
+ * import, restore-bundled and bundled APK upgrade. Reads the APK assets
+ * (bypass_splash_rules.local.json first, then the fixture
+ * bypass_splash_rules.json) and returns the pristine bundled subscription
+ * (id rewritten to BYPASS_SPLASH_SUBS_ID). Never reads the persisted
+ * effective subscription as the base, so Import B can never carry remnants
+ * of Import A.
+ */
+suspend fun loadCleanBundledBase(): RawSubscription? = withContext(Dispatchers.IO) {
+    val raw = runCatching {
+        app.assets.open(BYPASS_SPLASH_ASSETS_LOCAL_NAME).bufferedReader().use { it.readText() }
+    }.recoverCatching {
+        app.assets.open(BYPASS_SPLASH_ASSETS_NAME).bufferedReader().use { it.readText() }
+    }.getOrNull() ?: return@withContext null
+    runCatching { RawSubscription.parse(raw, json5 = false) }
+        .getOrNull()
+        ?.copy(id = BYPASS_SPLASH_SUBS_ID)
+}
+
 // Bypass Ads: initialize the bundled splash-ad subscription on first install,
 // and upgrade its rules when an updated APK ships a newer bundle version.
 // Never touches the user's enable state or per-group config.
@@ -75,14 +96,7 @@ const val BYPASS_SPLASH_ASSETS_LOCAL_NAME = "bypass_splash_rules.local.json"
 // initSubsState's async load.
 fun initBundledSubs() {
     appScope.launchTry(Dispatchers.IO) {
-        val text = runCatching {
-            app.assets.open(BYPASS_SPLASH_ASSETS_LOCAL_NAME).bufferedReader().use { it.readText() }
-        }.recoverCatching {
-            app.assets.open(BYPASS_SPLASH_ASSETS_NAME).bufferedReader().use { it.readText() }
-        }.getOrNull() ?: return@launchTry
-        val bundled = runCatching {
-            RawSubscription.parse(text, json5 = false).copy(id = BYPASS_SPLASH_SUBS_ID)
-        }.getOrNull() ?: return@launchTry
+        val bundled = loadCleanBundledBase() ?: return@launchTry
         initBundledSub(bundled)
     }
 }

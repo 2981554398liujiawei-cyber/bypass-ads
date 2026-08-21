@@ -199,6 +199,39 @@ object BypassOutcomeVerifier {
 
     fun isExternalLanding(packageName: String): Boolean = externalLandingPackages.contains(packageName)
 
+    /**
+     * Semantic exit types that may continue a multi-stage ad after the exact
+     * acted rule vanished (P0-2). STRUCTURAL_CLOSE / COORDINATE_FALLBACK are
+     * deliberately excluded: a normal-page ImageView must never fabricate
+     * "the ad is still up".
+     */
+    val SEMANTIC_SIBLING_CANDIDATE_TYPES: Set<BypassExitCandidateType> = setOf(
+        BypassExitCandidateType.SKIP_TEXT,
+        BypassExitCandidateType.CLOSE_TEXT,
+        BypassExitCandidateType.CLOSE_DESC,
+        BypassExitCandidateType.CLOSE_VIEW_ID,
+        BypassExitCandidateType.CLOSE_ICON,
+    )
+
+    fun isSemanticSibling(candidateType: BypassExitCandidateType?): Boolean =
+        candidateType != null && candidateType in SEMANTIC_SIBLING_CANDIDATE_TYPES
+
+    /**
+     * Pure multi-stage "is the SAME ad still present?" check (P0-2, JVM-testable).
+     *
+     *  - the exact acted rule still matches in the same region -> yes
+     *  - the exact rule is gone, but a SEMANTIC sibling of the same group is
+     *    still in the same ad region (Skip -> Close) -> yes
+     *  - a STRUCTURAL_CLOSE / COORDINATE_FALLBACK sibling is never "the ad"
+     *  - a far-away banner / unrelated ImageView is never "the ad"
+     */
+    fun sameAdStillPresent(
+        exactRuleMatchedInSameRegion: Boolean,
+        siblingType: BypassExitCandidateType? = null,
+        siblingInSameRegion: Boolean = false,
+    ): Boolean = exactRuleMatchedInSameRegion ||
+        (isSemanticSibling(siblingType) && siblingInSameRegion)
+
     /** "left,top,right,bottom" -> bounds (null when malformed). */
     fun parseBounds(value: String?): Bounds? = value
         ?.split(',')

@@ -46,5 +46,9 @@ data class AppConfig(
 
         @Query("SELECT * FROM app_config WHERE subs_id IN (:subsItemIds)")
         suspend fun querySubsItemConfig(subsItemIds: List<Long>): List<AppConfig>
+
+        /** Authoritative restore: replace every row of one subscription. */
+        @Query("DELETE FROM app_config WHERE subs_id=:subsId")
+        suspend fun deleteBySubsId(subsId: Long)
     }
 }

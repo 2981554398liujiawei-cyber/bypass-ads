@@ -66,6 +66,16 @@
               ],
               "action": "clickCenter",
               "bypassOrigin": "OVERRIDE"
+            },
+            {
+              "key": 106,
+              "name": "Bypass-Test-SkipViewId-Aggressive",
+              "bypassMode": "AGGRESSIVE",
+              "matches": [
+                "[vid~=\"(?is).*skip.*\"][visibleToUser=true]"
+              ],
+              "action": "clickCenter",
+              "bypassOrigin": "OVERRIDE"
             }
           ]
         }

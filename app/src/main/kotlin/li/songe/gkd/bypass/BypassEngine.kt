@@ -104,6 +104,14 @@ interface BypassEngine {
 
     suspend fun restoreBundledRules(): BypassImportResult
 
+    /**
+     * Rebuild the effective rule stack from the clean bundled base + current
+     * local import + teach, persist it, rebuild provenance and refresh
+     * metadata/category state. Used after a backup restore (authoritative
+     * restore contract) and by restore-bundled.
+     */
+    suspend fun rebuildEffectiveStack(): BypassImportResult
+
     suspend fun clearRecentActions()
 
     /** Apps that currently have at least one splash rule in the bundled set. */
@@ -168,6 +176,30 @@ enum class BypassServiceStatus {
     RECOVERING,
     OFF,
     NEED_AUTHORIZATION,
+}
+
+/**
+ * Product a11y status (P1-5). HyperOS can keep the service Bound after an
+ * upgrade/rebind without delivering onServiceConnected, so the in-process
+ * instance flag may lag the system. Authorized + system-bound is therefore
+ * NORMAL, not RECOVERING — the engine is already working.
+ */
+fun resolveBypassServiceStatus(
+    instanceRunning: Boolean,
+    authorized: Boolean,
+    systemBound: Boolean,
+    accessibilityEnabled: Boolean = false,
+): BypassServiceStatus = when {
+    // In-process instance, system Bound, or (authorized + a11y enabled):
+    // HyperOS can keep the service Bound after upgrade/rebind without
+    // delivering onServiceConnected AND without listing us in
+    // getEnabledAccessibilityServiceList. If the user authorized the
+    // service and accessibility is on, the engine is the live Bound
+    // service — show NORMAL, not a stuck "正在恢复".
+    instanceRunning || (authorized && (systemBound || accessibilityEnabled)) ->
+        BypassServiceStatus.NORMAL
+    !authorized -> BypassServiceStatus.NEED_AUTHORIZATION
+    else -> BypassServiceStatus.RECOVERING
 }
 
 data class BypassServiceState(val status: BypassServiceStatus) {

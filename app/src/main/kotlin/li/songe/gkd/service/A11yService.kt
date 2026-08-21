@@ -72,11 +72,35 @@ abstract class A11yService : AccessibilityService(), OnA11yLife by DefaultA11yLi
 
     override val ruleEngine by lazy { A11yRuleEngine(this) }
 
-    override fun onCreate() = onCreated()
-    override fun onServiceConnected() = onA11yConnected()
+    override fun onCreate() {
+        // Register BEFORE the callback list: HyperOS recovery/upgrade can bind
+        // the service without a later onServiceConnected. The product UI must
+        // not stay on "正在恢复" while the system already reports Bound.
+        A11yInstanceRegistry.connected(this)
+        onCreated()
+    }
+    override fun onServiceConnected() {
+        A11yInstanceRegistry.connected(this)
+        onA11yConnected()
+    }
     override fun onInterrupt() {}
-    override fun onDestroy() = onDestroyed()
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) = ruleEngine.onA11yEvent(event)
+    override fun onDestroy() {
+        onDestroyed()
+        // Identity-checked: an old instance must never clear a newer one.
+        A11yInstanceRegistry.destroyed(this)
+    }
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        // Any live event is proof the service is Bound and working — keep the
+        // registry in sync even when HyperOS skipped onServiceConnected. Only
+        // tick the product UI on the first event after a gap so we do not
+        // recompute status on every window-content change.
+        val wasRunning = A11yInstanceRegistry.isRunning.value
+        A11yInstanceRegistry.connected(this)
+        if (!wasRunning) {
+            li.songe.gkd.bypass.GkdBypassEngine.noteA11ySystemChanged()
+        }
+        ruleEngine.onA11yEvent(event)
+    }
 
     val startTime = System.currentTimeMillis()
     override var justStarted: Boolean = true
@@ -103,9 +127,21 @@ abstract class A11yService : AccessibilityService(), OnA11yLife by DefaultA11yLi
 
     init {
         useLogLifecycle()
-        useAliveFlow(isRunning)
-        onA11yConnected { instance = this }
-        onDestroyed { instance = null }
+        // P1-5 (HyperOS destroy/rebind race): instance ownership and the
+        // running flag live in A11yInstanceRegistry. useAliveFlow is NOT used
+        // for isRunning: an old instance A destroyed after new instance B
+        // connected must never clear B (A.onDestroy must not flip
+        // isRunning=false while B is alive).
+        //
+        // HyperOS can bind the service after an APK upgrade / recovery without
+        // delivering onServiceConnected (the system treats it as a continuation
+        // of the existing bind). Mark the instance live on onCreated as well
+        // so the UI does not stay stuck on "正在恢复" while dumpsys already
+        // shows the service Bound. onServiceConnected still refreshes
+        // lastConnectedAt.
+        onCreated { A11yInstanceRegistry.connected(this) }
+        onA11yConnected { A11yInstanceRegistry.connected(this) }
+        onDestroyed { A11yInstanceRegistry.destroyed(this) }
         onCreated {
             if (currentAppUseA11y) {
                 updateEnableAutomator(true)
@@ -159,12 +195,15 @@ abstract class A11yService : AccessibilityService(), OnA11yLife by DefaultA11yLi
 
     companion object {
         val a11yCn by lazy { SelectToSpeakService::class.componentName }
-        val isRunning = MutableStateFlow(false)
+
+        /** P1-5: delegated to the ownership registry (old-instance destroy
+         * can never clear a newer connected instance). */
+        val isRunning = A11yInstanceRegistry.isRunning
         val lastConnectedAt = MutableStateFlow(0L)
 
-        @Volatile
-        var instance: A11yService? = null
-            private set
+        /** The live service instance (P1-5: single-owner registry). */
+        val instance: A11yService?
+            get() = A11yInstanceRegistry.currentInstance() as? A11yService
     }
 
     private fun isStillAuthorized(): Boolean {

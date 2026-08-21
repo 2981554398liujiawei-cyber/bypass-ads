@@ -293,6 +293,7 @@ class MainActivity : ComponentActivity() {
     var isFirstResume = true
     override fun onResume() {
         super.onResume()
+        GkdBypassEngine.refreshPermissionState()
         if (isFirstResume && startTime - app.startTime < 2000) {
             isFirstResume = false
         } else {

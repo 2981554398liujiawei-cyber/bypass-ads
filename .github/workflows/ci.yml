@@ -37,6 +37,7 @@ jobs:
         run: |
           python tools/test_splash_policy.py
           python tools/test_safety_exclusions.py
+          python tools/test_privacy_policy.py
 
       - name: Multi-source tests (fixture based)
         run: python tools/test_multi_source.py
@@ -76,6 +77,9 @@ jobs:
 
       - name: Assemble default APK
         run: ./gradlew :app:assembleGkdDebug --console=plain
+
+      - name: Assemble Release (R8, unsigned - no repo secrets)
+        run: ./gradlew :app:assembleGkdRelease --console=plain
 
       - name: Assemble FullTools APK
         run: ./gradlew :app:assembleFulltoolsDebug --console=plain

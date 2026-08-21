@@ -39,9 +39,11 @@ data class BypassDiagnosticEvent(
 )
 
 /**
- * Debug/self-use shadow trace layered around the existing GKD matcher. It does
- * not scan nodes independently and intentionally stores no UI text, input, or
- * full accessibility trees. The exported package is local-only by default.
+ * Self-use shadow trace layered around the existing GKD matcher (v1.0: also
+ * active in the formal self-use release, not only debug). It does not scan
+ * nodes independently and intentionally stores no UI text, input, or full
+ * accessibility trees — only reason codes plus package/activity identity.
+ * The exported package is local-only by default.
  */
 object BypassDiagnostics {
     private const val MAX_EVENTS = 40
@@ -54,7 +56,8 @@ object BypassDiagnostics {
         activityName: String? = topActivityFlow.value.activityId,
         detail: String = "",
     ) {
-        if (!META.debuggable) return
+        // v1.0: the self-use release records the same privacy-safe diagnostics
+        // as debug (the Diagnostics page must work on the installed release).
         val event = BypassDiagnosticEvent(
             id = System.nanoTime(),
             time = System.currentTimeMillis(),

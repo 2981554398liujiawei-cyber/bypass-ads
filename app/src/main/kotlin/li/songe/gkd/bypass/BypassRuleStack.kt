@@ -57,8 +57,17 @@ object BypassRuleStackManager {
             BypassRuleProvenance.clear()
             return bundled
         }
+        // P0-3 (3.1): a local import can NEVER claim an official origin. The
+        // user file may say "bypassOrigin":"OVERRIDE" — the program stamps
+        // every imported rule LOCAL_IMPORT before it enters the effective
+        // stack (double insurance: the resolver also prefers the side-map).
+        val localSanitized = stampLocalImport(local)
+        // P0-3 (3.2): provenance is REBUILT from the current local layer on
+        // every merge, never appended. Import A -> Import B must leave zero
+        // trace of A in the side-map (and in the persisted file).
+        BypassRuleProvenance.clear()
         val conflicts = mutableListOf<LayerConflict>()
-        val localByApp = local.apps.associateBy { it.id }
+        val localByApp = localSanitized.apps.associateBy { it.id }
         val apps = bundled.apps.map { bundledApp ->
             val localApp = localByApp[bundledApp.id] ?: return@map bundledApp
             val localGroupNames = localApp.groups.map { it.name }.toSet()
@@ -100,13 +109,15 @@ object BypassRuleStackManager {
             }
         }
         lastConflicts = conflicts
-        val globals = if (local.globalGroups.isEmpty()) {
+        val globals = if (localSanitized.globalGroups.isEmpty()) {
+            // P0-3 (3.4): the local layer only carries the local file's own
+            // globals; bundled global/fallback is preserved by the merge.
             bundled.globalGroups
         } else {
-            val localGlobalNames = local.globalGroups.map { it.name }.toSet()
+            val localGlobalNames = localSanitized.globalGroups.map { it.name }.toSet()
             val keptGlobals = bundled.globalGroups.filterNot { it.name in localGlobalNames }
             val keptGlobalKeys = keptGlobals.map { it.key }.toSet()
-            val remappedLocalGlobals = local.globalGroups.map { group ->
+            val remappedLocalGlobals = localSanitized.globalGroups.map { group ->
                 if (group.key in keptGlobalKeys) {
                     val newKey = stableRemapKey("global", group.name, keptGlobalKeys)
                     conflicts += LayerConflict(
@@ -126,6 +137,27 @@ object BypassRuleStackManager {
         }
         return bundled.copy(apps = apps, globalGroups = globals)
     }
+
+    /**
+     * P0-3 (3.1): force every imported rule's structured origin to
+     * LOCAL_IMPORT. Whatever the user file claims (OVERRIDE / BUNDLED /
+     * anything), the program's local layer is always LOCAL_IMPORT — a local
+     * import must never obtain official-override privileges.
+     */
+    private fun stampLocalImport(local: RawSubscription): RawSubscription = local.copy(
+        apps = local.apps.map { app ->
+            app.copy(groups = app.groups.map { group ->
+                group.copy(rules = group.rules.map { rule ->
+                    rule.copy(bypassOrigin = "LOCAL_IMPORT")
+                })
+            })
+        },
+        globalGroups = local.globalGroups.map { group ->
+            group.copy(rules = group.rules.map { rule ->
+                rule.copy(bypassOrigin = "LOCAL_IMPORT")
+            })
+        },
+    )
 
     /**
      * Stable unique remap key for a colliding imported group: derived from

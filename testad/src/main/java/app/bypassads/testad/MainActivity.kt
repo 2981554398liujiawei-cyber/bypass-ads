@@ -124,17 +124,35 @@ class MainActivity : Activity() {
             "ab" -> addAdLabeled(scene) {
                 addView(skipTarget(text = "", desc = "关闭广告区域") { showResult(mode) }, tinyParams())
             }
+            // AC P0-1: ordinary page + FAR banner "广告" + small ImageView.
+            // Crazy must NOT act (far banner never mints STRONG for an
+            // unrelated structural control).
+            "ac" -> {
+                scene.addView(TextView(this).apply {
+                    text = "广告"
+                    textSize = 12f
+                    setTextColor(Color.rgb(180, 180, 180))
+                }, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START).apply {
+                    setMargins(dp(24), 0, 0, dp(48))
+                })
+                scene.addView(structuralXTarget { showUnexpectedAction(mode) }, tinyParams())
+            }
         }
         setScene(scene)
     }
 
-    /** Adds a small "广告" label so the V2 gate sees STRONG ad context. */
+    /** Adds a small "广告" label NEAR the candidate so the V2 gate sees
+     * STRONG ad context for THIS ad (P0-1: a far page banner must never
+     * upgrade an unrelated control). */
     private fun addAdLabeled(scene: FrameLayout, block: FrameLayout.() -> Unit) {
         scene.addView(TextView(this).apply {
             text = "广告"
             textSize = 12f
             setTextColor(Color.rgb(180, 180, 180))
-        }, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { setMargins(dp(24), dp(120), 0, 0) })
+        }, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply {
+            topMargin = dp(88)
+            marginEnd = dp(24)
+        })
         scene.block()
     }
 
@@ -255,6 +273,7 @@ class MainActivity : Activity() {
         "z" -> "Z 外部落地误触（跳到桌面，立即停止）"
         "aa" -> "AA 可信专用关闭（保守也可点）"
         "ab" -> "AB 教学节点固定场景"
+        "ac" -> "AC 负例：远处 banner 广告 + 普通小 ImageView（疯狂也禁止）"
         else -> mode
     }
 
@@ -262,7 +281,7 @@ class MainActivity : Activity() {
         const val EXTRA_SCENARIO = "scenario"
         private val scenarioNames = setOf(
             "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o",
-            "p", "q", "r", "s", "t", "u", "w", "x", "y", "z", "aa", "ab",
+            "p", "q", "r", "s", "t", "u", "w", "x", "y", "z", "aa", "ab", "ac",
         )
     }
 }

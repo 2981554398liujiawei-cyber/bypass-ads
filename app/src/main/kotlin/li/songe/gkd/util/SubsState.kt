@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import li.songe.gkd.BYPASS_SPLASH_SUBS_ID
 import li.songe.gkd.appScope
 import li.songe.gkd.data.AppRule
 import li.songe.gkd.data.CategoryConfig
@@ -494,10 +495,25 @@ suspend fun initBundledSub(bundled: RawSubscription) {
             LogUtils.d("内置开屏规则已初始化", "id=$subsId, version=${bundled.version}")
         } else if (persistedVersion == null || bundled.version > persistedVersion) {
             // upgrade rules (or repair a missing/corrupt file); keep enable/order
-            subsMapFlow.value = subsMapFlow.value.toMutableMap().apply { put(subsId, bundled) }
             withContext(Dispatchers.IO) {
-                cleanupSubsConfig(subsId, bundled)
-                file.writeText(json.encodeToString(bundled))
+                // P0-3 (3.5): NEVER cleanup config by the bundled-only rule set
+                // for BYPASS_SPLASH_SUBS_ID — the effective stack also carries
+                // Local Import and Teach groups, and a bundled upgrade must
+                // not delete their enable/disable configs first. A few orphan
+                // config rows are harmless for a self-use build.
+                //
+                // Also do NOT write the bundled-only payload into the effective
+                // subscription file / flow: GkdBypassEngine always rebuilds
+                // effective = cleanBundledBase + Local + Teach on startup. A
+                // bundled-only write here would briefly (or permanently, if
+                // the rebuild races) drop Local/Teach from the live stack.
+                if (subsId != BYPASS_SPLASH_SUBS_ID) {
+                    cleanupSubsConfig(subsId, bundled)
+                    subsMapFlow.value = subsMapFlow.value.toMutableMap().apply { put(subsId, bundled) }
+                    file.writeText(json.encodeToString(bundled))
+                }
+                // For BYPASS_SPLASH_SUBS_ID the APK assets ARE the new bundled
+                // base; the engine rebuilds the effective stack from them.
             }
             subsLoadErrorsFlow.update { it.toMutableMap().apply { remove(subsId) } }
             LogUtils.d("内置开屏规则已升级", "from=$persistedVersion to=${bundled.version}")

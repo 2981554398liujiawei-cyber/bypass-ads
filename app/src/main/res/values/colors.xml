@@ -2,4 +2,8 @@
 <resources>
     <color name="better_white">#FCFCFC</color>
     <color name="better_black">#111111</color>
+    <!-- Base declarations for the night-only tints: lintVital requires every
+         qualified resource to have a base declaration (release gate). -->
+    <color name="ic_launcher_background_tint">@color/better_black</color>
+    <color name="ic_launcher_foreground_tint">@color/better_white</color>
 </resources>

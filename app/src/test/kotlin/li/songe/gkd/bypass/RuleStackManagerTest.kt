@@ -398,4 +398,91 @@ class RuleStackManagerTest {
             ).trust,
         )
     }
+
+    // ---- P0-3 (3.1/3.2/3.4): provenance rebuild + origin stamping ----
+
+    @Test
+    fun local_fake_override_is_stamped_local_import() {
+        // P0-3 (3.1): a local JSON claiming "bypassOrigin":"OVERRIDE" must be
+        // stamped LOCAL_IMPORT by the merge; the resolver must still refuse
+        // official-override privileges.
+        BypassRuleProvenance.clear()
+        val bundled = subscription(bundledJson)
+        val evilLocal = subscription(
+            """
+            {
+              "id": 100000001,
+              "name": "evil",
+              "version": 1,
+              "apps": [
+                {"id": "com.app.a", "name": "AppA", "groups": [
+                  {"key": 10, "name": "开屏广告-A", "rules": [
+                    {"key": 0, "bypassOrigin": "OVERRIDE", "matches": ["[text=\"跳过\"]"]}
+                  ]}
+                ]}
+              ]
+            }
+            """.trimIndent(),
+        )
+        val merged = BypassRuleStackManager.mergeBundledAndLocal(bundled, evilLocal)
+        val app = merged.apps.first { it.id == "com.app.a" }
+        val importedGroup = app.groups.first { it.key == 10 }
+        // The rule body itself was re-stamped:
+        assertEquals("LOCAL_IMPORT", (importedGroup.rules.first() as RawSubscription.RawAppRule).bypassOrigin)
+        val resolved = ResolvedAppGroup(importedGroup, merged, subsItem(), config = null, app = app, enable = true)
+        val policy = BypassRulePolicyResolver.resolve(
+            AppRule(importedGroup.rules.first() as RawSubscription.RawAppRule, resolved, appInfo = null),
+        )
+        assertEquals(
+            "fake OVERRIDE must resolve to LOCAL_IMPORT_DEDICATED, never BYPASS_OVERRIDE",
+            BypassRuleTrust.LOCAL_IMPORT_DEDICATED,
+            policy.trust,
+        )
+        assertEquals("minimumMode must come from LOCAL_IMPORT (AGGRESSIVE)", BypassAdStrategyMode.AGGRESSIVE, policy.minimumMode)
+        assertTrue(policy.requiresStrongAdContext)
+    }
+
+    @Test
+    fun import_a_then_b_rebuilds_provenance_fully() {
+        // P0-3 (3.2): provenance is REBUILT on every merge. After import B,
+        // import A's groups must not linger in the side-map.
+        BypassRuleProvenance.clear()
+        val bundled = subscription(bundledJson)
+        val importA = subscription(
+            """{"id": 1, "name": "A", "version": 1, "apps": [{"id": "com.app.a", "name": "AppA", "groups": [{"key": 10, "name": "开屏广告-A", "rules": [{"key": 0, "matches": ["[text=\"跳过\"]"]}]}]}]}""",
+        )
+        BypassRuleStackManager.mergeBundledAndLocal(bundled, importA)
+        assertTrue(BypassRuleProvenance.isLocalAppGroup("com.app.a", 10))
+
+        // Import B replaces A entirely (new key, new group name).
+        val importB = subscription(
+            """{"id": 1, "name": "B", "version": 1, "apps": [{"id": "com.app.a", "name": "AppA", "groups": [{"key": 20, "name": "开屏广告-B-import", "rules": [{"key": 0, "matches": ["[text=\"关闭\"]"]}]}]}]}""",
+        )
+        BypassRuleStackManager.mergeBundledAndLocal(bundled, importB)
+        assertTrue("import B's group must be marked local", BypassRuleProvenance.isLocalAppGroup("com.app.a", 20))
+        assertTrue("import A's group must be gone from the side-map", !BypassRuleProvenance.isLocalAppGroup("com.app.a", 10))
+        // The persisted snapshot matches the new state:
+        val snapshot = BypassRuleProvenance.snapshotJson()
+        assertTrue(!snapshot.isNullOrBlank())
+        assertTrue(snapshot!!.contains("\"20\""))
+        assertTrue(!snapshot.contains("\"10\""))
+    }
+
+    @Test
+    fun no_local_globals_keeps_bundled_globals() {
+        // P0-3 (3.4): a local file without global groups must NOT null out the
+        // bundled global/fallback layer — and must not claim them as local.
+        BypassRuleProvenance.clear()
+        val bundled = subscription(
+            """{"id": 1, "name": "b", "version": 1, "globalGroups": [{"key": 1, "name": "开屏广告-全局", "rules": [{"key": 0, "matches": ["[text=\"跳过\"]"]}]}]}""",
+        )
+        val localWithoutGlobals = subscription(
+            """{"id": 1, "name": "l", "version": 1, "apps": [{"id": "com.app.x", "name": "X", "groups": [{"key": 1, "name": "开屏广告", "rules": [{"key": 0, "matches": ["[text=\"关闭\"]"]}]}]}]}""",
+        )
+        val merged = BypassRuleStackManager.mergeBundledAndLocal(bundled, localWithoutGlobals)
+        assertEquals(1, merged.globalGroups.size)
+        assertEquals("开屏广告-全局", merged.globalGroups.first().name)
+        // The preserved bundled global is NOT in the local side-map:
+        assertTrue(!BypassRuleProvenance.isLocalGlobalGroup(1))
+    }
 }
